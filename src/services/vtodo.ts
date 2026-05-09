@@ -80,3 +80,131 @@ export function parseVTodo(raw: string): VTodo | null {
     raw,
   }
 }
+
+const PRODID = '-//ete-stethic//EN'
+
+// iCalendar UTC stamp: 20260509T143000Z
+function icalUtcNow(): string {
+  const iso = new Date().toISOString()
+  return iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+}
+
+function newUid(): string {
+  return crypto.randomUUID()
+}
+
+export interface NewVTodoArgs {
+  summary: string
+  parentUid?: string
+  description?: string
+  due?: string
+  priority?: Priority
+}
+
+// Build a fresh VCALENDAR + VTODO string for a new task.
+export function buildVTodo(args: NewVTodoArgs): { uid: string; raw: string } {
+  const uid = newUid()
+  const stamp = icalUtcNow()
+
+  const cal = new ICAL.Component(['vcalendar', [], []])
+  cal.updatePropertyWithValue('version', '2.0')
+  cal.updatePropertyWithValue('prodid', PRODID)
+
+  const vtodo = new ICAL.Component('vtodo')
+  vtodo.updatePropertyWithValue('uid', uid)
+  vtodo.updatePropertyWithValue('dtstamp', stamp)
+  vtodo.updatePropertyWithValue('created', stamp)
+  vtodo.updatePropertyWithValue('last-modified', stamp)
+  vtodo.updatePropertyWithValue('summary', args.summary)
+  vtodo.updatePropertyWithValue('status', 'NEEDS-ACTION')
+  if (args.priority != null && args.priority !== 0) {
+    vtodo.updatePropertyWithValue('priority', args.priority)
+  }
+  if (args.description) {
+    vtodo.updatePropertyWithValue('description', args.description)
+  }
+  if (args.due) {
+    vtodo.updatePropertyWithValue('due', args.due)
+  }
+  if (args.parentUid) {
+    const prop = vtodo.addPropertyWithValue('related-to', args.parentUid)
+    prop.setParameter('reltype', 'PARENT')
+  }
+
+  cal.addSubcomponent(vtodo)
+  return { uid, raw: cal.toString() }
+}
+
+export interface VTodoPatch {
+  summary?: string
+  status?: TaskStatus
+  priority?: Priority
+  description?: string
+  due?: string
+  // null clears the parent (root). undefined leaves it untouched.
+  parentUid?: string | null
+}
+
+// Update an existing raw VTODO with patch fields. Preserves all unknown
+// properties (X-* extensions, attachments, etc.) and bumps LAST-MODIFIED.
+export function updateVTodo(raw: string, patch: VTodoPatch): string {
+  const jcal = ICAL.parse(raw)
+  const cal = new ICAL.Component(jcal)
+  const vtodo =
+    cal.name === 'vtodo' ? cal : cal.getFirstSubcomponent('vtodo')
+  if (!vtodo) throw new Error('VTODO component missing')
+
+  if (patch.summary !== undefined) {
+    vtodo.updatePropertyWithValue('summary', patch.summary)
+  }
+  if (patch.status !== undefined) {
+    vtodo.updatePropertyWithValue('status', patch.status)
+    if (patch.status === 'COMPLETED') {
+      vtodo.updatePropertyWithValue('completed', icalUtcNow())
+      vtodo.updatePropertyWithValue('percent-complete', 100)
+    } else {
+      vtodo.removeAllProperties('completed')
+      if (patch.status === 'NEEDS-ACTION') {
+        vtodo.removeAllProperties('percent-complete')
+      }
+    }
+  }
+  if (patch.priority !== undefined) {
+    if (patch.priority === 0) {
+      vtodo.removeAllProperties('priority')
+    } else {
+      vtodo.updatePropertyWithValue('priority', patch.priority)
+    }
+  }
+  if (patch.description !== undefined) {
+    if (patch.description === '') {
+      vtodo.removeAllProperties('description')
+    } else {
+      vtodo.updatePropertyWithValue('description', patch.description)
+    }
+  }
+  if (patch.due !== undefined) {
+    if (patch.due === '') {
+      vtodo.removeAllProperties('due')
+    } else {
+      vtodo.updatePropertyWithValue('due', patch.due)
+    }
+  }
+  if (patch.parentUid !== undefined) {
+    // Remove any existing PARENT-typed RELATED-TO; preserve sibling/child types.
+    for (const prop of vtodo.getAllProperties('related-to')) {
+      const reltype = prop.getParameter('reltype')?.toString().toUpperCase()
+      if (!reltype || reltype === 'PARENT') {
+        vtodo.removeProperty(prop)
+      }
+    }
+    if (patch.parentUid !== null) {
+      const prop = vtodo.addPropertyWithValue('related-to', patch.parentUid)
+      prop.setParameter('reltype', 'PARENT')
+    }
+  }
+
+  vtodo.updatePropertyWithValue('last-modified', icalUtcNow())
+  vtodo.updatePropertyWithValue('dtstamp', icalUtcNow())
+  return cal.toString()
+}
