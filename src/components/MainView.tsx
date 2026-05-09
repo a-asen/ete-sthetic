@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   listCollections,
   listTaskItems,
   logout,
 } from '../services/etebase'
-import { buildTree } from '../services/tree'
+import { buildTree, countTasks, filterCompleted } from '../services/tree'
 import type { CollectionInfo, TaskItem } from '../types'
 import { TaskTree } from './TaskTree'
 
@@ -12,63 +12,165 @@ interface Props {
   onLoggedOut: () => void
 }
 
+const HIDE_COMPLETED_KEY = 'ete-stethic.hideCompleted'
+const PREFETCH_CONCURRENCY = 4
+
+function readHideCompleted(): boolean {
+  try {
+    return localStorage.getItem(HIDE_COMPLETED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeHideCompleted(value: boolean) {
+  try {
+    localStorage.setItem(HIDE_COMPLETED_KEY, value ? 'true' : 'false')
+  } catch {
+    // localStorage unavailable; not fatal.
+  }
+}
+
 export function MainView({ onLoggedOut }: Props) {
   const [collections, setCollections] = useState<CollectionInfo[] | null>(null)
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
   const [activeUid, setActiveUid] = useState<string | null>(null)
 
-  const [items, setItems] = useState<TaskItem[] | null>(null)
-  const [itemsLoading, setItemsLoading] = useState(false)
-  const [itemsError, setItemsError] = useState<string | null>(null)
+  const [itemsByUid, setItemsByUid] = useState<Map<string, TaskItem[]>>(
+    () => new Map(),
+  )
+  const [errorByUid, setErrorByUid] = useState<Map<string, string>>(
+    () => new Map(),
+  )
+  const [loadingUids, setLoadingUids] = useState<Set<string>>(() => new Set())
+
+  const [hideCompleted, setHideCompletedState] = useState<boolean>(readHideCompleted)
+  const setHideCompleted = useCallback((value: boolean) => {
+    setHideCompletedState(value)
+    writeHideCompleted(value)
+  }, [])
+
+  const inFlightRef = useRef<Set<string>>(new Set())
+  const cancelledRef = useRef(false)
 
   useEffect(() => {
-    let cancelled = false
+    cancelledRef.current = false
+    return () => {
+      cancelledRef.current = true
+    }
+  }, [])
+
+  const fetchCollection = useCallback(async (uid: string) => {
+    if (inFlightRef.current.has(uid)) return
+    inFlightRef.current.add(uid)
+    setLoadingUids((prev) => {
+      const next = new Set(prev)
+      next.add(uid)
+      return next
+    })
+    try {
+      const items = await listTaskItems(uid)
+      if (cancelledRef.current) return
+      setItemsByUid((prev) => {
+        const next = new Map(prev)
+        next.set(uid, items)
+        return next
+      })
+      setErrorByUid((prev) => {
+        if (!prev.has(uid)) return prev
+        const next = new Map(prev)
+        next.delete(uid)
+        return next
+      })
+    } catch (err) {
+      if (cancelledRef.current) return
+      setErrorByUid((prev) => {
+        const next = new Map(prev)
+        next.set(
+          uid,
+          err instanceof Error ? err.message : 'Failed to load tasks',
+        )
+        return next
+      })
+    } finally {
+      inFlightRef.current.delete(uid)
+      if (!cancelledRef.current) {
+        setLoadingUids((prev) => {
+          const next = new Set(prev)
+          next.delete(uid)
+          return next
+        })
+      }
+    }
+  }, [])
+
+  // Load collections on mount.
+  useEffect(() => {
     listCollections()
       .then((cs) => {
-        if (cancelled) return
+        if (cancelledRef.current) return
         setCollections(cs)
         if (cs.length > 0) setActiveUid(cs[0].uid)
       })
       .catch((err: unknown) => {
-        if (cancelled) return
+        if (cancelledRef.current) return
         setCollectionsError(
           err instanceof Error ? err.message : 'Failed to load collections',
         )
       })
-    return () => {
-      cancelled = true
-    }
   }, [])
 
+  // Eagerly fetch the active collection whenever it changes.
   useEffect(() => {
-    if (!activeUid) {
-      setItems(null)
-      return
-    }
+    if (!activeUid) return
+    if (itemsByUid.has(activeUid)) return
+    void fetchCollection(activeUid)
+  }, [activeUid, itemsByUid, fetchCollection])
+
+  // After the active collection is loaded, prefetch the rest in parallel
+  // with bounded concurrency so sidebar counts can fill in.
+  useEffect(() => {
+    if (!collections || !activeUid) return
+    if (!itemsByUid.has(activeUid)) return
+
+    const remaining = collections
+      .map((c) => c.uid)
+      .filter((uid) => !itemsByUid.has(uid) && !inFlightRef.current.has(uid))
+
+    if (remaining.length === 0) return
+
     let cancelled = false
-    setItemsLoading(true)
-    setItemsError(null)
-    listTaskItems(activeUid)
-      .then((data) => {
-        if (cancelled) return
-        setItems(data)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setItemsError(
-          err instanceof Error ? err.message : 'Failed to load tasks',
-        )
-      })
-      .finally(() => {
-        if (!cancelled) setItemsLoading(false)
-      })
+    let i = 0
+    const workers = Array.from({ length: PREFETCH_CONCURRENCY }, async () => {
+      while (!cancelled) {
+        const idx = i++
+        if (idx >= remaining.length) break
+        await fetchCollection(remaining[idx])
+      }
+    })
+    void Promise.all(workers)
     return () => {
       cancelled = true
     }
-  }, [activeUid])
+  }, [collections, activeUid, itemsByUid, fetchCollection])
 
-  const tree = useMemo(() => (items ? buildTree(items) : []), [items])
   const activeCollection = collections?.find((c) => c.uid === activeUid) ?? null
+  const activeItems = activeUid ? itemsByUid.get(activeUid) : undefined
+  const activeError = activeUid ? errorByUid.get(activeUid) : undefined
+  const activeLoading = activeUid ? loadingUids.has(activeUid) : false
+
+  const fullTree = useMemo(
+    () => (activeItems ? buildTree(activeItems) : []),
+    [activeItems],
+  )
+  const visibleTree = useMemo(
+    () => (hideCompleted ? filterCompleted(fullTree) : fullTree),
+    [fullTree, hideCompleted],
+  )
+  const activeCounts = useMemo(
+    () => (activeItems ? countTasks(activeItems) : null),
+    [activeItems],
+  )
 
   async function handleLogout() {
     await logout()
@@ -97,6 +199,9 @@ export function MainView({ onLoggedOut }: Props) {
           )}
           {collections?.map((c) => {
             const isActive = c.uid === activeUid
+            const items = itemsByUid.get(c.uid)
+            const counts = items ? countTasks(items) : null
+            const failed = errorByUid.get(c.uid)
             return (
               <button
                 key={c.uid}
@@ -113,7 +218,21 @@ export function MainView({ onLoggedOut }: Props) {
                   className="h-2 w-2 shrink-0 rounded-full"
                   style={{ background: c.color || 'var(--color-border-strong)' }}
                 />
-                <span className="truncate">{c.name}</span>
+                <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                <span
+                  className={`shrink-0 text-xs tabular-nums ${
+                    isActive ? 'text-text-muted' : 'text-text-faint'
+                  }`}
+                  title={
+                    counts
+                      ? `${counts.open} open of ${counts.total}`
+                      : failed
+                        ? failed
+                        : 'Loading…'
+                  }
+                >
+                  {counts ? counts.open : failed ? '!' : '…'}
+                </span>
               </button>
             )
           })}
@@ -130,25 +249,76 @@ export function MainView({ onLoggedOut }: Props) {
       </aside>
 
       <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-border px-5 py-3">
-          <h2 className="text-sm font-medium text-text">
-            {activeCollection?.name ?? '—'}
-          </h2>
-          {itemsLoading && (
-            <span className="text-xs text-text-faint">Syncing…</span>
-          )}
+        <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <div className="flex min-w-0 items-baseline gap-3">
+            <h2 className="truncate text-sm font-medium text-text">
+              {activeCollection?.name ?? '—'}
+            </h2>
+            {activeCounts && (
+              <span className="text-xs tabular-nums text-text-faint">
+                {activeCounts.open} open · {activeCounts.total}
+              </span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            {activeLoading && (
+              <span className="text-xs text-text-faint">Syncing…</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setHideCompleted(!hideCompleted)}
+              aria-pressed={hideCompleted}
+              title={
+                hideCompleted ? 'Show completed tasks' : 'Hide completed tasks'
+              }
+              className={`flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${
+                hideCompleted
+                  ? 'border-accent/40 bg-accent-soft text-text'
+                  : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+              }`}
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                {hideCompleted ? (
+                  <>
+                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
+                    <circle cx="8" cy="8" r="2" />
+                    <path d="M2.5 13.5l11-11" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
+                    <circle cx="8" cy="8" r="2" />
+                  </>
+                )}
+              </svg>
+              <span>{hideCompleted ? 'Show done' : 'Hide done'}</span>
+            </button>
+          </div>
         </header>
         <div className="flex-1 overflow-y-auto">
-          {itemsError && (
-            <p className="px-5 py-4 text-sm text-danger">{itemsError}</p>
+          {activeError && (
+            <p className="px-5 py-4 text-sm text-danger">{activeError}</p>
           )}
-          {items === null && !itemsError && itemsLoading && (
+          {!activeError && activeItems === undefined && (
             <p className="px-5 py-4 text-sm text-text-faint">Loading tasks…</p>
           )}
-          {items && tree.length > 0 && <TaskTree roots={tree} />}
-          {items && tree.length === 0 && !itemsError && !itemsLoading && (
+          {!activeError && activeItems && visibleTree.length > 0 && (
+            <TaskTree roots={visibleTree} />
+          )}
+          {!activeError && activeItems && visibleTree.length === 0 && (
             <p className="px-5 py-4 text-sm text-text-faint">
-              No tasks in this list.
+              {hideCompleted && fullTree.length > 0
+                ? 'All tasks completed.'
+                : 'No tasks in this list.'}
             </p>
           )}
         </div>
