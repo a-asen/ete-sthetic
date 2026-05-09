@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { LoginScreen } from './components/LoginScreen'
+import { MainView } from './components/MainView'
 import { restoreSession } from './services/etebase'
 
 type AuthState = 'checking' | 'unauthenticated' | 'authenticated'
@@ -25,11 +26,7 @@ function App() {
     return <LoginScreen onAuthenticated={() => setAuth('authenticated')} />
   }
 
-  return (
-    <div className="flex h-screen items-center justify-center bg-bg">
-      <p className="text-sm text-text-faint">Signed in. Main view coming next.</p>
-    </div>
-  )
+  return <MainView onLoggedOut={() => setAuth('unauthenticated')} />
 }
 
 export default App
