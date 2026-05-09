@@ -69,3 +69,33 @@ export function flattenVisible(
   walk(roots)
   return out
 }
+
+// Drop completed nodes whose descendants are also all completed. A completed
+// node with at least one open descendant is kept so the descendant remains
+// reachable in the tree.
+export function filterCompleted(roots: TaskNode[]): TaskNode[] {
+  const filterNode = (node: TaskNode): TaskNode | null => {
+    const filteredChildren = node.children
+      .map(filterNode)
+      .filter((c): c is TaskNode => c !== null)
+    const isCompleted = node.todo.status === 'COMPLETED'
+    if (isCompleted && filteredChildren.length === 0) return null
+    return { ...node, children: filteredChildren }
+  }
+  return roots
+    .map(filterNode)
+    .filter((c): c is TaskNode => c !== null)
+}
+
+export function countTasks(items: { todo: { status: string } }[]): {
+  open: number
+  total: number
+} {
+  let open = 0
+  for (const item of items) {
+    if (item.todo.status !== 'COMPLETED' && item.todo.status !== 'CANCELLED') {
+      open++
+    }
+  }
+  return { open, total: items.length }
+}
