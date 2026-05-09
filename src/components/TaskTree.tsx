@@ -4,6 +4,8 @@ import { flattenVisible } from '../services/tree'
 
 interface Props {
   roots: TaskNode[]
+  onToggleComplete?: (node: TaskNode) => void
+  pendingUids?: ReadonlySet<string>
 }
 
 const INDENT_PX = 20
@@ -42,7 +44,7 @@ function priorityClasses(p: number): string {
   return 'text-text-faint border-border bg-surface-2'
 }
 
-export function TaskTree({ roots }: Props) {
+export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Default: expand all roots one level
     const initial = new Set<string>()
@@ -124,12 +126,20 @@ export function TaskTree({ roots }: Props) {
               </svg>
             </button>
 
-            <span
-              aria-hidden
-              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ${
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={isDone}
+              aria-label={isDone ? 'Mark not completed' : 'Mark completed'}
+              disabled={!onToggleComplete || pendingUids?.has(node.itemUid)}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleComplete?.(node)
+              }}
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                 isDone
-                  ? 'border-accent bg-accent text-bg'
-                  : 'border-border-strong bg-transparent'
+                  ? 'border-accent bg-accent text-bg hover:opacity-90'
+                  : 'border-border-strong bg-transparent hover:border-text-muted'
               }`}
             >
               {isDone && (
@@ -141,11 +151,12 @@ export function TaskTree({ roots }: Props) {
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
+                  aria-hidden
                 >
                   <path d="M3 8l3.5 3.5L13 5" />
                 </svg>
               )}
-            </span>
+            </button>
 
             <span
               className={`min-w-0 flex-1 truncate ${

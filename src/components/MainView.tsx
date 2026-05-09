@@ -3,9 +3,10 @@ import {
   listCollections,
   listTaskItems,
   logout,
+  toggleComplete,
 } from '../services/etebase'
 import { buildTree, countTasks, filterCompleted } from '../services/tree'
-import type { CollectionInfo, TaskItem } from '../types'
+import type { CollectionInfo, TaskItem, TaskNode } from '../types'
 import { TaskTree } from './TaskTree'
 
 interface Props {
@@ -49,6 +50,11 @@ export function MainView({ onLoggedOut }: Props) {
     setHideCompletedState(value)
     writeHideCompleted(value)
   }, [])
+
+  const [mutationError, setMutationError] = useState<string | null>(null)
+  const [pendingItemUids, setPendingItemUids] = useState<Set<string>>(
+    () => new Set(),
+  )
 
   const inFlightRef = useRef<Set<string>>(new Set())
   const cancelledRef = useRef(false)
@@ -177,6 +183,69 @@ export function MainView({ onLoggedOut }: Props) {
     onLoggedOut()
   }
 
+  function replaceCachedItem(
+    colUid: string,
+    itemUid: string,
+    replacement: TaskItem,
+  ) {
+    setItemsByUid((prev) => {
+      const items = prev.get(colUid)
+      if (!items) return prev
+      const next = new Map(prev)
+      next.set(
+        colUid,
+        items.map((it) => (it.itemUid === itemUid ? replacement : it)),
+      )
+      return next
+    })
+  }
+
+  const handleToggleComplete = useCallback(
+    async (node: TaskNode) => {
+      if (!activeUid) return
+      const colUid = activeUid
+      const itemUid = node.itemUid
+      const original: TaskItem = { itemUid, todo: node.todo }
+      const optimistic: TaskItem = {
+        itemUid,
+        todo: {
+          ...node.todo,
+          status:
+            node.todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED',
+        },
+      }
+
+      setMutationError(null)
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        next.add(itemUid)
+        return next
+      })
+      replaceCachedItem(colUid, itemUid, optimistic)
+
+      try {
+        const result = await toggleComplete(colUid, itemUid, node.todo.status)
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, result)
+      } catch (err) {
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, original)
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to update task',
+        )
+      } finally {
+        if (!cancelledRef.current) {
+          setPendingItemUids((prev) => {
+            const next = new Set(prev)
+            next.delete(itemUid)
+            return next
+          })
+        }
+      }
+    },
+    [activeUid],
+  )
+
   return (
     <div className="flex h-screen bg-bg text-text">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
@@ -248,7 +317,23 @@ export function MainView({ onLoggedOut }: Props) {
         </div>
       </aside>
 
-      <main className="flex flex-1 flex-col overflow-hidden">
+      <main className="relative flex flex-1 flex-col overflow-hidden">
+        {mutationError && (
+          <div
+            role="alert"
+            className="pointer-events-auto absolute bottom-4 left-1/2 z-10 flex max-w-md -translate-x-1/2 items-center gap-3 rounded-md border border-danger/30 bg-surface px-3 py-2 text-xs text-danger shadow-lg"
+          >
+            <span className="flex-1">{mutationError}</span>
+            <button
+              type="button"
+              onClick={() => setMutationError(null)}
+              className="text-text-faint hover:text-text-muted"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
           <div className="flex min-w-0 items-baseline gap-3">
             <h2 className="truncate text-sm font-medium text-text">
@@ -312,7 +397,11 @@ export function MainView({ onLoggedOut }: Props) {
             <p className="px-5 py-4 text-sm text-text-faint">Loading tasks…</p>
           )}
           {!activeError && activeItems && visibleTree.length > 0 && (
-            <TaskTree roots={visibleTree} />
+            <TaskTree
+              roots={visibleTree}
+              onToggleComplete={handleToggleComplete}
+              pendingUids={pendingItemUids}
+            />
           )}
           {!activeError && activeItems && visibleTree.length === 0 && (
             <p className="px-5 py-4 text-sm text-text-faint">
