@@ -198,13 +198,25 @@ export async function toggleComplete(
   return updateTask(collectionUid, itemUid, { status: next })
 }
 
+export async function deleteTasks(
+  collectionUid: string,
+  itemUids: string[],
+): Promise<void> {
+  if (itemUids.length === 0) return
+  const items = await Promise.all(
+    itemUids.map((uid) => getItem(collectionUid, uid)),
+  )
+  for (const item of items) item.delete()
+  const im = await getItemManager(collectionUid)
+  await im.transaction(items)
+  for (const uid of itemUids) {
+    itemHandles.delete(itemKey(collectionUid, uid))
+  }
+}
+
 export async function deleteTask(
   collectionUid: string,
   itemUid: string,
 ): Promise<void> {
-  const item = await getItem(collectionUid, itemUid)
-  item.delete()
-  const im = await getItemManager(collectionUid)
-  await im.transaction([item])
-  itemHandles.delete(itemKey(collectionUid, itemUid))
+  return deleteTasks(collectionUid, [itemUid])
 }

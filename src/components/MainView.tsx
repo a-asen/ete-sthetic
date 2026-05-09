@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createTask,
+  deleteTasks,
   listCollections,
   listTaskItems,
   logout,
   toggleComplete,
   updateTask,
 } from '../services/etebase'
-import { buildTree, countTasks, filterCompleted } from '../services/tree'
+import {
+  buildTree,
+  collectDescendantItemUids,
+  countTasks,
+  filterCompleted,
+} from '../services/tree'
 import type { CollectionInfo, TaskItem, TaskNode } from '../types'
+import { ConfirmModal } from './ConfirmModal'
 import { TaskTree } from './TaskTree'
 
 interface Props {
@@ -60,6 +67,10 @@ export function MainView({ onLoggedOut }: Props) {
   const [creating, setCreating] = useState<{ parentUid: string | null } | null>(
     null,
   )
+  const [confirmDelete, setConfirmDelete] = useState<{
+    node: TaskNode
+    descendantCount: number
+  } | null>(null)
 
   const inFlightRef = useRef<Set<string>>(new Set())
   const cancelledRef = useRef(false)
@@ -246,6 +257,53 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid, creating],
   )
 
+  const handleDeleteRequest = useCallback((node: TaskNode) => {
+    const descendants = collectDescendantItemUids(node)
+    setConfirmDelete({ node, descendantCount: descendants.length - 1 })
+  }, [])
+
+  const handleConfirmDelete = useCallback(async () => {
+    const target = confirmDelete
+    setConfirmDelete(null)
+    if (!target || !activeUid) return
+    const colUid = activeUid
+    const itemUidsToDelete = collectDescendantItemUids(target.node)
+    const deleteSet = new Set(itemUidsToDelete)
+
+    setMutationError(null)
+    setItemsByUid((prev) => {
+      const items = prev.get(colUid)
+      if (!items) return prev
+      const next = new Map(prev)
+      next.set(
+        colUid,
+        items.filter((it) => !deleteSet.has(it.itemUid)),
+      )
+      return next
+    })
+
+    try {
+      await deleteTasks(colUid, itemUidsToDelete)
+    } catch (err) {
+      if (cancelledRef.current) return
+      setMutationError(
+        err instanceof Error ? err.message : 'Failed to delete task',
+      )
+      // Refetch the collection so the cache is consistent again.
+      try {
+        const refreshed = await listTaskItems(colUid)
+        if (cancelledRef.current) return
+        setItemsByUid((prev) => {
+          const next = new Map(prev)
+          next.set(colUid, refreshed)
+          return next
+        })
+      } catch {
+        // best effort; leave the optimistic state in place
+      }
+    }
+  }, [activeUid, confirmDelete])
+
   const handleRenameTask = useCallback(
     async (node: TaskNode, newSummary: string) => {
       if (!activeUid) return
@@ -336,6 +394,22 @@ export function MainView({ onLoggedOut }: Props) {
 
   return (
     <div className="flex h-screen bg-bg text-text">
+      {confirmDelete && (
+        <ConfirmModal
+          title={`Delete "${confirmDelete.node.todo.summary || '(untitled)'}"?`}
+          body={
+            confirmDelete.descendantCount > 0
+              ? `This will permanently delete this task and ${
+                  confirmDelete.descendantCount
+                } subtask${confirmDelete.descendantCount === 1 ? '' : 's'}.`
+              : 'This will permanently delete this task.'
+          }
+          confirmLabel="Delete"
+          destructive
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={handleConfirmDelete}
+        />
+      )}
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-xs font-semibold uppercase tracking-wider text-text-faint">
@@ -515,6 +589,7 @@ export function MainView({ onLoggedOut }: Props) {
               onConfirmCreate={handleConfirmCreate}
               onCancelCreate={handleCancelCreate}
               onRenameTask={handleRenameTask}
+              onDeleteRequest={handleDeleteRequest}
             />
           )}
           {!activeError && activeItems && visibleTree.length === 0 && !creating && (

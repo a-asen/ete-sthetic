@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { TaskNode } from '../types'
-import { flattenVisible } from '../services/tree'
+import { findNodeByUid, flattenVisible } from '../services/tree'
 
 interface Props {
   roots: TaskNode[]
@@ -11,6 +11,7 @@ interface Props {
   onConfirmCreate?: (summary: string) => void
   onCancelCreate?: () => void
   onRenameTask?: (node: TaskNode, newSummary: string) => void
+  onDeleteRequest?: (node: TaskNode) => void
 }
 
 const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
@@ -114,6 +115,7 @@ export function TaskTree({
   onConfirmCreate,
   onCancelCreate,
   onRenameTask,
+  onDeleteRequest,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Default: expand all roots one level
@@ -131,6 +133,26 @@ export function TaskTree({
       editInputRef.current.select()
     }
   }, [editingUid])
+
+  // Del / Backspace on selection -> delete request (skip while typing).
+  useEffect(() => {
+    if (!selected || !onDeleteRequest || editingUid) return
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement
+      )
+        return
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        const node = findNodeByUid(roots, selected)
+        if (node) onDeleteRequest(node)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selected, editingUid, onDeleteRequest, roots])
 
   // Auto-expand the parent we're creating under so its new child input is visible.
   useEffect(() => {

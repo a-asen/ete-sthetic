@@ -87,6 +87,28 @@ export function filterCompleted(roots: TaskNode[]): TaskNode[] {
     .filter((c): c is TaskNode => c !== null)
 }
 
+export function findNodeByUid(
+  roots: TaskNode[],
+  uid: string,
+): TaskNode | null {
+  for (const node of roots) {
+    if (node.todo.uid === uid) return node
+    const inChild = findNodeByUid(node.children, uid)
+    if (inChild) return inChild
+  }
+  return null
+}
+
+export function collectDescendantItemUids(node: TaskNode): string[] {
+  const out: string[] = []
+  const walk = (n: TaskNode) => {
+    out.push(n.itemUid)
+    for (const child of n.children) walk(child)
+  }
+  walk(node)
+  return out
+}
+
 export function countTasks(items: { todo: { status: string } }[]): {
   open: number
   total: number
