@@ -25,3 +25,6 @@ dist-ssr
 
 # Claude Code local state (per-machine permission allowlist)
 .claude/
+
+# Local working materials (screenshots, scratchpads)
+_resources/
