@@ -5,6 +5,7 @@ import {
   listTaskItems,
   logout,
   toggleComplete,
+  updateTask,
 } from '../services/etebase'
 import { buildTree, countTasks, filterCompleted } from '../services/tree'
 import type { CollectionInfo, TaskItem, TaskNode } from '../types'
@@ -245,6 +246,48 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid, creating],
   )
 
+  const handleRenameTask = useCallback(
+    async (node: TaskNode, newSummary: string) => {
+      if (!activeUid) return
+      const colUid = activeUid
+      const itemUid = node.itemUid
+      const original: TaskItem = { itemUid, todo: node.todo }
+      const optimistic: TaskItem = {
+        itemUid,
+        todo: { ...node.todo, summary: newSummary },
+      }
+      setMutationError(null)
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        next.add(itemUid)
+        return next
+      })
+      replaceCachedItem(colUid, itemUid, optimistic)
+      try {
+        const result = await updateTask(colUid, itemUid, {
+          summary: newSummary,
+        })
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, result)
+      } catch (err) {
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, original)
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to rename task',
+        )
+      } finally {
+        if (!cancelledRef.current) {
+          setPendingItemUids((prev) => {
+            const next = new Set(prev)
+            next.delete(itemUid)
+            return next
+          })
+        }
+      }
+    },
+    [activeUid],
+  )
+
   const handleToggleComplete = useCallback(
     async (node: TaskNode) => {
       if (!activeUid) return
@@ -471,6 +514,7 @@ export function MainView({ onLoggedOut }: Props) {
               onAddChild={handleStartCreateChild}
               onConfirmCreate={handleConfirmCreate}
               onCancelCreate={handleCancelCreate}
+              onRenameTask={handleRenameTask}
             />
           )}
           {!activeError && activeItems && visibleTree.length === 0 && !creating && (

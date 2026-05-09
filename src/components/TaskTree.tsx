@@ -10,6 +10,7 @@ interface Props {
   onAddChild?: (parent: TaskNode) => void
   onConfirmCreate?: (summary: string) => void
   onCancelCreate?: () => void
+  onRenameTask?: (node: TaskNode, newSummary: string) => void
 }
 
 const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
@@ -112,6 +113,7 @@ export function TaskTree({
   onAddChild,
   onConfirmCreate,
   onCancelCreate,
+  onRenameTask,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Default: expand all roots one level
@@ -120,6 +122,15 @@ export function TaskTree({
     return initial
   })
   const [selected, setSelected] = useState<string | null>(null)
+  const [editingUid, setEditingUid] = useState<string | null>(null)
+  const editInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editingUid && editInputRef.current) {
+      editInputRef.current.focus()
+      editInputRef.current.select()
+    }
+  }, [editingUid])
 
   // Auto-expand the parent we're creating under so its new child input is visible.
   useEffect(() => {
@@ -249,16 +260,49 @@ export function TaskTree({
               )}
             </button>
 
-            <span
-              className={`min-w-0 flex-1 truncate ${
-                isDone ? 'text-text-faint line-through' : 'text-text'
-              }`}
-              title={node.todo.summary}
-            >
-              {node.todo.summary || (
-                <em className="text-text-faint">(untitled)</em>
-              )}
-            </span>
+            {editingUid === node.todo.uid ? (
+              <input
+                ref={editInputRef}
+                defaultValue={node.todo.summary}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const v = e.currentTarget.value.trim()
+                    setEditingUid(null)
+                    if (v && v !== node.todo.summary) {
+                      onRenameTask?.(node, v)
+                    }
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setEditingUid(null)
+                  }
+                }}
+                onBlur={(e) => {
+                  const v = e.currentTarget.value.trim()
+                  setEditingUid(null)
+                  if (v && v !== node.todo.summary) {
+                    onRenameTask?.(node, v)
+                  }
+                }}
+                className="min-w-0 flex-1 bg-transparent text-text outline-none"
+              />
+            ) : (
+              <span
+                onDoubleClick={(e) => {
+                  e.stopPropagation()
+                  if (onRenameTask) setEditingUid(node.todo.uid)
+                }}
+                className={`min-w-0 flex-1 truncate ${
+                  isDone ? 'text-text-faint line-through' : 'text-text'
+                }`}
+                title={node.todo.summary}
+              >
+                {node.todo.summary || (
+                  <em className="text-text-faint">(untitled)</em>
+                )}
+              </span>
+            )}
 
             {onAddChild && (
               <button
