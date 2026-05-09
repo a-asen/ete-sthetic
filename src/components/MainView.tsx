@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  createTask,
   listCollections,
   listTaskItems,
   logout,
@@ -54,6 +55,9 @@ export function MainView({ onLoggedOut }: Props) {
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [pendingItemUids, setPendingItemUids] = useState<Set<string>>(
     () => new Set(),
+  )
+  const [creating, setCreating] = useState<{ parentUid: string | null } | null>(
+    null,
   )
 
   const inFlightRef = useRef<Set<string>>(new Set())
@@ -200,6 +204,47 @@ export function MainView({ onLoggedOut }: Props) {
     })
   }
 
+  const handleStartCreateRoot = useCallback(() => {
+    setCreating({ parentUid: null })
+  }, [])
+
+  const handleStartCreateChild = useCallback((parent: TaskNode) => {
+    setCreating({ parentUid: parent.todo.uid })
+  }, [])
+
+  const handleCancelCreate = useCallback(() => setCreating(null), [])
+
+  const handleConfirmCreate = useCallback(
+    async (summary: string) => {
+      const cur = creating
+      setCreating(null)
+      if (!activeUid || !cur) return
+      const trimmed = summary.trim()
+      if (!trimmed) return
+      const colUid = activeUid
+      try {
+        const newItem = await createTask(
+          colUid,
+          trimmed,
+          cur.parentUid ?? undefined,
+        )
+        if (cancelledRef.current) return
+        setItemsByUid((prev) => {
+          const items = prev.get(colUid) ?? []
+          const next = new Map(prev)
+          next.set(colUid, [...items, newItem])
+          return next
+        })
+      } catch (err) {
+        if (cancelledRef.current) return
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to create task',
+        )
+      }
+    },
+    [activeUid, creating],
+  )
+
   const handleToggleComplete = useCallback(
     async (node: TaskNode) => {
       if (!activeUid) return
@@ -345,10 +390,31 @@ export function MainView({ onLoggedOut }: Props) {
               </span>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2">
             {activeLoading && (
               <span className="text-xs text-text-faint">Syncing…</span>
             )}
+            <button
+              type="button"
+              onClick={handleStartCreateRoot}
+              disabled={!activeUid || !activeItems}
+              title="Add task (at top of list)"
+              aria-label="Add task"
+              className="flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                aria-hidden
+              >
+                <path d="M8 3.5v9M3.5 8h9" />
+              </svg>
+              <span>Add task</span>
+            </button>
             <button
               type="button"
               onClick={() => setHideCompleted(!hideCompleted)}
@@ -396,14 +462,18 @@ export function MainView({ onLoggedOut }: Props) {
           {!activeError && activeItems === undefined && (
             <p className="px-5 py-4 text-sm text-text-faint">Loading tasks…</p>
           )}
-          {!activeError && activeItems && visibleTree.length > 0 && (
+          {!activeError && activeItems && (visibleTree.length > 0 || creating) && (
             <TaskTree
               roots={visibleTree}
               onToggleComplete={handleToggleComplete}
               pendingUids={pendingItemUids}
+              creatingParent={creating ? creating.parentUid : undefined}
+              onAddChild={handleStartCreateChild}
+              onConfirmCreate={handleConfirmCreate}
+              onCancelCreate={handleCancelCreate}
             />
           )}
-          {!activeError && activeItems && visibleTree.length === 0 && (
+          {!activeError && activeItems && visibleTree.length === 0 && !creating && (
             <p className="px-5 py-4 text-sm text-text-faint">
               {hideCompleted && fullTree.length > 0
                 ? 'All tasks completed.'

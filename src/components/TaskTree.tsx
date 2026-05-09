@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { TaskNode } from '../types'
 import { flattenVisible } from '../services/tree'
 
@@ -6,6 +6,66 @@ interface Props {
   roots: TaskNode[]
   onToggleComplete?: (node: TaskNode) => void
   pendingUids?: ReadonlySet<string>
+  creatingParent?: string | null
+  onAddChild?: (parent: TaskNode) => void
+  onConfirmCreate?: (summary: string) => void
+  onCancelCreate?: () => void
+}
+
+const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
+
+function InlineCreate({
+  depth,
+  onConfirm,
+  onCancel,
+}: {
+  depth: number
+  onConfirm: (summary: string) => void
+  onCancel: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const value = inputRef.current?.value.trim() ?? ''
+      if (value) onConfirm(value)
+      else onCancel()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onCancel()
+    }
+  }
+
+  function handleBlur(e: React.FocusEvent<HTMLInputElement>) {
+    const value = e.target.value.trim()
+    if (value) onConfirm(value)
+    else onCancel()
+  }
+
+  return (
+    <li
+      className="flex items-center gap-2 px-3 py-1.5"
+      style={{ paddingLeft: 12 + depth * 20 }}
+    >
+      <span className="h-4 w-4 shrink-0" aria-hidden />
+      <span
+        aria-hidden
+        className="h-4 w-4 shrink-0 rounded-sm border border-border-strong"
+      />
+      <input
+        ref={inputRef}
+        type="text"
+        placeholder={INPUT_PLACEHOLDER}
+        className="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-faint"
+        onKeyDown={handleKey}
+        onBlur={handleBlur}
+      />
+    </li>
+  )
 }
 
 const INDENT_PX = 20
@@ -44,7 +104,15 @@ function priorityClasses(p: number): string {
   return 'text-text-faint border-border bg-surface-2'
 }
 
-export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
+export function TaskTree({
+  roots,
+  onToggleComplete,
+  pendingUids,
+  creatingParent,
+  onAddChild,
+  onConfirmCreate,
+  onCancelCreate,
+}: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Default: expand all roots one level
     const initial = new Set<string>()
@@ -52,6 +120,18 @@ export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
     return initial
   })
   const [selected, setSelected] = useState<string | null>(null)
+
+  // Auto-expand the parent we're creating under so its new child input is visible.
+  useEffect(() => {
+    if (creatingParent && creatingParent !== null) {
+      setExpanded((prev) => {
+        if (prev.has(creatingParent)) return prev
+        const next = new Set(prev)
+        next.add(creatingParent)
+        return next
+      })
+    }
+  }, [creatingParent])
 
   const visible = useMemo(() => flattenVisible(roots, expanded), [roots, expanded])
 
@@ -64,7 +144,11 @@ export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
     })
   }
 
-  if (roots.length === 0) {
+  const isCreatingRoot = creatingParent === null
+  const isCreatingUnder = (uid: string) => creatingParent === uid
+  const canCreate = !!onConfirmCreate && !!onCancelCreate
+
+  if (roots.length === 0 && !isCreatingRoot) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-text-faint">
         No tasks in this list.
@@ -74,6 +158,13 @@ export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
 
   return (
     <ul className="select-none py-2" role="tree">
+      {isCreatingRoot && canCreate && (
+        <InlineCreate
+          depth={0}
+          onConfirm={onConfirmCreate!}
+          onCancel={onCancelCreate!}
+        />
+      )}
       {visible.map((node) => {
         const hasChildren = node.children.length > 0
         const isExpanded = expanded.has(node.todo.uid)
@@ -82,7 +173,7 @@ export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
         const due = formatDue(node.todo.due)
         const pLabel = priorityLabel(node.todo.priority)
 
-        return (
+        const row = (
           <li
             key={node.itemUid}
             role="treeitem"
@@ -169,6 +260,31 @@ export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
               )}
             </span>
 
+            {onAddChild && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onAddChild(node)
+                }}
+                title="Add subtask"
+                aria-label="Add subtask"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-text-muted group-hover:opacity-100 focus:opacity-100"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  aria-hidden
+                >
+                  <path d="M8 3.5v9M3.5 8h9" />
+                </svg>
+              </button>
+            )}
+
             {pLabel && (
               <span
                 className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${priorityClasses(
@@ -186,6 +302,20 @@ export function TaskTree({ roots, onToggleComplete, pendingUids }: Props) {
             )}
           </li>
         )
+
+        if (isCreatingUnder(node.todo.uid) && canCreate) {
+          return (
+            <Fragment key={node.itemUid}>
+              {row}
+              <InlineCreate
+                depth={node.depth + 1}
+                onConfirm={onConfirmCreate!}
+                onCancel={onCancelCreate!}
+              />
+            </Fragment>
+          )
+        }
+        return row
       })}
     </ul>
   )
