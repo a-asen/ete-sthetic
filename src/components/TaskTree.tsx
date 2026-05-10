@@ -225,16 +225,17 @@ export function TaskTree({
           if (idx < 0) return
           e.preventDefault()
           const node = visible[idx]
-          if (node.children.length > 0) {
-            if (!expanded.has(node.todo.uid)) {
-              setExpanded((p) => {
-                const next = new Set(p)
-                next.add(node.todo.uid)
-                return next
-              })
-            } else {
-              setSelected(node.children[0].todo.uid)
-            }
+          // Collapsed parent: expand. Leaf or already-expanded: open the
+          // subtask input under this row (the parent gets auto-expanded by
+          // the create-input effect so the input is visible).
+          if (node.children.length > 0 && !expanded.has(node.todo.uid)) {
+            setExpanded((p) => {
+              const next = new Set(p)
+              next.add(node.todo.uid)
+              return next
+            })
+          } else if (onAddChild) {
+            onAddChild(node)
           }
           break
         }
@@ -295,6 +296,7 @@ export function TaskTree({
     expanded,
     onToggleComplete,
     onDeleteRequest,
+    onAddChild,
   ])
 
   function toggle(uid: string) {

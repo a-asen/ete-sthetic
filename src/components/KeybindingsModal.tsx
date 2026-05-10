@@ -24,7 +24,7 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     group: 'Tree',
     items: [
       { keys: ['←'], description: 'Collapse, then jump to parent' },
-      { keys: ['→'], description: 'Expand, then jump to first child' },
+      { keys: ['→'], description: 'Expand a parent, or start a subtask' },
       { keys: ['Enter'], description: 'Toggle complete' },
       { keys: ['n'], description: 'New task at top of list' },
       { keys: ['Del', 'Backspace'], description: 'Delete (with confirmation)' },
