@@ -4,6 +4,9 @@ import { flattenVisible } from '../services/tree'
 
 interface Props {
   roots: TaskNode[]
+  selectedUid: string | null
+  onSelectChange: (uid: string | null) => void
+  inactive?: boolean
   onToggleComplete?: (node: TaskNode) => void
   pendingUids?: ReadonlySet<string>
   creatingParent?: string | null
@@ -109,6 +112,9 @@ function priorityClasses(p: number): string {
 
 export function TaskTree({
   roots,
+  selectedUid,
+  onSelectChange,
+  inactive = false,
   onToggleComplete,
   pendingUids,
   creatingParent,
@@ -125,7 +131,8 @@ export function TaskTree({
     for (const r of roots) initial.add(r.todo.uid)
     return initial
   })
-  const [selected, setSelected] = useState<string | null>(null)
+  const selected = selectedUid
+  const setSelected = onSelectChange
   const [editingUid, setEditingUid] = useState<string | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
 
@@ -170,6 +177,7 @@ export function TaskTree({
   // Single keyboard handler for the tree: arrows, Enter, Del/Backspace.
   // Skipped while typing in any input/textarea or while a modal is open.
   useEffect(() => {
+    if (inactive) return
     const handler = (e: KeyboardEvent) => {
       const target = e.target
       if (
@@ -279,8 +287,10 @@ export function TaskTree({
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [
+    inactive,
     visible,
     selected,
+    setSelected,
     editingUid,
     expanded,
     onToggleComplete,

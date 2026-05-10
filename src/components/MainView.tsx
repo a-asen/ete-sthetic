@@ -72,6 +72,7 @@ export function MainView({ onLoggedOut }: Props) {
     node: TaskNode
     descendantCount: number
   } | null>(null)
+  const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(null)
   // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
   // disappearing so a misclicked checkbox can be untoggled.
   const [recentlyCompletedUids, setRecentlyCompletedUids] = useState<
@@ -305,6 +306,9 @@ export function MainView({ onLoggedOut }: Props) {
           next.set(colUid, [...items, newItem])
           return next
         })
+        // Follow the new task: select it so the tree's auto-focus +
+        // scrollIntoView take the user to wherever it lands after sorting.
+        setSelectedTaskUid(newItem.todo.uid)
       } catch (err) {
         if (cancelledRef.current) return
         setMutationError(
@@ -659,6 +663,8 @@ export function MainView({ onLoggedOut }: Props) {
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
               fadingUids={fadingOutUids}
+              selectedUid={selectedTaskUid}
+              onSelectChange={setSelectedTaskUid}
             />
           )}
           {!activeError && activeItems && visibleTree.length === 0 && !creating && (
