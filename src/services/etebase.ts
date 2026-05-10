@@ -10,14 +10,39 @@ let account: Etebase.Account | null = null
 
 const collectionHandles = new Map<string, Etebase.Collection>()
 const itemHandles = new Map<string, Etebase.Item>()
+// Pending mutation chain per item. Mutations on the same uid must serialize:
+// Etebase reuses one Item handle and shares its etag; two interleaving
+// setContent → transaction calls will clobber each other and the second one
+// gets rejected by the server with "Items failed to validate".
+const itemMutationChains = new Map<string, Promise<unknown>>()
 
 function itemKey(colUid: string, itemUid: string): string {
   return `${colUid}|${itemUid}`
 }
 
+function chainItemMutation<T>(
+  collectionUid: string,
+  itemUid: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const key = itemKey(collectionUid, itemUid)
+  const prev = itemMutationChains.get(key) ?? Promise.resolve()
+  // Run fn whether the previous link succeeded or failed; we want to keep
+  // the queue moving even if one mutation errored.
+  const next = prev.then(fn, fn)
+  // Store a never-rejecting tail so subsequent chain calls don't see an
+  // unhandled rejection from a failed mutation.
+  itemMutationChains.set(
+    key,
+    next.catch(() => {}),
+  )
+  return next
+}
+
 function clearHandles() {
   collectionHandles.clear()
   itemHandles.clear()
+  itemMutationChains.clear()
 }
 
 export class AuthError extends Error {}
@@ -164,28 +189,30 @@ export async function createTask(
   return { itemUid: item.uid, todo }
 }
 
-export async function updateTask(
+export function updateTask(
   collectionUid: string,
   itemUid: string,
   patch: VTodoPatch,
 ): Promise<TaskItem> {
-  const item = await getItem(collectionUid, itemUid)
-  const oldRaw = await item.getContent(Etebase.OutputFormat.String)
-  const newRaw = updateVTodo(oldRaw, patch)
-  await item.setContent(newRaw)
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    const item = await getItem(collectionUid, itemUid)
+    const oldRaw = await item.getContent(Etebase.OutputFormat.String)
+    const newRaw = updateVTodo(oldRaw, patch)
+    await item.setContent(newRaw)
 
-  const newSummary =
-    patch.summary !== undefined
-      ? patch.summary
-      : (item.getMeta<Record<string, unknown>>().name ?? '')
-  setItemMeta(item, newSummary)
+    const newSummary =
+      patch.summary !== undefined
+        ? patch.summary
+        : (item.getMeta<Record<string, unknown>>().name ?? '')
+    setItemMeta(item, newSummary)
 
-  const im = await getItemManager(collectionUid)
-  await im.transaction([item])
+    const im = await getItemManager(collectionUid)
+    await im.transaction([item])
 
-  const todo = parseVTodo(newRaw)
-  if (!todo) throw new Error('Updated VTODO failed to parse')
-  return { itemUid: item.uid, todo }
+    const todo = parseVTodo(newRaw)
+    if (!todo) throw new Error('Updated VTODO failed to parse')
+    return { itemUid: item.uid, todo }
+  })
 }
 
 export async function toggleComplete(
