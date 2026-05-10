@@ -12,6 +12,7 @@ interface Props {
   onCancelCreate?: () => void
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
+  fadingUids?: ReadonlySet<string>
 }
 
 const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
@@ -116,6 +117,7 @@ export function TaskTree({
   onCancelCreate,
   onRenameTask,
   onDeleteRequest,
+  fadingUids,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Default: expand all roots one level
@@ -322,6 +324,7 @@ export function TaskTree({
         const isDone = node.todo.status === 'COMPLETED'
         const due = formatDue(node.todo.due)
         const pLabel = priorityLabel(node.todo.priority)
+        const isFading = fadingUids?.has(node.todo.uid) ?? false
 
         const row = (
           <li
@@ -333,11 +336,9 @@ export function TaskTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
             onClick={() => setSelected(node.todo.uid)}
-            className={`group flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none transition-colors ${
-              isSelected
-                ? 'bg-accent-soft'
-                : 'hover:bg-surface'
-            }`}
+            className={`group flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none transition-opacity ${
+              isFading ? 'opacity-50' : ''
+            } ${isSelected ? 'bg-accent-soft' : 'hover:bg-surface'}`}
             style={{ paddingLeft: 12 + node.depth * INDENT_PX }}
           >
             <button

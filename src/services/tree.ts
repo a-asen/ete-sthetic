@@ -72,14 +72,19 @@ export function flattenVisible(
 
 // Drop completed nodes whose descendants are also all completed. A completed
 // node with at least one open descendant is kept so the descendant remains
-// reachable in the tree.
-export function filterCompleted(roots: TaskNode[]): TaskNode[] {
+// reachable in the tree. Uids in `keep` are force-kept regardless of status —
+// used to give recently-completed tasks a grace period before they vanish.
+export function filterCompleted(
+  roots: TaskNode[],
+  keep?: ReadonlySet<string>,
+): TaskNode[] {
   const filterNode = (node: TaskNode): TaskNode | null => {
     const filteredChildren = node.children
       .map(filterNode)
       .filter((c): c is TaskNode => c !== null)
     const isCompleted = node.todo.status === 'COMPLETED'
-    if (isCompleted && filteredChildren.length === 0) return null
+    const isKept = keep?.has(node.todo.uid) ?? false
+    if (isCompleted && filteredChildren.length === 0 && !isKept) return null
     return { ...node, children: filteredChildren }
   }
   return roots

@@ -24,6 +24,7 @@ interface Props {
 
 const HIDE_COMPLETED_KEY = 'ete-stethic.hideCompleted'
 const PREFETCH_CONCURRENCY = 4
+const HIDE_GRACE_MS = 5000
 
 function readHideCompleted(): boolean {
   try {
@@ -71,6 +72,12 @@ export function MainView({ onLoggedOut }: Props) {
     node: TaskNode
     descendantCount: number
   } | null>(null)
+  // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
+  // disappearing so a misclicked checkbox can be untoggled.
+  const [recentlyCompletedUids, setRecentlyCompletedUids] = useState<
+    Set<string>
+  >(() => new Set())
+  const completionTimers = useRef<Map<string, number>>(new Map())
 
   const inFlightRef = useRef<Set<string>>(new Set())
   const cancelledRef = useRef(false)
@@ -80,6 +87,50 @@ export function MainView({ onLoggedOut }: Props) {
     return () => {
       cancelledRef.current = true
     }
+  }, [])
+
+  // Cleanup any pending completion timers on unmount.
+  useEffect(() => {
+    const timers = completionTimers.current
+    return () => {
+      for (const id of timers.values()) clearTimeout(id)
+      timers.clear()
+    }
+  }, [])
+
+  const markRecentlyCompleted = useCallback((uid: string) => {
+    setRecentlyCompletedUids((prev) => {
+      if (prev.has(uid)) return prev
+      const next = new Set(prev)
+      next.add(uid)
+      return next
+    })
+    const existing = completionTimers.current.get(uid)
+    if (existing) clearTimeout(existing)
+    const id = window.setTimeout(() => {
+      setRecentlyCompletedUids((prev) => {
+        if (!prev.has(uid)) return prev
+        const next = new Set(prev)
+        next.delete(uid)
+        return next
+      })
+      completionTimers.current.delete(uid)
+    }, HIDE_GRACE_MS)
+    completionTimers.current.set(uid, id)
+  }, [])
+
+  const clearRecentlyCompleted = useCallback((uid: string) => {
+    const existing = completionTimers.current.get(uid)
+    if (existing) {
+      clearTimeout(existing)
+      completionTimers.current.delete(uid)
+    }
+    setRecentlyCompletedUids((prev) => {
+      if (!prev.has(uid)) return prev
+      const next = new Set(prev)
+      next.delete(uid)
+      return next
+    })
   }, [])
 
   const fetchCollection = useCallback(async (uid: string) => {
@@ -186,8 +237,15 @@ export function MainView({ onLoggedOut }: Props) {
     [activeItems],
   )
   const visibleTree = useMemo(
-    () => (hideCompleted ? filterCompleted(fullTree) : fullTree),
-    [fullTree, hideCompleted],
+    () =>
+      hideCompleted
+        ? filterCompleted(fullTree, recentlyCompletedUids)
+        : fullTree,
+    [fullTree, hideCompleted, recentlyCompletedUids],
+  )
+  const fadingOutUids = useMemo(
+    () => (hideCompleted ? recentlyCompletedUids : new Set<string>()),
+    [hideCompleted, recentlyCompletedUids],
   )
   const activeCounts = useMemo(
     () => (activeItems ? countTasks(activeItems) : null),
@@ -352,13 +410,11 @@ export function MainView({ onLoggedOut }: Props) {
       const colUid = activeUid
       const itemUid = node.itemUid
       const original: TaskItem = { itemUid, todo: node.todo }
+      const nextStatus =
+        node.todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED'
       const optimistic: TaskItem = {
         itemUid,
-        todo: {
-          ...node.todo,
-          status:
-            node.todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED',
-        },
+        todo: { ...node.todo, status: nextStatus },
       }
 
       setMutationError(null)
@@ -369,6 +425,14 @@ export function MainView({ onLoggedOut }: Props) {
       })
       replaceCachedItem(colUid, itemUid, optimistic)
 
+      // Grace-period bookkeeping: keep newly-completed tasks visible briefly
+      // when Hide-done is on; clear the timer if the user is uncompleting.
+      if (nextStatus === 'COMPLETED') {
+        markRecentlyCompleted(node.todo.uid)
+      } else {
+        clearRecentlyCompleted(node.todo.uid)
+      }
+
       try {
         const result = await toggleComplete(colUid, itemUid, node.todo.status)
         if (cancelledRef.current) return
@@ -376,6 +440,10 @@ export function MainView({ onLoggedOut }: Props) {
       } catch (err) {
         if (cancelledRef.current) return
         replaceCachedItem(colUid, itemUid, original)
+        // Roll back the grace-period state too on failure.
+        if (nextStatus === 'COMPLETED') {
+          clearRecentlyCompleted(node.todo.uid)
+        }
         setMutationError(
           err instanceof Error ? err.message : 'Failed to update task',
         )
@@ -389,7 +457,7 @@ export function MainView({ onLoggedOut }: Props) {
         }
       }
     },
-    [activeUid],
+    [activeUid, markRecentlyCompleted, clearRecentlyCompleted],
   )
 
   return (
@@ -590,6 +658,7 @@ export function MainView({ onLoggedOut }: Props) {
               onCancelCreate={handleCancelCreate}
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
+              fadingUids={fadingOutUids}
             />
           )}
           {!activeError && activeItems && visibleTree.length === 0 && !creating && (
