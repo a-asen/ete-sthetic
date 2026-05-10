@@ -43,6 +43,14 @@ function InlineCreate({
     } else if (e.key === 'Escape') {
       e.preventDefault()
       onCancel()
+    } else if (e.key === 'ArrowLeft') {
+      // ArrowLeft on an empty input cancels (mirrors ArrowRight to start).
+      // With any text in the field, this is a normal cursor move.
+      const input = e.currentTarget
+      if (input.value.length === 0) {
+        e.preventDefault()
+        onCancel()
+      }
     }
   }
 
