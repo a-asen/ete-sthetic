@@ -9,13 +9,19 @@ import {
   updateTask,
 } from '../services/etebase'
 import {
+  applyFilter,
   buildTree,
   collectDescendantItemUids,
   countTasks,
-  filterCompleted,
 } from '../services/tree'
 import type { CollectionInfo, TaskItem, TaskNode } from '../types'
 import { ConfirmModal } from './ConfirmModal'
+import {
+  DEFAULT_FILTER,
+  FilterPopover,
+  isFilterActive,
+  type FilterSpec,
+} from './FilterPopover'
 import { KeybindingsModal } from './KeybindingsModal'
 import { TaskTree } from './TaskTree'
 
@@ -56,11 +62,15 @@ export function MainView({ onLoggedOut }: Props) {
   )
   const [loadingUids, setLoadingUids] = useState<Set<string>>(() => new Set())
 
-  const [hideCompleted, setHideCompletedState] = useState<boolean>(readHideCompleted)
-  const setHideCompleted = useCallback((value: boolean) => {
-    setHideCompletedState(value)
-    writeHideCompleted(value)
+  const [filter, setFilterState] = useState<FilterSpec>(() => ({
+    ...DEFAULT_FILTER,
+    hideCompleted: readHideCompleted(),
+  }))
+  const setFilter = useCallback((next: FilterSpec) => {
+    setFilterState(next)
+    writeHideCompleted(next.hideCompleted)
   }, [])
+  const [filterOpen, setFilterOpen] = useState(false)
 
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [pendingItemUids, setPendingItemUids] = useState<Set<string>>(
@@ -262,14 +272,17 @@ export function MainView({ onLoggedOut }: Props) {
 
   const visibleTree = useMemo(
     () =>
-      hideCompleted
-        ? filterCompleted(fullTree, recentlyCompletedUids)
-        : fullTree,
-    [fullTree, hideCompleted, recentlyCompletedUids],
+      applyFilter(fullTree, {
+        hideCompleted: filter.hideCompleted,
+        search: filter.search.trim().toLowerCase() || undefined,
+        keep: recentlyCompletedUids,
+      }),
+    [fullTree, filter, recentlyCompletedUids],
   )
   const fadingOutUids = useMemo(
-    () => (hideCompleted ? recentlyCompletedUids : new Set<string>()),
-    [hideCompleted, recentlyCompletedUids],
+    () =>
+      filter.hideCompleted ? recentlyCompletedUids : new Set<string>(),
+    [filter.hideCompleted, recentlyCompletedUids],
   )
   const activeCounts = useMemo(
     () => (activeItems ? countTasks(activeItems) : null),
@@ -380,7 +393,7 @@ export function MainView({ onLoggedOut }: Props) {
       }
       if (e.key === 'f' || e.key === 'F') {
         e.preventDefault()
-        setHideCompleted(!hideCompleted)
+        setFilterOpen((open) => !open)
         return
       }
       if (e.key === '?') {
@@ -445,8 +458,6 @@ export function MainView({ onLoggedOut }: Props) {
     sortedCollections,
     activeUid,
     activeItems,
-    hideCompleted,
-    setHideCompleted,
     handleStartCreateRoot,
   ])
 
@@ -756,13 +767,12 @@ export function MainView({ onLoggedOut }: Props) {
             </button>
             <button
               type="button"
-              onClick={() => setHideCompleted(!hideCompleted)}
-              aria-pressed={hideCompleted}
-              title={
-                hideCompleted ? 'Show completed tasks' : 'Hide completed tasks'
-              }
-              className={`flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${
-                hideCompleted
+              onClick={() => setFilterOpen((open) => !open)}
+              aria-expanded={filterOpen}
+              aria-pressed={isFilterActive(filter)}
+              title="Filter (f)"
+              className={`relative flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${
+                isFilterActive(filter)
                   ? 'border-accent/40 bg-accent-soft text-text'
                   : 'border-border text-text-muted hover:border-border-strong hover:text-text'
               }`}
@@ -777,20 +787,15 @@ export function MainView({ onLoggedOut }: Props) {
                 strokeLinejoin="round"
                 aria-hidden
               >
-                {hideCompleted ? (
-                  <>
-                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
-                    <circle cx="8" cy="8" r="2" />
-                    <path d="M2.5 13.5l11-11" />
-                  </>
-                ) : (
-                  <>
-                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
-                    <circle cx="8" cy="8" r="2" />
-                  </>
-                )}
+                <path d="M2.5 3h11l-4 5.5V13l-3 1.5V8.5L2.5 3z" />
               </svg>
-              <span>{hideCompleted ? 'Show done' : 'Hide done'}</span>
+              <span>Filter</span>
+              {isFilterActive(filter) && (
+                <span
+                  aria-hidden
+                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent"
+                />
+              )}
             </button>
             <button
               type="button"
@@ -803,6 +808,13 @@ export function MainView({ onLoggedOut }: Props) {
             </button>
           </div>
         </header>
+        {filterOpen && (
+          <FilterPopover
+            filter={filter}
+            onChange={setFilter}
+            onClose={() => setFilterOpen(false)}
+          />
+        )}
         <div className="flex-1 overflow-y-auto">
           {activeError && (
             <p className="px-5 py-4 text-sm text-danger">{activeError}</p>
@@ -832,8 +844,8 @@ export function MainView({ onLoggedOut }: Props) {
           )}
           {!activeError && activeItems && visibleTree.length === 0 && !creating && (
             <p className="px-5 py-4 text-sm text-text-faint">
-              {hideCompleted && fullTree.length > 0
-                ? 'All tasks completed.'
+              {isFilterActive(filter) && fullTree.length > 0
+                ? 'No tasks match the current filter.'
                 : 'No tasks in this list.'}
             </p>
           )}

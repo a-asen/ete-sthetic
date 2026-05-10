@@ -70,26 +70,59 @@ export function flattenVisible(
   return out
 }
 
-// Drop completed nodes whose descendants are also all completed. A completed
-// node with at least one open descendant is kept so the descendant remains
-// reachable in the tree. Uids in `keep` are force-kept regardless of status —
-// used to give recently-completed tasks a grace period before they vanish.
+export interface TreeFilter {
+  hideCompleted?: boolean
+  // Lowercased trimmed search query; matches against summary or description.
+  search?: string
+  // Uids to force-keep regardless of other filters (used for the
+  // recently-completed grace period).
+  keep?: ReadonlySet<string>
+}
+
+function nodeSelfPasses(
+  todo: { status: string; summary: string; description?: string },
+  filter: TreeFilter,
+  isKept: boolean,
+): boolean {
+  if (filter.hideCompleted && todo.status === 'COMPLETED' && !isKept) {
+    return false
+  }
+  if (filter.search) {
+    const q = filter.search
+    const haystack =
+      (todo.summary ?? '').toLowerCase() +
+      ' ' +
+      (todo.description ?? '').toLowerCase()
+    if (!haystack.includes(q)) return false
+  }
+  return true
+}
+
+// Walk the tree applying the filter. A node is included when it self-passes,
+// has a surviving descendant, or is in `keep`. This preserves ancestors of
+// matching tasks so the hierarchy stays navigable.
+export function applyFilter(
+  roots: TaskNode[],
+  filter: TreeFilter,
+): TaskNode[] {
+  const walk = (node: TaskNode): TaskNode | null => {
+    const filteredChildren = node.children
+      .map(walk)
+      .filter((c): c is TaskNode => c !== null)
+    const isKept = filter.keep?.has(node.todo.uid) ?? false
+    const selfPasses = nodeSelfPasses(node.todo, filter, isKept)
+    if (!selfPasses && filteredChildren.length === 0 && !isKept) return null
+    return { ...node, children: filteredChildren }
+  }
+  return roots.map(walk).filter((c): c is TaskNode => c !== null)
+}
+
+// Backwards-compat thin wrapper around applyFilter.
 export function filterCompleted(
   roots: TaskNode[],
   keep?: ReadonlySet<string>,
 ): TaskNode[] {
-  const filterNode = (node: TaskNode): TaskNode | null => {
-    const filteredChildren = node.children
-      .map(filterNode)
-      .filter((c): c is TaskNode => c !== null)
-    const isCompleted = node.todo.status === 'COMPLETED'
-    const isKept = keep?.has(node.todo.uid) ?? false
-    if (isCompleted && filteredChildren.length === 0 && !isKept) return null
-    return { ...node, children: filteredChildren }
-  }
-  return roots
-    .map(filterNode)
-    .filter((c): c is TaskNode => c !== null)
+  return applyFilter(roots, { hideCompleted: true, keep })
 }
 
 export function findNodeByUid(
