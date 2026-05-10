@@ -687,7 +687,21 @@ export function MainView({ onLoggedOut }: Props) {
         </div>
       </aside>
 
-      <main className="relative flex flex-1 flex-col overflow-hidden">
+      <main
+        data-focus-zone={focusZone}
+        className={`relative flex flex-1 flex-col overflow-hidden transition-opacity ${
+          focusZone === 'tasks' ? 'opacity-100' : 'opacity-60'
+        }`}
+        onMouseDown={(e) => {
+          // Pull focus to the tasks pane when the user clicks anywhere in
+          // the right column (without preventing the underlying click).
+          if (focusZone !== 'tasks') {
+            const t = e.target as HTMLElement
+            // ignore clicks in modals
+            if (!t.closest('[role="dialog"]')) setFocusZone('tasks')
+          }
+        }}
+      >
         {mutationError && (
           <div
             role="alert"
