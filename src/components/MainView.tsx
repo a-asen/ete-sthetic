@@ -237,6 +237,15 @@ export function MainView({ onLoggedOut }: Props) {
     () => (activeItems ? buildTree(activeItems) : []),
     [activeItems],
   )
+  // Sidebar lists, alphabetical by name (locale-aware, case-insensitive).
+  // A future sort UI will replace this with a state-driven comparator.
+  const sortedCollections = useMemo(() => {
+    if (!collections) return null
+    return [...collections].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+    )
+  }, [collections])
+
   const visibleTree = useMemo(
     () =>
       hideCompleted
@@ -489,18 +498,18 @@ export function MainView({ onLoggedOut }: Props) {
           </span>
         </div>
         <div className="flex-1 overflow-y-auto px-2">
-          {collections === null && !collectionsError && (
+          {sortedCollections === null && !collectionsError && (
             <p className="px-2 py-3 text-xs text-text-faint">Loading…</p>
           )}
           {collectionsError && (
             <p className="px-2 py-3 text-xs text-danger">{collectionsError}</p>
           )}
-          {collections && collections.length === 0 && (
+          {sortedCollections && sortedCollections.length === 0 && (
             <p className="px-2 py-3 text-xs text-text-faint">
               No task lists found.
             </p>
           )}
-          {collections?.map((c) => {
+          {sortedCollections?.map((c) => {
             const isActive = c.uid === activeUid
             const items = itemsByUid.get(c.uid)
             const counts = items ? countTasks(items) : null
