@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { TaskNode } from '../types'
-import { findNodeByUid, flattenVisible } from '../services/tree'
+import { flattenVisible } from '../services/tree'
 
 interface Props {
   roots: TaskNode[]
@@ -134,26 +134,6 @@ export function TaskTree({
     }
   }, [editingUid])
 
-  // Del / Backspace on selection -> delete request (skip while typing).
-  useEffect(() => {
-    if (!selected || !onDeleteRequest || editingUid) return
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement
-      )
-        return
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        e.preventDefault()
-        const node = findNodeByUid(roots, selected)
-        if (node) onDeleteRequest(node)
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [selected, editingUid, onDeleteRequest, roots])
-
   // Auto-expand the parent we're creating under so its new child input is visible.
   useEffect(() => {
     if (creatingParent && creatingParent !== null) {
@@ -167,6 +147,115 @@ export function TaskTree({
   }, [creatingParent])
 
   const visible = useMemo(() => flattenVisible(roots, expanded), [roots, expanded])
+
+  // Auto-scroll the selected row into view (e.g. when arrow keys move past
+  // the visible window).
+  useEffect(() => {
+    if (!selected) return
+    const el = document.querySelector(
+      `[data-task-uid="${CSS.escape(selected)}"]`,
+    ) as HTMLElement | null
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
+
+  // Single keyboard handler for the tree: arrows, Enter, Del/Backspace.
+  // Skipped while typing in any input/textarea or while a modal is open.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement
+      )
+        return
+      if (editingUid) return
+      if (document.querySelector('[role="dialog"]')) return
+      if (visible.length === 0) return
+
+      const idx = selected
+        ? visible.findIndex((n) => n.todo.uid === selected)
+        : -1
+
+      switch (e.key) {
+        case 'ArrowDown': {
+          e.preventDefault()
+          const next = idx < 0 ? 0 : Math.min(visible.length - 1, idx + 1)
+          setSelected(visible[next].todo.uid)
+          break
+        }
+        case 'ArrowUp': {
+          e.preventDefault()
+          const prev = idx <= 0 ? 0 : idx - 1
+          setSelected(visible[prev].todo.uid)
+          break
+        }
+        case 'ArrowLeft': {
+          if (idx < 0) return
+          e.preventDefault()
+          const node = visible[idx]
+          if (node.children.length > 0 && expanded.has(node.todo.uid)) {
+            setExpanded((p) => {
+              const next = new Set(p)
+              next.delete(node.todo.uid)
+              return next
+            })
+          } else if (node.todo.parentUid) {
+            setSelected(node.todo.parentUid)
+          }
+          break
+        }
+        case 'ArrowRight': {
+          if (idx < 0) return
+          e.preventDefault()
+          const node = visible[idx]
+          if (node.children.length > 0) {
+            if (!expanded.has(node.todo.uid)) {
+              setExpanded((p) => {
+                const next = new Set(p)
+                next.add(node.todo.uid)
+                return next
+              })
+            } else {
+              setSelected(node.children[0].todo.uid)
+            }
+          }
+          break
+        }
+        case 'Home': {
+          e.preventDefault()
+          setSelected(visible[0].todo.uid)
+          break
+        }
+        case 'End': {
+          e.preventDefault()
+          setSelected(visible[visible.length - 1].todo.uid)
+          break
+        }
+        case 'Enter': {
+          if (idx < 0 || !onToggleComplete) return
+          e.preventDefault()
+          onToggleComplete(visible[idx])
+          break
+        }
+        case 'Delete':
+        case 'Backspace': {
+          if (idx < 0 || !onDeleteRequest) return
+          e.preventDefault()
+          onDeleteRequest(visible[idx])
+          break
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [
+    visible,
+    selected,
+    editingUid,
+    expanded,
+    onToggleComplete,
+    onDeleteRequest,
+  ])
 
   function toggle(uid: string) {
     setExpanded((prev) => {
@@ -209,6 +298,7 @@ export function TaskTree({
         const row = (
           <li
             key={node.itemUid}
+            data-task-uid={node.todo.uid}
             role="treeitem"
             aria-level={node.depth + 1}
             aria-expanded={hasChildren ? isExpanded : undefined}
