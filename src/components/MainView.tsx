@@ -523,6 +523,16 @@ export function MainView({ onLoggedOut }: Props) {
           }
           case 'ArrowRight':
           case 'Enter': {
+            // If the user has Tab'd to a button (e.g. the Hide-done eye in
+            // the header), Enter is meant to fire that button's click —
+            // don't intercept it.
+            if (
+              e.key === 'Enter' &&
+              (e.target instanceof HTMLButtonElement ||
+                e.target instanceof HTMLAnchorElement)
+            ) {
+              return
+            }
             e.preventDefault()
             setFocusZone('tasks')
             return
