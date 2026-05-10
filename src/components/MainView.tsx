@@ -257,84 +257,6 @@ export function MainView({ onLoggedOut }: Props) {
     )
   }, [collections])
 
-  // Global single-key shortcuts (l / t to switch focus zone, plus sidebar
-  // arrow navigation when focusZone === 'sidebar'). Skipped while typing
-  // or while a modal is open.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      )
-        return
-      if (document.querySelector('[role="dialog"]')) return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-
-      // Single-letter zone switches
-      if (e.key === 'l' || e.key === 'L') {
-        e.preventDefault()
-        setFocusZone('sidebar')
-        return
-      }
-      if (e.key === 't' || e.key === 'T') {
-        e.preventDefault()
-        setFocusZone('tasks')
-        return
-      }
-
-      // Sidebar arrow nav
-      if (focusZone === 'sidebar' && sortedCollections && sortedCollections.length > 0) {
-        const list = sortedCollections
-        const idx = list.findIndex((c) => c.uid === activeUid)
-        switch (e.key) {
-          case 'ArrowDown': {
-            e.preventDefault()
-            const next = idx < 0 ? 0 : Math.min(list.length - 1, idx + 1)
-            setActiveUid(list[next].uid)
-            return
-          }
-          case 'ArrowUp': {
-            e.preventDefault()
-            const next = idx <= 0 ? 0 : idx - 1
-            setActiveUid(list[next].uid)
-            return
-          }
-          case 'Home': {
-            e.preventDefault()
-            setActiveUid(list[0].uid)
-            return
-          }
-          case 'End': {
-            e.preventDefault()
-            setActiveUid(list[list.length - 1].uid)
-            return
-          }
-          case 'PageDown': {
-            e.preventDefault()
-            const PAGE = 10
-            const next = idx < 0 ? 0 : Math.min(list.length - 1, idx + PAGE)
-            setActiveUid(list[next].uid)
-            return
-          }
-          case 'PageUp': {
-            e.preventDefault()
-            const PAGE = 10
-            const next = idx <= 0 ? 0 : Math.max(0, idx - PAGE)
-            setActiveUid(list[next].uid)
-            return
-          }
-          case 'ArrowRight':
-          case 'Enter': {
-            e.preventDefault()
-            setFocusZone('tasks')
-            return
-          }
-        }
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [focusZone, sortedCollections, activeUid])
 
   const visibleTree = useMemo(
     () =>
@@ -422,6 +344,104 @@ export function MainView({ onLoggedOut }: Props) {
     const descendants = collectDescendantItemUids(node)
     setConfirmDelete({ node, descendantCount: descendants.length - 1 })
   }, [])
+
+  // Global single-key shortcuts: l / t to switch focus zones, n to start a
+  // new task, f to toggle Hide done, plus sidebar arrow navigation while
+  // focusZone === 'sidebar'. Skipped while typing or while a modal is open
+  // (and modifier-key combos are ignored so OS shortcuts pass through).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return
+      if (document.querySelector('[role="dialog"]')) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      if (e.key === 'l' || e.key === 'L') {
+        e.preventDefault()
+        setFocusZone('sidebar')
+        return
+      }
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault()
+        setFocusZone('tasks')
+        return
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        if (!activeUid || !activeItems) return
+        e.preventDefault()
+        setFocusZone('tasks')
+        handleStartCreateRoot()
+        return
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault()
+        setHideCompleted(!hideCompleted)
+        return
+      }
+
+      if (
+        focusZone === 'sidebar' &&
+        sortedCollections &&
+        sortedCollections.length > 0
+      ) {
+        const list = sortedCollections
+        const idx = list.findIndex((c) => c.uid === activeUid)
+        switch (e.key) {
+          case 'ArrowDown': {
+            e.preventDefault()
+            setActiveUid(list[idx < 0 ? 0 : Math.min(list.length - 1, idx + 1)].uid)
+            return
+          }
+          case 'ArrowUp': {
+            e.preventDefault()
+            setActiveUid(list[idx <= 0 ? 0 : idx - 1].uid)
+            return
+          }
+          case 'Home': {
+            e.preventDefault()
+            setActiveUid(list[0].uid)
+            return
+          }
+          case 'End': {
+            e.preventDefault()
+            setActiveUid(list[list.length - 1].uid)
+            return
+          }
+          case 'PageDown': {
+            e.preventDefault()
+            const PAGE = 10
+            setActiveUid(list[idx < 0 ? 0 : Math.min(list.length - 1, idx + PAGE)].uid)
+            return
+          }
+          case 'PageUp': {
+            e.preventDefault()
+            const PAGE = 10
+            setActiveUid(list[idx <= 0 ? 0 : Math.max(0, idx - PAGE)].uid)
+            return
+          }
+          case 'ArrowRight':
+          case 'Enter': {
+            e.preventDefault()
+            setFocusZone('tasks')
+            return
+          }
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [
+    focusZone,
+    sortedCollections,
+    activeUid,
+    activeItems,
+    hideCompleted,
+    setHideCompleted,
+    handleStartCreateRoot,
+  ])
 
   const handleConfirmDelete = useCallback(async () => {
     const target = confirmDelete
