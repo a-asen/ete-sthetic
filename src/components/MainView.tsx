@@ -16,6 +16,7 @@ import {
 } from '../services/tree'
 import type { CollectionInfo, TaskItem, TaskNode } from '../types'
 import { ConfirmModal } from './ConfirmModal'
+import { KeybindingsModal } from './KeybindingsModal'
 import { TaskTree } from './TaskTree'
 
 interface Props {
@@ -74,6 +75,7 @@ export function MainView({ onLoggedOut }: Props) {
   } | null>(null)
   const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(null)
   const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar'>('tasks')
+  const [showKeybindings, setShowKeybindings] = useState(false)
   // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
   // disappearing so a misclicked checkbox can be untoggled.
   const [recentlyCompletedUids, setRecentlyCompletedUids] = useState<
@@ -381,6 +383,11 @@ export function MainView({ onLoggedOut }: Props) {
         setHideCompleted(!hideCompleted)
         return
       }
+      if (e.key === '?') {
+        e.preventDefault()
+        setShowKeybindings(true)
+        return
+      }
 
       if (
         focusZone === 'sidebar' &&
@@ -585,6 +592,9 @@ export function MainView({ onLoggedOut }: Props) {
 
   return (
     <div className="flex h-screen bg-bg text-text">
+      {showKeybindings && (
+        <KeybindingsModal onClose={() => setShowKeybindings(false)} />
+      )}
       {confirmDelete && (
         <ConfirmModal
           title={`Delete "${confirmDelete.node.todo.summary || '(untitled)'}"?`}
@@ -767,6 +777,15 @@ export function MainView({ onLoggedOut }: Props) {
                 )}
               </svg>
               <span>{hideCompleted ? 'Show done' : 'Hide done'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowKeybindings(true)}
+              title="Keyboard shortcuts (?)"
+              aria-label="Keyboard shortcuts"
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
+            >
+              ?
             </button>
           </div>
         </header>
