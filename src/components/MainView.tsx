@@ -92,10 +92,12 @@ export function MainView({ onLoggedOut }: Props) {
   const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar'>('tasks')
   const [showKeybindings, setShowKeybindings] = useState(false)
   // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
-  // disappearing so a misclicked checkbox can be untoggled.
-  const [recentlyCompletedUids, setRecentlyCompletedUids] = useState<
-    Set<string>
-  >(() => new Set())
+  // disappearing so a misclicked checkbox can be untoggled. Map value is the
+  // expiry timestamp (Date.now() + HIDE_GRACE_MS) so the row can show a
+  // countdown.
+  const [recentlyCompleted, setRecentlyCompleted] = useState<
+    Map<string, number>
+  >(() => new Map())
   const completionTimers = useRef<Map<string, number>>(new Map())
 
   const inFlightRef = useRef<Set<string>>(new Set())
@@ -128,18 +130,18 @@ export function MainView({ onLoggedOut }: Props) {
   }, [activeUid])
 
   const markRecentlyCompleted = useCallback((uid: string) => {
-    setRecentlyCompletedUids((prev) => {
-      if (prev.has(uid)) return prev
-      const next = new Set(prev)
-      next.add(uid)
+    const expiresAt = Date.now() + HIDE_GRACE_MS
+    setRecentlyCompleted((prev) => {
+      const next = new Map(prev)
+      next.set(uid, expiresAt)
       return next
     })
     const existing = completionTimers.current.get(uid)
     if (existing) clearTimeout(existing)
     const id = window.setTimeout(() => {
-      setRecentlyCompletedUids((prev) => {
+      setRecentlyCompleted((prev) => {
         if (!prev.has(uid)) return prev
-        const next = new Set(prev)
+        const next = new Map(prev)
         next.delete(uid)
         return next
       })
@@ -154,9 +156,9 @@ export function MainView({ onLoggedOut }: Props) {
       clearTimeout(existing)
       completionTimers.current.delete(uid)
     }
-    setRecentlyCompletedUids((prev) => {
+    setRecentlyCompleted((prev) => {
       if (!prev.has(uid)) return prev
-      const next = new Set(prev)
+      const next = new Map(prev)
       next.delete(uid)
       return next
     })
@@ -275,15 +277,20 @@ export function MainView({ onLoggedOut }: Props) {
   }, [collections])
 
 
+  const recentlyCompletedKeys = useMemo(
+    () => new Set(recentlyCompleted.keys()),
+    [recentlyCompleted],
+  )
+
   const visibleTree = useMemo(
     () =>
       applyFilter(fullTree, {
         hideCompleted: filter.hideCompleted,
         search: filter.search.trim().toLowerCase() || undefined,
         tags: filter.tags,
-        keep: recentlyCompletedUids,
+        keep: recentlyCompletedKeys,
       }),
-    [fullTree, filter, recentlyCompletedUids],
+    [fullTree, filter, recentlyCompletedKeys],
   )
 
   // Distinct tags across the active list, alphabetical, preserving the
@@ -301,10 +308,10 @@ export function MainView({ onLoggedOut }: Props) {
       a.localeCompare(b, undefined, { sensitivity: 'base' }),
     )
   }, [activeItems])
-  const fadingOutUids = useMemo(
+  const fadingExpires = useMemo(
     () =>
-      filter.hideCompleted ? recentlyCompletedUids : new Set<string>(),
-    [filter.hideCompleted, recentlyCompletedUids],
+      filter.hideCompleted ? recentlyCompleted : new Map<string, number>(),
+    [filter.hideCompleted, recentlyCompleted],
   )
   const activeCounts = useMemo(
     () => (activeItems ? countTasks(activeItems) : null),
@@ -949,7 +956,7 @@ export function MainView({ onLoggedOut }: Props) {
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
               onChangePriority={handleChangePriority}
-              fadingUids={fadingOutUids}
+              fadingExpires={fadingExpires}
               selectedUid={selectedTaskUid}
               onSelectChange={(uid) => {
                 setSelectedTaskUid(uid)

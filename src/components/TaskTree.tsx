@@ -26,7 +26,9 @@ interface Props {
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
   onChangePriority?: (node: TaskNode, priority: Priority) => void
-  fadingUids?: ReadonlySet<string>
+  // uid → expiry timestamp (ms). Rows in this map fade out and show a
+  // countdown until they're removed by the caller's grace timer.
+  fadingExpires?: ReadonlyMap<string, number>
 }
 
 const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
@@ -143,7 +145,7 @@ export function TaskTree({
   onRenameTask,
   onDeleteRequest,
   onChangePriority,
-  fadingUids,
+  fadingExpires,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Default: expand all roots one level
@@ -162,6 +164,15 @@ export function TaskTree({
       editInputRef.current.select()
     }
   }, [editingUid])
+
+  // Tick to refresh the countdown on fading rows. Idle when nothing's fading.
+  const fadingActive = !!fadingExpires && fadingExpires.size > 0
+  const [, setNowTick] = useState(0)
+  useEffect(() => {
+    if (!fadingActive) return
+    const id = setInterval(() => setNowTick((t) => t + 1), 250)
+    return () => clearInterval(id)
+  }, [fadingActive])
 
   // Auto-expand the parent we're creating under so its new child input is visible.
   useEffect(() => {
@@ -382,7 +393,11 @@ export function TaskTree({
         const isDone = node.todo.status === 'COMPLETED'
         const due = formatDue(node.todo.due)
         const pLabel = priorityLabel(node.todo.priority)
-        const isFading = fadingUids?.has(node.todo.uid) ?? false
+        const expiresAt = fadingExpires?.get(node.todo.uid)
+        const isFading = expiresAt != null
+        const fadingRemainingS = isFading
+          ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+          : 0
 
         const row = (
           <li
@@ -394,8 +409,10 @@ export function TaskTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
             onClick={() => setSelected(node.todo.uid)}
-            className={`group flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none transition-opacity ${
-              isFading ? 'opacity-50' : ''
+            className={`group flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none ${
+              isFading
+                ? 'opacity-10 transition-opacity duration-[5000ms] ease-linear'
+                : 'transition-opacity'
             } ${isSelected ? 'bg-accent-soft' : 'hover:bg-surface'}`}
             style={{ paddingLeft: 12 + node.depth * INDENT_PX }}
           >
@@ -527,6 +544,15 @@ export function TaskTree({
                   <path d="M8 3.5v9M3.5 8h9" />
                 </svg>
               </button>
+            )}
+
+            {isFading && fadingRemainingS > 0 && (
+              <span
+                className="shrink-0 text-[10px] font-medium tabular-nums text-text-muted"
+                title="Hiding soon"
+              >
+                {fadingRemainingS}s
+              </span>
             )}
 
             {pLabel && (
