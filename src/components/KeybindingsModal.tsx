@@ -35,7 +35,10 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
   },
   {
     group: 'Filters',
-    items: [{ keys: ['f'], description: 'Open filter options' }],
+    items: [
+      { keys: ['f'], description: 'Open filter options' },
+      { keys: ['Ctrl+F'], description: 'Open filter and focus search' },
+    ],
   },
   {
     group: 'General',
