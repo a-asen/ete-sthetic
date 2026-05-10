@@ -72,7 +72,11 @@ export function flattenVisible(
 
 export interface TreeFilter {
   hideCompleted?: boolean
-  // Lowercased trimmed search query; matches against summary or description.
+  // Lowercased search query. Plain words match summary / description /
+  // categories. Words of the form `<scope>::<value>` restrict to a field:
+  //   title::foo   → summary only
+  //   tag::foo (or tags::foo) → categories only
+  //   notes::foo (or note::foo / description::foo) → description only
   search?: string
   // When set and non-empty, a node passes only if it has at least one
   // category in this set (case-insensitive compare upstream).
@@ -80,6 +84,67 @@ export interface TreeFilter {
   // Uids to force-keep regardless of other filters (used for the
   // recently-completed grace period).
   keep?: ReadonlySet<string>
+}
+
+type SearchScope = 'title' | 'tag' | 'notes' | 'any'
+interface SearchTerm {
+  scope: SearchScope
+  value: string
+}
+
+const SCOPE_MAP: Record<string, SearchScope> = {
+  title: 'title',
+  tag: 'tag',
+  tags: 'tag',
+  note: 'notes',
+  notes: 'notes',
+  description: 'notes',
+}
+
+function parseSearchQuery(query: string): SearchTerm[] {
+  const out: SearchTerm[] = []
+  const parts = query.toLowerCase().match(/\S+/g) ?? []
+  for (const p of parts) {
+    const m = /^([^:]+)::(.+)$/.exec(p)
+    if (m) {
+      const scope = SCOPE_MAP[m[1]]
+      if (scope) {
+        out.push({ scope, value: m[2] })
+        continue
+      }
+    }
+    out.push({ scope: 'any', value: p })
+  }
+  return out
+}
+
+function termMatches(
+  term: SearchTerm,
+  todo: {
+    summary: string
+    description?: string
+    categories?: string[]
+  },
+): boolean {
+  const v = term.value
+  if (!v) return true
+  const summary = (todo.summary ?? '').toLowerCase()
+  const description = (todo.description ?? '').toLowerCase()
+  const cats = (todo.categories ?? []).map((c) => c.toLowerCase())
+  switch (term.scope) {
+    case 'title':
+      return summary.includes(v)
+    case 'tag':
+      return cats.some((c) => c.includes(v))
+    case 'notes':
+      return description.includes(v)
+    case 'any':
+      return (
+        summary.includes(v) ||
+        description.includes(v) ||
+        cats.some((c) => c.includes(v))
+      )
+  }
 }
 
 function nodeSelfPasses(
@@ -91,17 +156,13 @@ function nodeSelfPasses(
   },
   filter: TreeFilter,
   isKept: boolean,
+  terms: SearchTerm[],
 ): boolean {
   if (filter.hideCompleted && todo.status === 'COMPLETED' && !isKept) {
     return false
   }
-  if (filter.search) {
-    const q = filter.search
-    const haystack =
-      (todo.summary ?? '').toLowerCase() +
-      ' ' +
-      (todo.description ?? '').toLowerCase()
-    if (!haystack.includes(q)) return false
+  if (terms.length > 0) {
+    if (!terms.every((t) => termMatches(t, todo))) return false
   }
   if (filter.tags && filter.tags.size > 0) {
     const cats = todo.categories ?? []
@@ -118,12 +179,13 @@ export function applyFilter(
   roots: TaskNode[],
   filter: TreeFilter,
 ): TaskNode[] {
+  const terms = filter.search ? parseSearchQuery(filter.search) : []
   const walk = (node: TaskNode): TaskNode | null => {
     const filteredChildren = node.children
       .map(walk)
       .filter((c): c is TaskNode => c !== null)
     const isKept = filter.keep?.has(node.todo.uid) ?? false
-    const selfPasses = nodeSelfPasses(node.todo, filter, isKept)
+    const selfPasses = nodeSelfPasses(node.todo, filter, isKept, terms)
     if (!selfPasses && filteredChildren.length === 0 && !isKept) return null
     return { ...node, children: filteredChildren }
   }

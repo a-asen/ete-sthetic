@@ -75,11 +75,18 @@ export function FilterPopover({
         <input
           ref={searchRef}
           type="search"
-          placeholder="Filter by title or notes"
+          placeholder="bird, title::bird, tag::bird, notes::bird"
           value={filter.search}
           onChange={(e) => onChange({ ...filter, search: e.target.value })}
           className="w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
         />
+        <p className="mt-1 text-[10px] leading-tight text-text-faint">
+          Use{' '}
+          <code className="text-text-muted">title::</code>,{' '}
+          <code className="text-text-muted">tag::</code>, or{' '}
+          <code className="text-text-muted">notes::</code> to scope a term.
+          Multiple terms must all match.
+        </p>
       </label>
 
       {availableTags.length > 0 && (
