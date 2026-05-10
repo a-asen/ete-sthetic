@@ -28,7 +28,7 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
       { keys: ['Enter'], description: 'Toggle complete' },
       { keys: ['n'], description: 'New task at top of list' },
       { keys: ['Del', 'Backspace'], description: 'Delete (with confirmation)' },
-      { keys: ['Double-click'], description: 'Rename a task' },
+      { keys: ['F2', 'Double-click'], description: 'Rename a task' },
     ],
   },
   {

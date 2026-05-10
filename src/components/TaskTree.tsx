@@ -276,6 +276,12 @@ export function TaskTree({
           onToggleComplete(visible[idx])
           break
         }
+        case 'F2': {
+          if (idx < 0 || !onRenameTask) return
+          e.preventDefault()
+          setEditingUid(visible[idx].todo.uid)
+          break
+        }
         case 'Delete':
         case 'Backspace': {
           if (idx < 0 || !onDeleteRequest) return
@@ -297,6 +303,7 @@ export function TaskTree({
     onToggleComplete,
     onDeleteRequest,
     onAddChild,
+    onRenameTask,
   ])
 
   function toggle(uid: string) {
