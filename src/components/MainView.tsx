@@ -73,6 +73,7 @@ export function MainView({ onLoggedOut }: Props) {
     descendantCount: number
   } | null>(null)
   const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(null)
+  const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar'>('tasks')
   // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
   // disappearing so a misclicked checkbox can be untoggled.
   const [recentlyCompletedUids, setRecentlyCompletedUids] = useState<
@@ -98,6 +99,16 @@ export function MainView({ onLoggedOut }: Props) {
       timers.clear()
     }
   }, [])
+
+  // Scroll the active sidebar row into view when activeUid changes — mirrors
+  // the tree's selection scroll-into-view.
+  useEffect(() => {
+    if (!activeUid) return
+    const el = document.querySelector(
+      `[data-collection-uid="${CSS.escape(activeUid)}"]`,
+    ) as HTMLElement | null
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [activeUid])
 
   const markRecentlyCompleted = useCallback((uid: string) => {
     setRecentlyCompletedUids((prev) => {
@@ -245,6 +256,85 @@ export function MainView({ onLoggedOut }: Props) {
       a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     )
   }, [collections])
+
+  // Global single-key shortcuts (l / t to switch focus zone, plus sidebar
+  // arrow navigation when focusZone === 'sidebar'). Skipped while typing
+  // or while a modal is open.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return
+      if (document.querySelector('[role="dialog"]')) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      // Single-letter zone switches
+      if (e.key === 'l' || e.key === 'L') {
+        e.preventDefault()
+        setFocusZone('sidebar')
+        return
+      }
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault()
+        setFocusZone('tasks')
+        return
+      }
+
+      // Sidebar arrow nav
+      if (focusZone === 'sidebar' && sortedCollections && sortedCollections.length > 0) {
+        const list = sortedCollections
+        const idx = list.findIndex((c) => c.uid === activeUid)
+        switch (e.key) {
+          case 'ArrowDown': {
+            e.preventDefault()
+            const next = idx < 0 ? 0 : Math.min(list.length - 1, idx + 1)
+            setActiveUid(list[next].uid)
+            return
+          }
+          case 'ArrowUp': {
+            e.preventDefault()
+            const next = idx <= 0 ? 0 : idx - 1
+            setActiveUid(list[next].uid)
+            return
+          }
+          case 'Home': {
+            e.preventDefault()
+            setActiveUid(list[0].uid)
+            return
+          }
+          case 'End': {
+            e.preventDefault()
+            setActiveUid(list[list.length - 1].uid)
+            return
+          }
+          case 'PageDown': {
+            e.preventDefault()
+            const PAGE = 10
+            const next = idx < 0 ? 0 : Math.min(list.length - 1, idx + PAGE)
+            setActiveUid(list[next].uid)
+            return
+          }
+          case 'PageUp': {
+            e.preventDefault()
+            const PAGE = 10
+            const next = idx <= 0 ? 0 : Math.max(0, idx - PAGE)
+            setActiveUid(list[next].uid)
+            return
+          }
+          case 'ArrowRight':
+          case 'Enter': {
+            e.preventDefault()
+            setFocusZone('tasks')
+            return
+          }
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [focusZone, sortedCollections, activeUid])
 
   const visibleTree = useMemo(
     () =>
@@ -514,14 +604,21 @@ export function MainView({ onLoggedOut }: Props) {
             const items = itemsByUid.get(c.uid)
             const counts = items ? countTasks(items) : null
             const failed = errorByUid.get(c.uid)
+            const sidebarHot = isActive && focusZone === 'sidebar'
             return (
               <button
                 key={c.uid}
+                data-collection-uid={c.uid}
                 type="button"
-                onClick={() => setActiveUid(c.uid)}
+                onClick={() => {
+                  setActiveUid(c.uid)
+                  setFocusZone('sidebar')
+                }}
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
                   isActive
-                    ? 'bg-accent-soft text-text'
+                    ? sidebarHot
+                      ? 'bg-accent-soft text-text ring-1 ring-accent/40'
+                      : 'bg-accent-soft text-text'
                     : 'text-text-muted hover:bg-surface-2 hover:text-text'
                 }`}
               >
@@ -673,7 +770,11 @@ export function MainView({ onLoggedOut }: Props) {
               onDeleteRequest={handleDeleteRequest}
               fadingUids={fadingOutUids}
               selectedUid={selectedTaskUid}
-              onSelectChange={setSelectedTaskUid}
+              onSelectChange={(uid) => {
+                setSelectedTaskUid(uid)
+                setFocusZone('tasks')
+              }}
+              inactive={focusZone !== 'tasks'}
             />
           )}
           {!activeError && activeItems && visibleTree.length === 0 && !creating && (
