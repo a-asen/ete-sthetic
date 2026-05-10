@@ -784,12 +784,18 @@ export function MainView({ onLoggedOut }: Props) {
             </button>
             <button
               type="button"
-              onClick={() => setFilterOpen((open) => !open)}
-              aria-expanded={filterOpen}
-              aria-pressed={isFilterActive(filter)}
-              title="Filter (f)"
-              className={`relative flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${
-                isFilterActive(filter)
+              onClick={() =>
+                setFilter({ ...filter, hideCompleted: !filter.hideCompleted })
+              }
+              aria-pressed={filter.hideCompleted}
+              title={
+                filter.hideCompleted
+                  ? 'Showing only open tasks — click to show completed'
+                  : 'Hide completed tasks'
+              }
+              aria-label="Toggle hide completed"
+              className={`flex h-7 w-7 items-center justify-center rounded-md border text-xs transition-colors ${
+                filter.hideCompleted
                   ? 'border-accent/40 bg-accent-soft text-text'
                   : 'border-border text-text-muted hover:border-border-strong hover:text-text'
               }`}
@@ -804,16 +810,62 @@ export function MainView({ onLoggedOut }: Props) {
                 strokeLinejoin="round"
                 aria-hidden
               >
-                <path d="M2.5 3h11l-4 5.5V13l-3 1.5V8.5L2.5 3z" />
+                {filter.hideCompleted ? (
+                  <>
+                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
+                    <circle cx="8" cy="8" r="2" />
+                    <path d="M2.5 13.5l11-11" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
+                    <circle cx="8" cy="8" r="2" />
+                  </>
+                )}
               </svg>
-              <span>Filter</span>
-              {isFilterActive(filter) && (
-                <span
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setFilterOpen((open) => !open)}
+                aria-expanded={filterOpen}
+                aria-pressed={isFilterActive(filter)}
+                title="Filter (f)"
+                className={`relative flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${
+                  isFilterActive(filter)
+                    ? 'border-accent/40 bg-accent-soft text-text'
+                    : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+                }`}
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                   aria-hidden
-                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent"
+                >
+                  <path d="M2.5 3h11l-4 5.5V13l-3 1.5V8.5L2.5 3z" />
+                </svg>
+                <span>Filter</span>
+                {isFilterActive(filter) && (
+                  <span
+                    aria-hidden
+                    className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent"
+                  />
+                )}
+              </button>
+              {filterOpen && (
+                <FilterPopover
+                  filter={filter}
+                  onChange={setFilter}
+                  onClose={() => setFilterOpen(false)}
+                  availableTags={availableTags}
                 />
               )}
-            </button>
+            </div>
             <button
               type="button"
               onClick={() => setShowKeybindings(true)}
@@ -825,14 +877,6 @@ export function MainView({ onLoggedOut }: Props) {
             </button>
           </div>
         </header>
-        {filterOpen && (
-          <FilterPopover
-            filter={filter}
-            onChange={setFilter}
-            onClose={() => setFilterOpen(false)}
-            availableTags={availableTags}
-          />
-        )}
         <div className="flex-1 overflow-y-auto">
           {activeError && (
             <p className="px-5 py-4 text-sm text-danger">{activeError}</p>

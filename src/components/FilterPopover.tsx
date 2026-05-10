@@ -66,7 +66,7 @@ export function FilterPopover({
       role="region"
       aria-label="Filter tasks"
       onClick={(e) => e.stopPropagation()}
-      className="absolute right-3 top-full z-20 mt-1 w-72 rounded-md border border-border bg-surface p-3 shadow-xl"
+      className="absolute right-0 top-full z-20 mt-1 w-72 rounded-md border border-border bg-surface p-3 shadow-xl"
     >
       <label className="block">
         <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-text-faint">
