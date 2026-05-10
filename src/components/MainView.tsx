@@ -66,6 +66,11 @@ export function MainView({ onLoggedOut }: Props) {
     () => new Map(),
   )
   const [loadingUids, setLoadingUids] = useState<Set<string>>(() => new Set())
+  // Uids that have been *fully* loaded (success path completed). Distinct
+  // from itemsByUid which gets primed to [] as soon as a fetch starts.
+  // Used to gate the background prefetch so it doesn't fight the active
+  // load for CPU.
+  const [loadedUids, setLoadedUids] = useState<Set<string>>(() => new Set())
 
   const [filter, setFilterState] = useState<FilterSpec>(() => ({
     ...DEFAULT_FILTER,
@@ -202,6 +207,12 @@ export function MainView({ onLoggedOut }: Props) {
           next.delete(uid)
           return next
         })
+        setLoadedUids((prev) => {
+          if (prev.has(uid)) return prev
+          const next = new Set(prev)
+          next.add(uid)
+          return next
+        })
       } catch (err) {
         if (cancelledRef.current) return
         // AbortError: silently drop the partial cache so the next visit (or
@@ -210,6 +221,12 @@ export function MainView({ onLoggedOut }: Props) {
           setItemsByUid((prev) => {
             if (!prev.has(uid)) return prev
             const next = new Map(prev)
+            next.delete(uid)
+            return next
+          })
+          setLoadedUids((prev) => {
+            if (!prev.has(uid)) return prev
+            const next = new Set(prev)
             next.delete(uid)
             return next
           })
@@ -271,15 +288,17 @@ export function MainView({ onLoggedOut }: Props) {
     return () => controller.abort()
   }, [activeUid, itemsByUid, fetchCollection])
 
-  // After the active collection is loaded, prefetch the rest in parallel
-  // with bounded concurrency so sidebar counts can fill in.
+  // After the active collection is FULLY loaded, prefetch the rest in
+  // parallel with bounded concurrency so sidebar counts can fill in.
+  // Gating on loadedUids (rather than itemsByUid) keeps the prefetch from
+  // fighting the active load for CPU while it's still streaming.
   useEffect(() => {
     if (!collections || !activeUid) return
-    if (!itemsByUid.has(activeUid)) return
+    if (!loadedUids.has(activeUid)) return
 
     const remaining = collections
       .map((c) => c.uid)
-      .filter((uid) => !itemsByUid.has(uid) && !inFlightRef.current.has(uid))
+      .filter((uid) => !loadedUids.has(uid) && !inFlightRef.current.has(uid))
 
     if (remaining.length === 0) return
 
@@ -296,7 +315,7 @@ export function MainView({ onLoggedOut }: Props) {
     return () => {
       cancelled = true
     }
-  }, [collections, activeUid, itemsByUid, fetchCollection])
+  }, [collections, activeUid, loadedUids, fetchCollection])
 
   const activeCollection = collections?.find((c) => c.uid === activeUid) ?? null
   const activeItems = activeUid ? itemsByUid.get(activeUid) : undefined

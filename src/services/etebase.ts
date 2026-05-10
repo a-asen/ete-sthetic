@@ -166,7 +166,15 @@ export interface ListTaskItemsOptions {
   onBatch?: (batch: TaskItem[]) => void
 }
 
-const BATCH_SIZE = 50
+const BATCH_SIZE = 25
+
+// Yield to the event loop. Decryption + parseVTodo can run synchronously
+// when the encrypted blobs are already in memory, monopolising the main
+// thread between batches. setTimeout(0) (clamped to ~4ms) lets the browser
+// repaint and lets user input fire between batches.
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
 
 class AbortError extends Error {
   name = 'AbortError'
@@ -212,7 +220,11 @@ export async function listTaskItems(
       if (!todo) continue
       itemHandles.set(itemKey(collectionUid, item.uid), item)
       pendingBatch.push({ itemUid: item.uid, todo })
-      if (pendingBatch.length >= BATCH_SIZE) flush()
+      if (pendingBatch.length >= BATCH_SIZE) {
+        flush()
+        await yieldToEventLoop()
+        checkAborted(signal)
+      }
     }
     stoken = page.stoken
     if (page.done) break
