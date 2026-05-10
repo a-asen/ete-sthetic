@@ -1023,6 +1023,7 @@ export function MainView({ onLoggedOut }: Props) {
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
               onChangePriority={handleChangePriority}
+              onLeaveLeft={() => setFocusZone('sidebar')}
               fadingExpires={fadingExpires}
               selectedUid={selectedTaskUid}
               onSelectChange={(uid) => {

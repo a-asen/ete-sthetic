@@ -26,6 +26,10 @@ interface Props {
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
   onChangePriority?: (node: TaskNode, priority: Priority) => void
+  // Called when ArrowLeft is pressed on a top-level row that's already
+  // collapsed (or a leaf with no parent). Lets the caller decide what
+  // "leaving the tree to the left" means — typically focus the sidebar.
+  onLeaveLeft?: () => void
   // uid → expiry timestamp (ms). Rows in this map fade out and show a
   // countdown until they're removed by the caller's grace timer.
   fadingExpires?: ReadonlyMap<string, number>
@@ -145,6 +149,7 @@ export function TaskTree({
   onRenameTask,
   onDeleteRequest,
   onChangePriority,
+  onLeaveLeft,
   fadingExpires,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -249,6 +254,11 @@ export function TaskTree({
             })
           } else if (node.todo.parentUid) {
             setSelected(node.todo.parentUid)
+          } else {
+            // Already at the leftmost (top-level, collapsed-or-leaf) — let
+            // the caller decide what "out the left" means. MainView wires
+            // this to switching focus to the sidebar.
+            onLeaveLeft?.()
           }
           break
         }
@@ -354,6 +364,7 @@ export function TaskTree({
     onAddChild,
     onRenameTask,
     onChangePriority,
+    onLeaveLeft,
   ])
 
   function toggle(uid: string) {
