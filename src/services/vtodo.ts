@@ -83,10 +83,11 @@ export function parseVTodo(raw: string): VTodo | null {
 
 const PRODID = '-//ete-stethic//EN'
 
-// iCalendar UTC stamp: 20260509T143000Z
-function icalUtcNow(): string {
-  const iso = new Date().toISOString()
-  return iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+// Build an ICAL.Time for "now" in UTC. Passing strings to
+// updatePropertyWithValue triggers ical.js's strict date-time parser; using
+// ICAL.Time objects bypasses that and serializes back via toICALString().
+function icalUtcNow(): ICAL.Time {
+  return ICAL.Time.fromJSDate(new Date(), true)
 }
 
 function newUid(): string {
