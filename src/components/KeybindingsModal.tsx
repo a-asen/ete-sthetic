@@ -27,8 +27,10 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
       { keys: ['→'], description: 'Expand a parent, or start a subtask' },
       { keys: ['Enter'], description: 'Toggle complete' },
       { keys: ['n'], description: 'New task at top of list' },
-      { keys: ['Del', 'Backspace'], description: 'Delete (with confirmation)' },
+      { keys: ['+'], description: 'Raise priority on selected task' },
+      { keys: ['-'], description: 'Lower priority on selected task' },
       { keys: ['F2', 'Double-click'], description: 'Rename a task' },
+      { keys: ['Del', 'Backspace'], description: 'Delete (with confirmation)' },
     ],
   },
   {

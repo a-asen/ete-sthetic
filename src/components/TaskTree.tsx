@@ -1,6 +1,16 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import type { TaskNode } from '../types'
+import type { Priority, TaskNode } from '../types'
 import { flattenVisible } from '../services/tree'
+
+function bumpPriority(current: Priority, delta: 1 | -1): Priority {
+  // delta 1 = "more important" (toward 1). delta -1 = "less important".
+  if (delta === 1) {
+    if (current === 0) return 5
+    return Math.max(1, current - 1) as Priority
+  }
+  if (current === 0 || current === 9) return current
+  return (current + 1) as Priority
+}
 
 interface Props {
   roots: TaskNode[]
@@ -15,6 +25,7 @@ interface Props {
   onCancelCreate?: () => void
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
+  onChangePriority?: (node: TaskNode, priority: Priority) => void
   fadingUids?: ReadonlySet<string>
 }
 
@@ -131,6 +142,7 @@ export function TaskTree({
   onCancelCreate,
   onRenameTask,
   onDeleteRequest,
+  onChangePriority,
   fadingUids,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -290,6 +302,24 @@ export function TaskTree({
           setEditingUid(visible[idx].todo.uid)
           break
         }
+        case '+':
+        case '=': {
+          if (idx < 0 || !onChangePriority) return
+          e.preventDefault()
+          const node = visible[idx]
+          const next = bumpPriority(node.todo.priority, 1)
+          if (next !== node.todo.priority) onChangePriority(node, next)
+          break
+        }
+        case '-':
+        case '_': {
+          if (idx < 0 || !onChangePriority) return
+          e.preventDefault()
+          const node = visible[idx]
+          const next = bumpPriority(node.todo.priority, -1)
+          if (next !== node.todo.priority) onChangePriority(node, next)
+          break
+        }
         case 'Delete':
         case 'Backspace': {
           if (idx < 0 || !onDeleteRequest) return
@@ -312,6 +342,7 @@ export function TaskTree({
     onDeleteRequest,
     onAddChild,
     onRenameTask,
+    onChangePriority,
   ])
 
   function toggle(uid: string) {

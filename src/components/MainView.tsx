@@ -14,7 +14,12 @@ import {
   collectDescendantItemUids,
   countTasks,
 } from '../services/tree'
-import type { CollectionInfo, TaskItem, TaskNode } from '../types'
+import type {
+  CollectionInfo,
+  Priority,
+  TaskItem,
+  TaskNode,
+} from '../types'
 import { ConfirmModal } from './ConfirmModal'
 import {
   DEFAULT_FILTER,
@@ -520,6 +525,48 @@ export function MainView({ onLoggedOut }: Props) {
     }
   }, [activeUid, confirmDelete])
 
+  const handleChangePriority = useCallback(
+    async (node: TaskNode, newPriority: Priority) => {
+      if (!activeUid) return
+      const colUid = activeUid
+      const itemUid = node.itemUid
+      const original: TaskItem = { itemUid, todo: node.todo }
+      const optimistic: TaskItem = {
+        itemUid,
+        todo: { ...node.todo, priority: newPriority },
+      }
+      setMutationError(null)
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        next.add(itemUid)
+        return next
+      })
+      replaceCachedItem(colUid, itemUid, optimistic)
+      try {
+        const result = await updateTask(colUid, itemUid, {
+          priority: newPriority,
+        })
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, result)
+      } catch (err) {
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, original)
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to update priority',
+        )
+      } finally {
+        if (!cancelledRef.current) {
+          setPendingItemUids((prev) => {
+            const next = new Set(prev)
+            next.delete(itemUid)
+            return next
+          })
+        }
+      }
+    },
+    [activeUid],
+  )
+
   const handleRenameTask = useCallback(
     async (node: TaskNode, newSummary: string) => {
       if (!activeUid) return
@@ -901,6 +948,7 @@ export function MainView({ onLoggedOut }: Props) {
               onCancelCreate={handleCancelCreate}
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
+              onChangePriority={handleChangePriority}
               fadingUids={fadingOutUids}
               selectedUid={selectedTaskUid}
               onSelectChange={(uid) => {
