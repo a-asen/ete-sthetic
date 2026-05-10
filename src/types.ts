@@ -16,6 +16,7 @@ export interface VTodo {
   created?: string
   lastModified?: string
   parentUid?: string
+  categories: string[]
   raw: string
 }
 

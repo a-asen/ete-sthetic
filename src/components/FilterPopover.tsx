@@ -3,24 +3,35 @@ import { useEffect, useRef } from 'react'
 export interface FilterSpec {
   hideCompleted: boolean
   search: string
+  // Lowercased tag values currently selected. Empty set means no tag filter.
+  tags: Set<string>
 }
 
 export const DEFAULT_FILTER: FilterSpec = {
   hideCompleted: false,
   search: '',
+  tags: new Set(),
 }
 
 export function isFilterActive(f: FilterSpec): boolean {
-  return f.hideCompleted || f.search.trim() !== ''
+  return f.hideCompleted || f.search.trim() !== '' || f.tags.size > 0
 }
 
 interface Props {
   filter: FilterSpec
   onChange: (next: FilterSpec) => void
   onClose: () => void
+  // Available tag values from the current list (preserved-case for display);
+  // selection is matched lowercase against filter.tags.
+  availableTags: string[]
 }
 
-export function FilterPopover({ filter, onChange, onClose }: Props) {
+export function FilterPopover({
+  filter,
+  onChange,
+  onClose,
+  availableTags,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -71,6 +82,39 @@ export function FilterPopover({ filter, onChange, onClose }: Props) {
         />
       </label>
 
+      {availableTags.length > 0 && (
+        <div className="mt-3 border-t border-border pt-3">
+          <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-text-faint">
+            Tags
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {availableTags.map((tag) => {
+              const lower = tag.toLowerCase()
+              const active = filter.tags.has(lower)
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => {
+                    const next = new Set(filter.tags)
+                    if (active) next.delete(lower)
+                    else next.add(lower)
+                    onChange({ ...filter, tags: next })
+                  }}
+                  className={`rounded border px-1.5 py-0.5 text-[11px] transition-colors ${
+                    active
+                      ? 'border-accent/50 bg-accent-soft text-text'
+                      : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+                  }`}
+                >
+                  {tag}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="mt-3 border-t border-border pt-3">
         <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted hover:text-text">
           <input
@@ -85,9 +129,15 @@ export function FilterPopover({ filter, onChange, onClose }: Props) {
         </label>
       </div>
 
-      <p className="mt-3 border-t border-border pt-2 text-[10px] text-text-faint">
-        Tag filter coming next. Esc to close.
-      </p>
+      {isFilterActive(filter) && (
+        <button
+          type="button"
+          onClick={() => onChange(DEFAULT_FILTER)}
+          className="mt-3 w-full border-t border-border pt-2 text-left text-[11px] text-text-faint hover:text-text-muted"
+        >
+          Reset filters
+        </button>
+      )}
     </div>
   )
 }

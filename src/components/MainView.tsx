@@ -275,10 +275,27 @@ export function MainView({ onLoggedOut }: Props) {
       applyFilter(fullTree, {
         hideCompleted: filter.hideCompleted,
         search: filter.search.trim().toLowerCase() || undefined,
+        tags: filter.tags,
         keep: recentlyCompletedUids,
       }),
     [fullTree, filter, recentlyCompletedUids],
   )
+
+  // Distinct tags across the active list, alphabetical, preserving the
+  // first-seen casing for display.
+  const availableTags = useMemo(() => {
+    if (!activeItems) return [] as string[]
+    const byLower = new Map<string, string>()
+    for (const item of activeItems) {
+      for (const cat of item.todo.categories) {
+        const k = cat.toLowerCase()
+        if (!byLower.has(k)) byLower.set(k, cat)
+      }
+    }
+    return Array.from(byLower.values()).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base' }),
+    )
+  }, [activeItems])
   const fadingOutUids = useMemo(
     () =>
       filter.hideCompleted ? recentlyCompletedUids : new Set<string>(),
@@ -813,6 +830,7 @@ export function MainView({ onLoggedOut }: Props) {
             filter={filter}
             onChange={setFilter}
             onClose={() => setFilterOpen(false)}
+            availableTags={availableTags}
           />
         )}
         <div className="flex-1 overflow-y-auto">

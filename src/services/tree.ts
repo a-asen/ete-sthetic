@@ -74,13 +74,21 @@ export interface TreeFilter {
   hideCompleted?: boolean
   // Lowercased trimmed search query; matches against summary or description.
   search?: string
+  // When set and non-empty, a node passes only if it has at least one
+  // category in this set (case-insensitive compare upstream).
+  tags?: ReadonlySet<string>
   // Uids to force-keep regardless of other filters (used for the
   // recently-completed grace period).
   keep?: ReadonlySet<string>
 }
 
 function nodeSelfPasses(
-  todo: { status: string; summary: string; description?: string },
+  todo: {
+    status: string
+    summary: string
+    description?: string
+    categories?: string[]
+  },
   filter: TreeFilter,
   isKept: boolean,
 ): boolean {
@@ -94,6 +102,11 @@ function nodeSelfPasses(
       ' ' +
       (todo.description ?? '').toLowerCase()
     if (!haystack.includes(q)) return false
+  }
+  if (filter.tags && filter.tags.size > 0) {
+    const cats = todo.categories ?? []
+    const hit = cats.some((c) => filter.tags!.has(c.toLowerCase()))
+    if (!hit) return false
   }
   return true
 }

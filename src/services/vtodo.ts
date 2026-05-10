@@ -67,6 +67,14 @@ export function parseVTodo(raw: string): VTodo | null {
     }
   }
 
+  const categories: string[] = []
+  for (const prop of vtodo.getAllProperties('categories')) {
+    for (const value of prop.getValues()) {
+      const s = asString(value)?.trim()
+      if (s) categories.push(s)
+    }
+  }
+
   return {
     uid: String(uid),
     summary,
@@ -77,6 +85,7 @@ export function parseVTodo(raw: string): VTodo | null {
     created,
     lastModified,
     parentUid,
+    categories,
     raw,
   }
 }
