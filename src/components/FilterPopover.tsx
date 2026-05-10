@@ -21,23 +21,33 @@ interface Props {
   filter: FilterSpec
   onChange: (next: FilterSpec) => void
   onClose: () => void
+  // Called when the user "commits" the search (Enter in the search input).
+  // The caller typically closes the popover and pulls focus back to the
+  // tasks pane so they can navigate the filtered tree right away.
+  onSubmit?: () => void
   // Available tag values from the current list (preserved-case for display);
   // selection is matched lowercase against filter.tags.
   availableTags: string[]
+  // Increments to request a re-focus of the search input (e.g. Ctrl+F when
+  // the popover is already open).
+  focusKey?: number
 }
 
 export function FilterPopover({
   filter,
   onChange,
   onClose,
+  onSubmit,
   availableTags,
+  focusKey = 0,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     searchRef.current?.focus()
-  }, [])
+    searchRef.current?.select()
+  }, [focusKey])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -78,14 +88,24 @@ export function FilterPopover({
           placeholder="bird, title::bird, tag::bird, notes::bird"
           value={filter.search}
           onChange={(e) => onChange({ ...filter, search: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              onSubmit?.()
+            }
+          }}
           className="w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
         />
         <p className="mt-1 text-[10px] leading-tight text-text-faint">
-          Use{' '}
+          Space-separated terms combine with{' '}
+          <span className="text-text-muted">AND</span>. Scope with{' '}
           <code className="text-text-muted">title::</code>,{' '}
           <code className="text-text-muted">tag::</code>, or{' '}
-          <code className="text-text-muted">notes::</code> to scope a term.
-          Multiple terms must all match.
+          <code className="text-text-muted">notes::</code>. Press{' '}
+          <kbd className="rounded border border-border-strong bg-surface-2 px-1 font-mono text-[9px]">
+            Enter
+          </kbd>{' '}
+          to apply and return to tasks.
         </p>
       </label>
 

@@ -76,6 +76,7 @@ export function MainView({ onLoggedOut }: Props) {
     writeHideCompleted(next.hideCompleted)
   }, [])
   const [filterOpen, setFilterOpen] = useState(false)
+  const [filterFocusKey, setFilterFocusKey] = useState(0)
 
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [pendingItemUids, setPendingItemUids] = useState<Set<string>>(
@@ -395,12 +396,22 @@ export function MainView({ onLoggedOut }: Props) {
   // (and modifier-key combos are ignored so OS shortcuts pass through).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"]')) return
+
+      // Ctrl/Cmd+F → open Filter and focus search (override browser find).
+      // Honored even from inside text inputs.
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        setFilterOpen(true)
+        setFilterFocusKey((k) => k + 1)
+        return
+      }
+
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
       )
         return
-      if (document.querySelector('[role="dialog"]')) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
       if (e.key === 'l' || e.key === 'L') {
@@ -922,7 +933,12 @@ export function MainView({ onLoggedOut }: Props) {
                   filter={filter}
                   onChange={setFilter}
                   onClose={() => setFilterOpen(false)}
+                  onSubmit={() => {
+                    setFilterOpen(false)
+                    setFocusZone('tasks')
+                  }}
                   availableTags={availableTags}
+                  focusKey={filterFocusKey}
                 />
               )}
             </div>
