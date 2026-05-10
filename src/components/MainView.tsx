@@ -639,7 +639,13 @@ export function MainView({ onLoggedOut }: Props) {
           onConfirm={handleConfirmDelete}
         />
       )}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
+      <aside
+        className={`flex w-60 shrink-0 flex-col border-r border-border bg-surface transition-[opacity,transform] duration-200 ${
+          focusZone === 'sidebar'
+            ? 'opacity-100 translate-x-0'
+            : 'opacity-50 -translate-x-1'
+        }`}
+      >
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-xs font-semibold uppercase tracking-wider text-text-faint">
             Lists
