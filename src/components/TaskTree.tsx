@@ -148,14 +148,21 @@ export function TaskTree({
 
   const visible = useMemo(() => flattenVisible(roots, expanded), [roots, expanded])
 
-  // Auto-scroll the selected row into view (e.g. when arrow keys move past
-  // the visible window).
+  // When selection changes, focus the row and scroll it into view so Enter
+  // lands on it. Skip if focus is currently in a typing element so we don't
+  // disrupt inline editing or the create-task input.
   useEffect(() => {
     if (!selected) return
     const el = document.querySelector(
       `[data-task-uid="${CSS.escape(selected)}"]`,
     ) as HTMLElement | null
-    el?.scrollIntoView({ block: 'nearest' })
+    if (!el) return
+    const active = document.activeElement
+    const isTypingTarget =
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement
+    if (!isTypingTarget) el.focus({ preventScroll: true })
+    el.scrollIntoView({ block: 'nearest' })
   }, [selected])
 
   // Single keyboard handler for the tree: arrows, Enter, Del/Backspace.
@@ -231,7 +238,28 @@ export function TaskTree({
           setSelected(visible[visible.length - 1].todo.uid)
           break
         }
+        case 'PageDown': {
+          e.preventDefault()
+          const PAGE = 10
+          const next = idx < 0 ? 0 : Math.min(visible.length - 1, idx + PAGE)
+          setSelected(visible[next].todo.uid)
+          break
+        }
+        case 'PageUp': {
+          e.preventDefault()
+          const PAGE = 10
+          const next = idx <= 0 ? 0 : Math.max(0, idx - PAGE)
+          setSelected(visible[next].todo.uid)
+          break
+        }
         case 'Enter': {
+          // Buttons / links handle their own Enter via synthetic click; only
+          // toggle the selection when focus is on the row (or on body).
+          if (
+            target instanceof HTMLButtonElement ||
+            target instanceof HTMLAnchorElement
+          )
+            return
           if (idx < 0 || !onToggleComplete) return
           e.preventDefault()
           onToggleComplete(visible[idx])
@@ -300,11 +328,12 @@ export function TaskTree({
             key={node.itemUid}
             data-task-uid={node.todo.uid}
             role="treeitem"
+            tabIndex={-1}
             aria-level={node.depth + 1}
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
             onClick={() => setSelected(node.todo.uid)}
-            className={`group flex cursor-default items-center gap-2 px-3 py-1.5 text-sm transition-colors ${
+            className={`group flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none transition-colors ${
               isSelected
                 ? 'bg-accent-soft'
                 : 'hover:bg-surface'
