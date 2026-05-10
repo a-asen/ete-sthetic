@@ -92,15 +92,28 @@ export function isAuthenticated(): boolean {
   return account !== null
 }
 
-function requireAccount(): Etebase.Account {
-  if (!account) throw new Error('Not authenticated')
-  return account
+async function ensureAccount(): Promise<Etebase.Account> {
+  if (account) return account
+  // The module-level account can be null after a Vite HMR reload (which
+  // re-imports this module and resets the closure) or when the page first
+  // mounts. Try a silent restore from the persisted session before giving
+  // up — saves the user from being kicked back to the login screen.
+  const stored = await loadSession()
+  if (!stored) throw new Error('Not authenticated')
+  try {
+    account = await Etebase.Account.restore(stored.session)
+    return account
+  } catch {
+    await clearSession()
+    throw new Error('Not authenticated')
+  }
 }
 
 async function getCollection(uid: string): Promise<Etebase.Collection> {
   const cached = collectionHandles.get(uid)
   if (cached) return cached
-  const cm = requireAccount().getCollectionManager()
+  const acc = await ensureAccount()
+  const cm = acc.getCollectionManager()
   const col = await cm.fetch(uid)
   collectionHandles.set(uid, col)
   return col
@@ -112,7 +125,8 @@ async function getItem(
 ): Promise<Etebase.Item> {
   const cached = itemHandles.get(itemKey(collectionUid, itemUid))
   if (cached) return cached
-  const cm = requireAccount().getCollectionManager()
+  const acc = await ensureAccount()
+  const cm = acc.getCollectionManager()
   const collection = await getCollection(collectionUid)
   const im = cm.getItemManager(collection)
   const item = await im.fetch(itemUid)
@@ -123,12 +137,13 @@ async function getItem(
 async function getItemManager(
   collectionUid: string,
 ): Promise<Etebase.ItemManager> {
+  const acc = await ensureAccount()
   const collection = await getCollection(collectionUid)
-  return requireAccount().getCollectionManager().getItemManager(collection)
+  return acc.getCollectionManager().getItemManager(collection)
 }
 
 export async function listCollections(): Promise<CollectionInfo[]> {
-  const acc = requireAccount()
+  const acc = await ensureAccount()
   const cm = acc.getCollectionManager()
   const result = await cm.list(TASK_COLLECTION_TYPE)
   return result.data.map((c) => {
