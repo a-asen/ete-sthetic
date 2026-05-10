@@ -143,28 +143,68 @@ export async function listCollections(): Promise<CollectionInfo[]> {
   })
 }
 
-export async function listTaskItems(collectionUid: string): Promise<TaskItem[]> {
-  const im = await getItemManager(collectionUid)
+export interface ListTaskItemsOptions {
+  signal?: AbortSignal
+  // Called with each freshly-decrypted batch (defaults to BATCH_SIZE items
+  // per call) so the caller can update UI progressively. The same items
+  // are also accumulated into the resolved array.
+  onBatch?: (batch: TaskItem[]) => void
+}
 
-  const items: Etebase.Item[] = []
+const BATCH_SIZE = 50
+
+class AbortError extends Error {
+  name = 'AbortError'
+  constructor() {
+    super('Aborted')
+  }
+}
+
+function checkAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new AbortError()
+}
+
+export async function listTaskItems(
+  collectionUid: string,
+  options: ListTaskItemsOptions = {},
+): Promise<TaskItem[]> {
+  const { signal, onBatch } = options
+  checkAborted(signal)
+
+  const im = await getItemManager(collectionUid)
+  const accumulated: TaskItem[] = []
+  let pendingBatch: TaskItem[] = []
+
+  const flush = () => {
+    if (pendingBatch.length === 0) return
+    const batch = pendingBatch
+    pendingBatch = []
+    accumulated.push(...batch)
+    onBatch?.(batch)
+  }
+
   let stoken: string | undefined
   while (true) {
+    checkAborted(signal)
     const page = await im.list({ stoken })
-    items.push(...page.data)
+    checkAborted(signal)
+
+    for (const item of page.data) {
+      checkAborted(signal)
+      if (item.isDeleted) continue
+      const raw = await item.getContent(Etebase.OutputFormat.String)
+      const todo = parseVTodo(raw)
+      if (!todo) continue
+      itemHandles.set(itemKey(collectionUid, item.uid), item)
+      pendingBatch.push({ itemUid: item.uid, todo })
+      if (pendingBatch.length >= BATCH_SIZE) flush()
+    }
     stoken = page.stoken
     if (page.done) break
   }
 
-  const tasks: TaskItem[] = []
-  for (const item of items) {
-    if (item.isDeleted) continue
-    const raw = await item.getContent(Etebase.OutputFormat.String)
-    const todo = parseVTodo(raw)
-    if (!todo) continue
-    itemHandles.set(itemKey(collectionUid, item.uid), item)
-    tasks.push({ itemUid: item.uid, todo })
-  }
-  return tasks
+  flush()
+  return accumulated
 }
 
 function setItemMeta(item: Etebase.Item, summary: string) {

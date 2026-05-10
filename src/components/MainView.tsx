@@ -165,49 +165,84 @@ export function MainView({ onLoggedOut }: Props) {
     })
   }, [])
 
-  const fetchCollection = useCallback(async (uid: string) => {
-    if (inFlightRef.current.has(uid)) return
-    inFlightRef.current.add(uid)
-    setLoadingUids((prev) => {
-      const next = new Set(prev)
-      next.add(uid)
-      return next
-    })
-    try {
-      const items = await listTaskItems(uid)
-      if (cancelledRef.current) return
+  const fetchCollection = useCallback(
+    async (uid: string, signal?: AbortSignal) => {
+      if (inFlightRef.current.has(uid)) return
+      inFlightRef.current.add(uid)
+      setLoadingUids((prev) => {
+        const next = new Set(prev)
+        next.add(uid)
+        return next
+      })
+      // Initialize an empty bucket so the UI can render "0 tasks" + counts
+      // begin at 0 instead of "Loading…" while batches stream in.
       setItemsByUid((prev) => {
+        if (prev.has(uid)) return prev
         const next = new Map(prev)
-        next.set(uid, items)
+        next.set(uid, [])
         return next
       })
-      setErrorByUid((prev) => {
-        if (!prev.has(uid)) return prev
-        const next = new Map(prev)
-        next.delete(uid)
-        return next
-      })
-    } catch (err) {
-      if (cancelledRef.current) return
-      setErrorByUid((prev) => {
-        const next = new Map(prev)
-        next.set(
-          uid,
-          err instanceof Error ? err.message : 'Failed to load tasks',
-        )
-        return next
-      })
-    } finally {
-      inFlightRef.current.delete(uid)
-      if (!cancelledRef.current) {
-        setLoadingUids((prev) => {
-          const next = new Set(prev)
+      try {
+        await listTaskItems(uid, {
+          signal,
+          onBatch: (batch) => {
+            if (cancelledRef.current) return
+            setItemsByUid((prev) => {
+              const items = prev.get(uid) ?? []
+              const next = new Map(prev)
+              next.set(uid, [...items, ...batch])
+              return next
+            })
+          },
+        })
+        if (cancelledRef.current) return
+        setErrorByUid((prev) => {
+          if (!prev.has(uid)) return prev
+          const next = new Map(prev)
           next.delete(uid)
           return next
         })
+      } catch (err) {
+        if (cancelledRef.current) return
+        // AbortError: silently drop the partial cache so the next visit (or
+        // background prefetch) starts from scratch.
+        if (err instanceof Error && err.name === 'AbortError') {
+          setItemsByUid((prev) => {
+            if (!prev.has(uid)) return prev
+            const next = new Map(prev)
+            next.delete(uid)
+            return next
+          })
+          return
+        }
+        setErrorByUid((prev) => {
+          const next = new Map(prev)
+          next.set(
+            uid,
+            err instanceof Error ? err.message : 'Failed to load tasks',
+          )
+          return next
+        })
+        // Real error: drop the partial bucket so a retry starts clean.
+        setItemsByUid((prev) => {
+          if (!prev.has(uid)) return prev
+          const next = new Map(prev)
+          next.delete(uid)
+          return next
+        })
+      } finally {
+        inFlightRef.current.delete(uid)
+        if (!cancelledRef.current) {
+          setLoadingUids((prev) => {
+            const next = new Set(prev)
+            next.delete(uid)
+            return next
+          })
+        }
       }
-    }
-  }, [])
+    },
+    [],
+  )
 
   // Load collections on mount.
   useEffect(() => {
@@ -225,11 +260,15 @@ export function MainView({ onLoggedOut }: Props) {
       })
   }, [])
 
-  // Eagerly fetch the active collection whenever it changes.
+  // Eagerly fetch the active collection whenever it changes. Aborts the
+  // in-flight load when the user switches lists so we don't block on a
+  // collection they no longer want to look at.
   useEffect(() => {
     if (!activeUid) return
     if (itemsByUid.has(activeUid)) return
-    void fetchCollection(activeUid)
+    const controller = new AbortController()
+    void fetchCollection(activeUid, controller.signal)
+    return () => controller.abort()
   }, [activeUid, itemsByUid, fetchCollection])
 
   // After the active collection is loaded, prefetch the rest in parallel
@@ -957,9 +996,11 @@ export function MainView({ onLoggedOut }: Props) {
           {activeError && (
             <p className="px-5 py-4 text-sm text-danger">{activeError}</p>
           )}
-          {!activeError && activeItems === undefined && (
-            <p className="px-5 py-4 text-sm text-text-faint">Loading tasks…</p>
-          )}
+          {!activeError &&
+            activeItems === undefined &&
+            !activeLoading && (
+              <p className="px-5 py-4 text-sm text-text-faint">Loading tasks…</p>
+            )}
           {!activeError && activeItems && (visibleTree.length > 0 || creating) && (
             <TaskTree
               roots={visibleTree}
@@ -981,13 +1022,18 @@ export function MainView({ onLoggedOut }: Props) {
               inactive={focusZone !== 'tasks'}
             />
           )}
-          {!activeError && activeItems && visibleTree.length === 0 && !creating && (
-            <p className="px-5 py-4 text-sm text-text-faint">
-              {isFilterActive(filter) && fullTree.length > 0
-                ? 'No tasks match the current filter.'
-                : 'No tasks in this list.'}
-            </p>
-          )}
+          {!activeError &&
+            activeItems &&
+            visibleTree.length === 0 &&
+            !creating && (
+              <p className="px-5 py-4 text-sm text-text-faint">
+                {activeLoading
+                  ? 'Loading tasks…'
+                  : isFilterActive(filter) && fullTree.length > 0
+                    ? 'No tasks match the current filter.'
+                    : 'No tasks in this list.'}
+              </p>
+            )}
         </div>
       </main>
     </div>
