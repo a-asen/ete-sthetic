@@ -2,6 +2,7 @@ import * as Etebase from 'etebase'
 import type { CollectionInfo, TaskItem } from '../types'
 import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
 import { clearSession, loadSession, saveSession } from './store'
+import { clearAllSnapshots } from './snapshots'
 
 export const DEFAULT_SERVER = 'https://api.etebase.com'
 const TASK_COLLECTION_TYPE = 'etebase.vtodo'
@@ -86,6 +87,7 @@ export async function logout(): Promise<void> {
   account = null
   clearHandles()
   await clearSession()
+  await clearAllSnapshots()
 }
 
 export function isAuthenticated(): boolean {
@@ -162,8 +164,20 @@ export interface ListTaskItemsOptions {
   signal?: AbortSignal
   // Called with each freshly-decrypted batch (defaults to BATCH_SIZE items
   // per call) so the caller can update UI progressively. The same items
-  // are also accumulated into the resolved array.
+  // are also accumulated into the resolved result.
   onBatch?: (batch: TaskItem[]) => void
+  // Resume sync from this stoken; only items that changed since are
+  // returned (including server-side deletions). Undefined for a full load.
+  fromStoken?: string
+}
+
+export interface SyncResult {
+  // Items present in this delta (upserts).
+  items: TaskItem[]
+  // Item uids that were deleted on the server since fromStoken.
+  removed: string[]
+  // The new stoken to persist; pass into the next call to resume.
+  stoken: string
 }
 
 const BATCH_SIZE = 25
@@ -190,12 +204,13 @@ function checkAborted(signal?: AbortSignal) {
 export async function listTaskItems(
   collectionUid: string,
   options: ListTaskItemsOptions = {},
-): Promise<TaskItem[]> {
-  const { signal, onBatch } = options
+): Promise<SyncResult> {
+  const { signal, onBatch, fromStoken } = options
   checkAborted(signal)
 
   const im = await getItemManager(collectionUid)
   const accumulated: TaskItem[] = []
+  const removed: string[] = []
   let pendingBatch: TaskItem[] = []
 
   const flush = () => {
@@ -206,7 +221,7 @@ export async function listTaskItems(
     onBatch?.(batch)
   }
 
-  let stoken: string | undefined
+  let stoken: string | undefined = fromStoken
   while (true) {
     checkAborted(signal)
     const page = await im.list({ stoken })
@@ -214,7 +229,11 @@ export async function listTaskItems(
 
     for (const item of page.data) {
       checkAborted(signal)
-      if (item.isDeleted) continue
+      if (item.isDeleted) {
+        removed.push(item.uid)
+        itemHandles.delete(itemKey(collectionUid, item.uid))
+        continue
+      }
       const raw = await item.getContent(Etebase.OutputFormat.String)
       const todo = parseVTodo(raw)
       if (!todo) continue
@@ -231,7 +250,7 @@ export async function listTaskItems(
   }
 
   flush()
-  return accumulated
+  return { items: accumulated, removed, stoken: stoken ?? '' }
 }
 
 function setItemMeta(item: Etebase.Item, summary: string) {

@@ -3,7 +3,10 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 const SESSION_KEY = 'etebase.session'
 const SERVER_KEY = 'etebase.server'
 
-const store = new LazyStore('ete-stethic.json', { defaults: {}, autoSave: true })
+export const store = new LazyStore('ete-stethic.json', {
+  defaults: {},
+  autoSave: true,
+})
 
 export async function saveSession(session: string, server: string) {
   await store.set(SESSION_KEY, session)

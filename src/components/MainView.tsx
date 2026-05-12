@@ -14,6 +14,12 @@ import {
   collectDescendantItemUids,
   countTasks,
 } from '../services/tree'
+import {
+  type CollectionSnapshot,
+  listSnapshotUids,
+  loadSnapshot,
+  saveSnapshot,
+} from '../services/snapshots'
 import type {
   CollectionInfo,
   Priority,
@@ -69,8 +75,15 @@ export function MainView({ onLoggedOut }: Props) {
   // Uids that have been *fully* loaded (success path completed). Distinct
   // from itemsByUid which gets primed to [] as soon as a fetch starts.
   // Used to gate the background prefetch so it doesn't fight the active
-  // load for CPU.
+  // load for CPU. Populated from disk snapshots on mount so cached lists
+  // are instantly considered loaded.
   const [loadedUids, setLoadedUids] = useState<Set<string>>(() => new Set())
+  // Per-collection sync token (Etebase stoken). Persisted alongside the
+  // items so re-opens fetch only the delta.
+  const [stokenByUid, setStokenByUid] = useState<Map<string, string>>(
+    () => new Map(),
+  )
+  const [hydrated, setHydrated] = useState(false)
 
   const [filter, setFilterState] = useState<FilterSpec>(() => ({
     ...DEFAULT_FILTER,
@@ -124,6 +137,70 @@ export function MainView({ onLoggedOut }: Props) {
       timers.clear()
     }
   }, [])
+
+  // Hydrate cached snapshots from disk before any network sync. This makes
+  // the second-and-onward app open instant: trees render immediately and
+  // sync only pulls deltas.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const uids = await listSnapshotUids()
+        const snapshots = await Promise.all(uids.map((uid) => loadSnapshot(uid)))
+        if (cancelled) return
+        const nextItems = new Map<string, TaskItem[]>()
+        const nextStokens = new Map<string, string>()
+        const nextLoaded = new Set<string>()
+        for (const snap of snapshots) {
+          if (!snap) continue
+          nextItems.set(snap.uid, snap.items)
+          if (snap.stoken) nextStokens.set(snap.uid, snap.stoken)
+          nextLoaded.add(snap.uid)
+        }
+        if (nextItems.size > 0) {
+          setItemsByUid((prev) => {
+            const next = new Map(prev)
+            for (const [uid, items] of nextItems) next.set(uid, items)
+            return next
+          })
+          setStokenByUid((prev) => {
+            const next = new Map(prev)
+            for (const [uid, s] of nextStokens) next.set(uid, s)
+            return next
+          })
+          setLoadedUids((prev) => {
+            const next = new Set(prev)
+            for (const uid of nextLoaded) next.add(uid)
+            return next
+          })
+        }
+      } finally {
+        if (!cancelled) setHydrated(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Persist the active collection's snapshot to disk on changes (mutations
+  // mostly). Debounced so flurries of state updates coalesce into one
+  // write; LazyStore's autoSave further debounces the filesystem write.
+  useEffect(() => {
+    if (!activeUid || !loadedUids.has(activeUid)) return
+    const items = itemsByUid.get(activeUid)
+    if (!items) return
+    const id = setTimeout(() => {
+      void saveSnapshot({
+        version: 1,
+        uid: activeUid,
+        items,
+        stoken: stokenByUid.get(activeUid),
+        lastSyncedAt: Date.now(),
+      })
+    }, 1000)
+    return () => clearTimeout(id)
+  }, [itemsByUid, stokenByUid, activeUid, loadedUids])
 
   // Scroll the active sidebar row into view when activeUid changes — mirrors
   // the tree's selection scroll-into-view.
@@ -179,28 +256,55 @@ export function MainView({ onLoggedOut }: Props) {
         next.add(uid)
         return next
       })
-      // Initialize an empty bucket so the UI can render "0 tasks" + counts
-      // begin at 0 instead of "Loading…" while batches stream in.
+      // Initialize an empty bucket only if there's no hydrated cache for
+      // this uid — otherwise the cached items stay visible while we sync.
       setItemsByUid((prev) => {
         if (prev.has(uid)) return prev
         const next = new Map(prev)
         next.set(uid, [])
         return next
       })
+      const fromStoken = stokenByUid.get(uid)
       try {
-        await listTaskItems(uid, {
+        const result = await listTaskItems(uid, {
           signal,
+          fromStoken,
           onBatch: (batch) => {
             if (cancelledRef.current) return
             setItemsByUid((prev) => {
-              const items = prev.get(uid) ?? []
+              const existing = prev.get(uid) ?? []
+              // Upsert by itemUid so re-syncs replace rather than duplicate.
+              const byId = new Map(existing.map((t) => [t.itemUid, t]))
+              for (const t of batch) byId.set(t.itemUid, t)
               const next = new Map(prev)
-              next.set(uid, [...items, ...batch])
+              next.set(uid, Array.from(byId.values()))
               return next
             })
           },
         })
         if (cancelledRef.current) return
+        // Apply server-side deletions to the local cache.
+        if (result.removed.length > 0) {
+          const removeSet = new Set(result.removed)
+          setItemsByUid((prev) => {
+            const existing = prev.get(uid) ?? []
+            const filtered = existing.filter(
+              (t) => !removeSet.has(t.itemUid),
+            )
+            if (filtered.length === existing.length) return prev
+            const next = new Map(prev)
+            next.set(uid, filtered)
+            return next
+          })
+        }
+        if (result.stoken) {
+          setStokenByUid((prev) => {
+            if (prev.get(uid) === result.stoken) return prev
+            const next = new Map(prev)
+            next.set(uid, result.stoken)
+            return next
+          })
+        }
         setErrorByUid((prev) => {
           if (!prev.has(uid)) return prev
           const next = new Map(prev)
@@ -213,23 +317,28 @@ export function MainView({ onLoggedOut }: Props) {
           next.add(uid)
           return next
         })
+        // Persist the freshly-synced snapshot. We read the latest items via
+        // a no-op state update so the saved snapshot reflects all batches +
+        // removals applied above.
+        setItemsByUid((prev) => {
+          const items = prev.get(uid)
+          if (items) {
+            const snapshot: CollectionSnapshot = {
+              version: 1,
+              uid,
+              items,
+              stoken: result.stoken || undefined,
+              lastSyncedAt: Date.now(),
+            }
+            void saveSnapshot(snapshot)
+          }
+          return prev
+        })
       } catch (err) {
         if (cancelledRef.current) return
-        // AbortError: silently drop the partial cache so the next visit (or
-        // background prefetch) starts from scratch.
+        // AbortError: leave any cached items in place (don't lose what the
+        // user already had) but don't mark as loaded — next visit re-syncs.
         if (err instanceof Error && err.name === 'AbortError') {
-          setItemsByUid((prev) => {
-            if (!prev.has(uid)) return prev
-            const next = new Map(prev)
-            next.delete(uid)
-            return next
-          })
-          setLoadedUids((prev) => {
-            if (!prev.has(uid)) return prev
-            const next = new Set(prev)
-            next.delete(uid)
-            return next
-          })
           return
         }
         setErrorByUid((prev) => {
@@ -241,8 +350,10 @@ export function MainView({ onLoggedOut }: Props) {
           return next
         })
         // Real error: drop the partial bucket so a retry starts clean.
+        // Only if we don't have cached items already.
         setItemsByUid((prev) => {
-          if (!prev.has(uid)) return prev
+          const items = prev.get(uid)
+          if (!items || items.length > 0) return prev
           const next = new Map(prev)
           next.delete(uid)
           return next
@@ -277,16 +388,18 @@ export function MainView({ onLoggedOut }: Props) {
       })
   }, [])
 
-  // Eagerly fetch the active collection whenever it changes. Aborts the
-  // in-flight load when the user switches lists so we don't block on a
-  // collection they no longer want to look at.
+  // Eagerly sync the active collection whenever it changes. With a cached
+  // stoken the sync is just a delta; without, it's a full load. We don't
+  // skip when the cache already has items — that's how hydrated lists pick
+  // up server-side changes — but the UI keeps showing the cached tree
+  // throughout. Aborts on cleanup so list-switching mid-sync is cheap.
   useEffect(() => {
+    if (!hydrated) return
     if (!activeUid) return
-    if (itemsByUid.has(activeUid)) return
     const controller = new AbortController()
     void fetchCollection(activeUid, controller.signal)
     return () => controller.abort()
-  }, [activeUid, itemsByUid, fetchCollection])
+  }, [activeUid, hydrated, fetchCollection])
 
   // After the active collection is FULLY loaded, prefetch the rest in
   // parallel with bounded concurrency so sidebar counts can fill in.
@@ -602,7 +715,7 @@ export function MainView({ onLoggedOut }: Props) {
         if (cancelledRef.current) return
         setItemsByUid((prev) => {
           const next = new Map(prev)
-          next.set(colUid, refreshed)
+          next.set(colUid, refreshed.items)
           return next
         })
       } catch {
