@@ -347,3 +347,71 @@ export async function deleteTask(
 ): Promise<void> {
   return deleteTasks(collectionUid, [itemUid])
 }
+
+// Move a set of items from one collection to another. The Etebase API
+// has no native "move" primitive, so we copy the encrypted blob + meta
+// into the destination collection, then mark the originals deleted.
+// The VTODO `uid` (distinct from the Etebase item uid) is preserved in
+// the content, so RELATED-TO parent/child links inside the moved subtree
+// stay intact.
+//
+// Ordering: destination create commits first. If it fails the originals
+// are still on the server and the user keeps their data. If the source
+// delete fails afterwards, there are duplicates but no data loss.
+export async function moveTasksToCollection(
+  sourceCollectionUid: string,
+  destCollectionUid: string,
+  itemUids: string[],
+): Promise<TaskItem[]> {
+  if (itemUids.length === 0) return []
+  if (sourceCollectionUid === destCollectionUid) {
+    throw new Error('Source and destination collections are the same')
+  }
+
+  const sourceItems = await Promise.all(
+    itemUids.map((uid) => getItem(sourceCollectionUid, uid)),
+  )
+
+  // Snapshot content + meta from the source side before touching anything.
+  const payloads = await Promise.all(
+    sourceItems.map(async (item) => ({
+      content: await item.getContent(Etebase.OutputFormat.String),
+      meta: item.getMeta<Record<string, unknown>>(),
+    })),
+  )
+
+  // Build new items in the destination collection.
+  const acc = await ensureAccount()
+  const destCollection = await getCollection(destCollectionUid)
+  const destIm = acc.getCollectionManager().getItemManager(destCollection)
+  const created: Etebase.Item[] = []
+  for (const { content, meta } of payloads) {
+    const newItem = await destIm.create(
+      { ...meta, mtime: Date.now() },
+      content,
+    )
+    created.push(newItem)
+  }
+  await destIm.transaction(created)
+  for (const newItem of created) {
+    itemHandles.set(itemKey(destCollectionUid, newItem.uid), newItem)
+  }
+
+  // Now safe to delete the source items.
+  for (const item of sourceItems) item.delete()
+  const sourceIm = await getItemManager(sourceCollectionUid)
+  await sourceIm.transaction(sourceItems)
+  for (const uid of itemUids) {
+    itemHandles.delete(itemKey(sourceCollectionUid, uid))
+  }
+
+  // Re-parse the moved VTODOs so the caller can splice them straight
+  // into its in-memory itemsByUid for the destination collection.
+  const out: TaskItem[] = []
+  for (let i = 0; i < created.length; i++) {
+    const todo = parseVTodo(payloads[i].content)
+    if (!todo) continue
+    out.push({ itemUid: created[i].uid, todo })
+  }
+  return out
+}
