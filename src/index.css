@@ -21,6 +21,24 @@
   --radius-lg: 10px;
 }
 
+/* Light theme — picked for daytime use. Keeps the same accent green so
+   "completed" / focus states remain familiar; bumps the green slightly
+   darker to keep contrast on white. Danger red is darkened a touch for
+   the same reason. */
+html[data-theme="light"] {
+  --color-bg: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #eef0f4;
+  --color-border: #d9dde3;
+  --color-border-strong: #b3b9c4;
+  --color-text: #1b1d22;
+  --color-text-muted: #5a5e67;
+  --color-text-faint: #8a8d96;
+  --color-accent: #2f8a6c;
+  --color-accent-soft: rgba(47, 138, 108, 0.14);
+  --color-danger: #b04848;
+}
+
 html, body, #root {
   height: 100%;
 }
