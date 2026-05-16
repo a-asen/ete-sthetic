@@ -149,10 +149,25 @@ export interface VTodoPatch {
   summary?: string
   status?: TaskStatus
   priority?: Priority
-  description?: string
-  due?: string
+  // '' or null clears the description; undefined leaves it untouched.
+  description?: string | null
+  // Date sets a date-only DUE; null clears; undefined leaves untouched.
+  due?: Date | null
+  // Full replacement of CATEGORIES. [] clears.
+  categories?: string[]
   // null clears the parent (root). undefined leaves it untouched.
   parentUid?: string | null
+}
+
+function dateToIcalDate(date: Date): ICAL.Time {
+  // VTODO DUE as DATE (no time-of-day). isDate=true makes ical.js serialize
+  // it as YYYYMMDD per RFC 5545; zone is irrelevant for date-only values.
+  return ICAL.Time.fromData({
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+    isDate: true,
+  })
 }
 
 // Update an existing raw VTODO with patch fields. Preserves all unknown
@@ -187,17 +202,25 @@ export function updateVTodo(raw: string, patch: VTodoPatch): string {
     }
   }
   if (patch.description !== undefined) {
-    if (patch.description === '') {
+    if (!patch.description) {
       vtodo.removeAllProperties('description')
     } else {
       vtodo.updatePropertyWithValue('description', patch.description)
     }
   }
   if (patch.due !== undefined) {
-    if (patch.due === '') {
+    if (patch.due === null) {
       vtodo.removeAllProperties('due')
     } else {
-      vtodo.updatePropertyWithValue('due', patch.due)
+      vtodo.updatePropertyWithValue('due', dateToIcalDate(patch.due))
+    }
+  }
+  if (patch.categories !== undefined) {
+    vtodo.removeAllProperties('categories')
+    if (patch.categories.length > 0) {
+      const prop = new ICAL.Property('categories', vtodo)
+      prop.setValues(patch.categories)
+      vtodo.addProperty(prop)
     }
   }
   if (patch.parentUid !== undefined) {

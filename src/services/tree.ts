@@ -1,4 +1,4 @@
-import type { TaskItem, TaskNode, TaskSortSpec } from '../types'
+import type { TaskItem, TaskNode, TaskSortSpec, VTodo } from '../types'
 import { comparatorFor } from './sort'
 
 interface MutableNode extends TaskNode {
@@ -223,6 +223,28 @@ export function collectDescendantItemUids(node: TaskNode): string[] {
   }
   walk(node)
   return out
+}
+
+// Walk parentUid up through the flat items list to produce a breadcrumb
+// chain ordered root → … → immediate parent (excluding the task itself).
+// Returns [] for a top-level task or an unknown uid. Cycles are tolerated.
+export function getAncestorChain(
+  items: readonly TaskItem[],
+  uid: string,
+): VTodo[] {
+  const byUid = new Map<string, VTodo>()
+  for (const it of items) byUid.set(it.todo.uid, it.todo)
+  const chain: VTodo[] = []
+  const seen = new Set<string>([uid])
+  let parentUid = byUid.get(uid)?.parentUid
+  while (parentUid && !seen.has(parentUid)) {
+    seen.add(parentUid)
+    const parent = byUid.get(parentUid)
+    if (!parent) break
+    chain.unshift(parent)
+    parentUid = parent.parentUid
+  }
+  return chain
 }
 
 export function countTasks(items: { todo: { status: string } }[]): {

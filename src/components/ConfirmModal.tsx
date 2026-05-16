@@ -8,6 +8,12 @@ interface Props {
   destructive?: boolean
   onConfirm: () => void
   onCancel: () => void
+  // Called when the user presses Escape. Falls back to onCancel — useful
+  // when the keyboard semantic of "give up" should be stronger than the
+  // Cancel button (e.g. the save-prompt's Esc means "leave without
+  // saving" while clicking Cancel just dismisses the prompt and keeps
+  // the user editing).
+  onDismiss?: () => void
 }
 
 export function ConfirmModal({
@@ -18,6 +24,7 @@ export function ConfirmModal({
   destructive = false,
   onConfirm,
   onCancel,
+  onDismiss,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -29,12 +36,32 @@ export function ConfirmModal({
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onCancel()
+        ;(onDismiss ?? onCancel)()
+        return
+      }
+      // Ctrl/Cmd+Enter confirms regardless of where focus sits (matches the
+      // DetailPanel shortcut that opens this modal — pressing the same combo
+      // again commits). A bare Enter also confirms unless the user has Tab'd
+      // to the Cancel button, where Enter should trigger its native click.
+      if (e.key === 'Enter') {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          onConfirm()
+          return
+        }
+        if (
+          e.target instanceof HTMLButtonElement ||
+          e.target instanceof HTMLAnchorElement
+        ) {
+          return
+        }
+        e.preventDefault()
+        onConfirm()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onCancel])
+  }, [onCancel, onConfirm, onDismiss])
 
   return (
     <div
