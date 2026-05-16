@@ -5,6 +5,7 @@ import {
   listCollections,
   listTaskItems,
   logout,
+  moveTasksToCollection,
   toggleComplete,
   updateTask,
 } from '../services/etebase'
@@ -13,20 +14,28 @@ import {
   buildTree,
   collectDescendantItemUids,
   countTasks,
+  findNodeByUid,
+  getAncestorChain,
 } from '../services/tree'
+import type { VTodoPatch } from '../services/vtodo'
 import {
   type CollectionSnapshot,
+  deleteSnapshot,
   listSnapshotUids,
   loadSnapshot,
   saveSnapshot,
 } from '../services/snapshots'
-import type {
-  CollectionInfo,
-  Priority,
-  TaskItem,
-  TaskNode,
+import {
+  DEFAULT_TASK_SORT,
+  type CollectionInfo,
+  type Priority,
+  type TaskItem,
+  type TaskNode,
+  type TaskSort,
+  type TaskSortSpec,
 } from '../types'
 import { ConfirmModal } from './ConfirmModal'
+import { DetailPanel } from './DetailPanel'
 import {
   DEFAULT_FILTER,
   FilterPopover,
@@ -34,13 +43,108 @@ import {
   type FilterSpec,
 } from './FilterPopover'
 import { KeybindingsModal } from './KeybindingsModal'
+import { MoveTaskPicker } from './MoveTaskPicker'
+import { SortPopover, type SortOption } from './SortPopover'
 import { TaskTree } from './TaskTree'
+import { readTaskSort, writeTaskSort } from '../services/sort'
+import {
+  applyTheme,
+  readStoredTheme,
+  writeStoredTheme,
+  type Theme,
+} from '../services/theme'
 
 interface Props {
   onLoggedOut: () => void
 }
 
 const HIDE_COMPLETED_KEY = 'ete-stethic.hideCompleted'
+const DETAIL_PINNED_KEY = 'ete-stethic.detailPanelPinned'
+const SHOW_DELETED_LISTS_KEY = 'ete-stethic.showDeletedLists'
+const SIDEBAR_SORT_KEY = 'ete-stethic.sidebarSort'
+const PHONE_PRIORITY_KEY = 'ete-stethic.phoneFriendlyPriority'
+
+type SidebarSort = 'name' | 'open' | 'total'
+
+interface SidebarSortSpec {
+  sort: SidebarSort
+  reverse: boolean
+}
+
+const DEFAULT_SIDEBAR_SORT: SidebarSortSpec = { sort: 'name', reverse: false }
+
+const TASK_SORT_OPTIONS: Array<SortOption<TaskSort>> = [
+  {
+    value: 'priority',
+    label: 'Priority',
+    hint: 'High → low. priority=none always last.',
+  },
+  {
+    value: 'due',
+    label: 'Due date',
+    hint: 'Soonest first. Tasks without a due date last.',
+  },
+  { value: 'created', label: 'Created date', hint: 'Oldest first by default.' },
+  {
+    value: 'summary',
+    label: 'Title (A–Z)',
+    hint: 'Alphabetical, case-insensitive.',
+  },
+]
+
+const SIDEBAR_SORT_OPTIONS: Array<SortOption<SidebarSort>> = [
+  {
+    value: 'name',
+    label: 'Name (A–Z)',
+    hint: 'Alphabetical, case-insensitive.',
+  },
+  {
+    value: 'open',
+    label: 'Open count',
+    hint: 'Most-open first. Lists still loading sort as zero.',
+  },
+  {
+    value: 'total',
+    label: 'Total count',
+    hint: 'Largest first. Counts everything, completed or not.',
+  },
+]
+
+function readSidebarSort(): SidebarSortSpec {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_SORT_KEY)
+    if (!raw) return DEFAULT_SIDEBAR_SORT
+    const parsed = JSON.parse(raw) as Partial<SidebarSortSpec>
+    const sort =
+      parsed.sort === 'name' ||
+      parsed.sort === 'open' ||
+      parsed.sort === 'total'
+        ? parsed.sort
+        : DEFAULT_SIDEBAR_SORT.sort
+    return { sort, reverse: parsed.reverse === true }
+  } catch {
+    return DEFAULT_SIDEBAR_SORT
+  }
+}
+
+function writeSidebarSort(v: SidebarSortSpec) {
+  try {
+    localStorage.setItem(SIDEBAR_SORT_KEY, JSON.stringify(v))
+  } catch {
+    // not fatal
+  }
+}
+const SIDEBAR_FOCUSED_WIDTH_KEY = 'ete-stethic.sidebarFocusedWidth'
+const SIDEBAR_COLLAPSED_WIDTH_KEY = 'ete-stethic.sidebarCollapsedWidth'
+// Sidebar resize bounds. Min keeps the colored dot + open-count visible;
+// max stops the user shoving it past half the typical window.
+const SIDEBAR_MIN_WIDTH = 32
+const SIDEBAR_MAX_WIDTH = 480
+// Above this width the sidebar renders list names (full row). Below, it
+// renders dots + counts only (strip). Picked so the default collapsed
+// width (48 px) is clearly under and the default focused width (208 px)
+// is clearly over.
+const SIDEBAR_FULL_THRESHOLD = 120
 const PREFETCH_CONCURRENCY = 4
 const HIDE_GRACE_MS = 5000
 
@@ -57,6 +161,74 @@ function writeHideCompleted(value: boolean) {
     localStorage.setItem(HIDE_COMPLETED_KEY, value ? 'true' : 'false')
   } catch {
     // localStorage unavailable; not fatal.
+  }
+}
+
+function readDetailPinned(): boolean {
+  try {
+    return localStorage.getItem(DETAIL_PINNED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeDetailPinned(value: boolean) {
+  try {
+    localStorage.setItem(DETAIL_PINNED_KEY, value ? 'true' : 'false')
+  } catch {
+    // localStorage unavailable; not fatal.
+  }
+}
+
+function readShowDeletedLists(): boolean {
+  try {
+    return localStorage.getItem(SHOW_DELETED_LISTS_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeShowDeletedLists(value: boolean) {
+  try {
+    localStorage.setItem(SHOW_DELETED_LISTS_KEY, value ? 'true' : 'false')
+  } catch {
+    // not fatal
+  }
+}
+
+function readPhonePriority(): boolean {
+  try {
+    return localStorage.getItem(PHONE_PRIORITY_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writePhonePriority(value: boolean) {
+  try {
+    localStorage.setItem(PHONE_PRIORITY_KEY, value ? 'true' : 'false')
+  } catch {
+    // not fatal
+  }
+}
+
+function readSidebarWidth(key: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw == null) return fallback
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, n))
+  } catch {
+    return fallback
+  }
+}
+
+function writeSidebarWidth(key: string, value: number) {
+  try {
+    localStorage.setItem(key, String(Math.round(value)))
+  } catch {
+    // not fatal
   }
 }
 
@@ -107,9 +279,118 @@ export function MainView({ onLoggedOut }: Props) {
     node: TaskNode
     descendantCount: number
   } | null>(null)
+  // Move-task picker state. itemUids covers the selected node + its
+  // whole subtree (parent moves take their children with them).
+  const [moving, setMoving] = useState<{
+    itemUids: string[]
+    rootVtodoUid: string
+    summary: string
+    descendantCount: number
+  } | null>(null)
   const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(null)
-  const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar'>('tasks')
+  const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar' | 'details'>(
+    'tasks',
+  )
   const [showKeybindings, setShowKeybindings] = useState(false)
+  // Per-collection sync progress (items received from the server so far on
+  // the in-flight pull). Cleared when the sync finishes/aborts/errors. The
+  // header shows the active uid's entry as "Syncing… N items".
+  const [syncProgress, setSyncProgress] = useState<
+    Map<string, { count: number; startedAt: number }>
+  >(() => new Map())
+  const [detailPinned, setDetailPinnedState] = useState<boolean>(() =>
+    readDetailPinned(),
+  )
+  const toggleDetailPinned = useCallback(() => {
+    setDetailPinnedState((cur) => {
+      const next = !cur
+      writeDetailPinned(next)
+      return next
+    })
+  }, [])
+  const [theme, setThemeState] = useState<Theme>(() => readStoredTheme())
+  const toggleTheme = useCallback(() => {
+    setThemeState((cur) => {
+      const next: Theme = cur === 'dark' ? 'light' : 'dark'
+      writeStoredTheme(next)
+      applyTheme(next)
+      return next
+    })
+  }, [])
+  const [showDeletedLists, setShowDeletedListsState] = useState<boolean>(() =>
+    readShowDeletedLists(),
+  )
+  // Per-list sort. Lazily filled — each uid hits the cache the first time
+  // it's the active list. Cleared along with itemsByUid when a collection
+  // disappears (handled by the orphan-pruner below).
+  const [taskSortByUid, setTaskSortByUid] = useState<Map<string, TaskSortSpec>>(
+    () => new Map(),
+  )
+  const [sortOpen, setSortOpen] = useState(false)
+  const [sortFocusKey, setSortFocusKey] = useState(0)
+  const [phonePriority, setPhonePriorityState] = useState<boolean>(() =>
+    readPhonePriority(),
+  )
+  const togglePhonePriority = useCallback(() => {
+    setPhonePriorityState((cur) => {
+      const next = !cur
+      writePhonePriority(next)
+      return next
+    })
+  }, [])
+  const [sidebarSort, setSidebarSortState] = useState<SidebarSortSpec>(() =>
+    readSidebarSort(),
+  )
+  const setSidebarSort = useCallback((next: SidebarSortSpec) => {
+    setSidebarSortState(next)
+    writeSidebarSort(next)
+  }, [])
+  const [sidebarSortOpen, setSidebarSortOpen] = useState(false)
+  const [sidebarSortFocusKey, setSidebarSortFocusKey] = useState(0)
+  // Two persisted sidebar widths — one per focus state. Defaults match the
+  // Tailwind w-52 / w-12 we had before the drag handle existed.
+  const [sidebarFocusedWidth, setSidebarFocusedWidth] = useState<number>(() =>
+    readSidebarWidth(SIDEBAR_FOCUSED_WIDTH_KEY, 208),
+  )
+  const [sidebarCollapsedWidth, setSidebarCollapsedWidth] = useState<number>(
+    () => readSidebarWidth(SIDEBAR_COLLAPSED_WIDTH_KEY, 48),
+  )
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  const handleSidebarResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const sidebarFocused = focusZone === 'sidebar'
+      const startX = e.clientX
+      const startWidth = sidebarFocused
+        ? sidebarFocusedWidth
+        : sidebarCollapsedWidth
+      let latest = startWidth
+      setIsResizingSidebar(true)
+      const onMove = (ev: MouseEvent) => {
+        const next = Math.max(
+          SIDEBAR_MIN_WIDTH,
+          Math.min(SIDEBAR_MAX_WIDTH, startWidth + (ev.clientX - startX)),
+        )
+        latest = next
+        if (sidebarFocused) setSidebarFocusedWidth(next)
+        else setSidebarCollapsedWidth(next)
+      }
+      const onUp = () => {
+        setIsResizingSidebar(false)
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        writeSidebarWidth(
+          sidebarFocused
+            ? SIDEBAR_FOCUSED_WIDTH_KEY
+            : SIDEBAR_COLLAPSED_WIDTH_KEY,
+          latest,
+        )
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [focusZone, sidebarFocusedWidth, sidebarCollapsedWidth],
+  )
   // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
   // disappearing so a misclicked checkbox can be untoggled. Map value is the
   // expiry timestamp (Date.now() + HIDE_GRACE_MS) so the row can show a
@@ -256,6 +537,11 @@ export function MainView({ onLoggedOut }: Props) {
         next.add(uid)
         return next
       })
+      setSyncProgress((prev) => {
+        const next = new Map(prev)
+        next.set(uid, { count: 0, startedAt: Date.now() })
+        return next
+      })
       // Initialize an empty bucket only if there's no hydrated cache for
       // this uid — otherwise the cached items stay visible while we sync.
       setItemsByUid((prev) => {
@@ -278,6 +564,13 @@ export function MainView({ onLoggedOut }: Props) {
               for (const t of batch) byId.set(t.itemUid, t)
               const next = new Map(prev)
               next.set(uid, Array.from(byId.values()))
+              return next
+            })
+            setSyncProgress((prev) => {
+              const cur = prev.get(uid)
+              if (!cur) return prev
+              const next = new Map(prev)
+              next.set(uid, { ...cur, count: cur.count + batch.length })
               return next
             })
           },
@@ -366,19 +659,84 @@ export function MainView({ onLoggedOut }: Props) {
             next.delete(uid)
             return next
           })
+          setSyncProgress((prev) => {
+            if (!prev.has(uid)) return prev
+            const next = new Map(prev)
+            next.delete(uid)
+            return next
+          })
         }
       }
     },
     [],
   )
 
-  // Load collections on mount.
+  // Load collections on mount, and again whenever the user toggles
+  // "show deleted lists" — the server response is different in that mode
+  // (tombstones included).
   useEffect(() => {
-    listCollections()
+    listCollections({ includeDeleted: showDeletedLists })
       .then((cs) => {
         if (cancelledRef.current) return
         setCollections(cs)
-        if (cs.length > 0) setActiveUid(cs[0].uid)
+        setCollectionsError(null)
+        if (cs.length > 0) {
+          // Only auto-select the first list if we don't already have an
+          // active one. Otherwise toggling "show deleted" would jump the
+          // selection around.
+          setActiveUid((cur) =>
+            cur && cs.some((c) => c.uid === cur) ? cur : cs[0].uid,
+          )
+        }
+
+        // Prune orphans: disk snapshots and in-memory state for uids the
+        // server no longer returns *under our current filter*. When
+        // showDeletedLists is on, tombstones count as "known", so they
+        // survive — letting the user browse cached items for deleted
+        // lists. When it's off, anything missing (live or tombstoned) is
+        // purged.
+        const known = new Set(cs.map((c) => c.uid))
+        setItemsByUid((prev) => {
+          let mutated = false
+          const next = new Map(prev)
+          for (const uid of next.keys()) {
+            if (!known.has(uid)) {
+              next.delete(uid)
+              mutated = true
+            }
+          }
+          return mutated ? next : prev
+        })
+        setStokenByUid((prev) => {
+          let mutated = false
+          const next = new Map(prev)
+          for (const uid of next.keys()) {
+            if (!known.has(uid)) {
+              next.delete(uid)
+              mutated = true
+            }
+          }
+          return mutated ? next : prev
+        })
+        setLoadedUids((prev) => {
+          let mutated = false
+          const next = new Set(prev)
+          for (const uid of next) {
+            if (!known.has(uid)) {
+              next.delete(uid)
+              mutated = true
+            }
+          }
+          return mutated ? next : prev
+        })
+        void (async () => {
+          const snapUids = await listSnapshotUids()
+          for (const uid of snapUids) {
+            if (!known.has(uid)) {
+              await deleteSnapshot(uid)
+            }
+          }
+        })()
       })
       .catch((err: unknown) => {
         if (cancelledRef.current) return
@@ -386,6 +744,14 @@ export function MainView({ onLoggedOut }: Props) {
           err instanceof Error ? err.message : 'Failed to load collections',
         )
       })
+  }, [showDeletedLists])
+
+  const toggleShowDeletedLists = useCallback(() => {
+    setShowDeletedListsState((cur) => {
+      const next = !cur
+      writeShowDeletedLists(next)
+      return next
+    })
   }, [])
 
   // Eagerly sync the active collection whenever it changes. With a cached
@@ -435,18 +801,61 @@ export function MainView({ onLoggedOut }: Props) {
   const activeError = activeUid ? errorByUid.get(activeUid) : undefined
   const activeLoading = activeUid ? loadingUids.has(activeUid) : false
 
-  const fullTree = useMemo(
-    () => (activeItems ? buildTree(activeItems) : []),
-    [activeItems],
+  // Effective sort for the active list. State wins; if a uid hasn't
+  // been touched in this session, fall back to localStorage; if even
+  // that's empty, use the global default.
+  const activeSort: TaskSortSpec = useMemo(() => {
+    if (!activeUid) return DEFAULT_TASK_SORT
+    return (
+      taskSortByUid.get(activeUid) ??
+      readTaskSort(activeUid) ??
+      DEFAULT_TASK_SORT
+    )
+  }, [activeUid, taskSortByUid])
+
+  const setActiveSort = useCallback(
+    (next: TaskSortSpec) => {
+      if (!activeUid) return
+      setTaskSortByUid((prev) => {
+        const m = new Map(prev)
+        m.set(activeUid, next)
+        return m
+      })
+      writeTaskSort(activeUid, next)
+    },
+    [activeUid],
   )
-  // Sidebar lists, alphabetical by name (locale-aware, case-insensitive).
-  // A future sort UI will replace this with a state-driven comparator.
+
+  const fullTree = useMemo(
+    () => (activeItems ? buildTree(activeItems, activeSort) : []),
+    [activeItems, activeSort],
+  )
+  // Sidebar lists, sorted by the user-picked axis + reverse flag. Open
+  // and total counts come from itemsByUid; lists we haven't hydrated yet
+  // sort as zero so they don't reshuffle as prefetch fills in. For
+  // count-based axes the natural direction is descending (most first);
+  // `reverse` flips that.
   const sortedCollections = useMemo(() => {
     if (!collections) return null
-    return [...collections].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
-    )
-  }, [collections])
+    const byName = (a: CollectionInfo, b: CollectionInfo) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    if (sidebarSort.sort === 'name') {
+      const sign = sidebarSort.reverse ? -1 : 1
+      return [...collections].sort((a, b) => byName(a, b) * sign)
+    }
+    const count = (uid: string) => {
+      const items = itemsByUid.get(uid)
+      if (!items) return 0
+      const c = countTasks(items)
+      return sidebarSort.sort === 'open' ? c.open : c.total
+    }
+    const sign = sidebarSort.reverse ? -1 : 1
+    return [...collections].sort((a, b) => {
+      const diff = count(b.uid) - count(a.uid)
+      if (diff !== 0) return diff * sign
+      return byName(a, b)
+    })
+  }, [collections, sidebarSort, itemsByUid])
 
 
   const recentlyCompletedKeys = useMemo(
@@ -490,10 +899,41 @@ export function MainView({ onLoggedOut }: Props) {
     [activeItems],
   )
 
+  const selectedTaskItem = useMemo(() => {
+    if (!activeItems || !selectedTaskUid) return null
+    return activeItems.find((it) => it.todo.uid === selectedTaskUid) ?? null
+  }, [activeItems, selectedTaskUid])
+
+  const detailAncestors = useMemo(() => {
+    if (!activeItems || !selectedTaskUid) return []
+    return getAncestorChain(activeItems, selectedTaskUid)
+  }, [activeItems, selectedTaskUid])
+
   async function handleLogout() {
     await logout()
     onLoggedOut()
   }
+
+  const refreshActive = useCallback(() => {
+    if (!activeUid) return
+    void fetchCollection(activeUid)
+  }, [activeUid, fetchCollection])
+
+  // 1 Hz ticker, only running while the active list has an in-flight sync,
+  // so the "Syncing… Ns" label updates without re-rendering the whole app
+  // every second the rest of the time. nowMs lives in state (not a render
+  // call to Date.now()) so the lint purity rules stay happy.
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const activeSyncEntry = activeUid ? syncProgress.get(activeUid) : undefined
+  useEffect(() => {
+    if (!activeSyncEntry) return
+    setNowMs(Date.now())
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [activeSyncEntry])
+  const activeSyncElapsedS = activeSyncEntry
+    ? Math.max(0, Math.floor((nowMs - activeSyncEntry.startedAt) / 1000))
+    : 0
 
   function replaceCachedItem(
     colUid: string,
@@ -515,6 +955,74 @@ export function MainView({ onLoggedOut }: Props) {
   const handleStartCreateRoot = useCallback(() => {
     setCreating({ parentUid: null })
   }, [])
+
+  // Logseq-style status cycle: NEEDS-ACTION → IN-PROCESS → COMPLETED →
+  // NEEDS-ACTION. CANCELLED rejoins the cycle at the top (it's set
+  // deliberately via the detail panel, so cycling out of it lands on
+  // NEEDS-ACTION rather than IN-PROCESS). Bound to Ctrl+Enter in the
+  // global keyboard handler below — declared up here so that effect's
+  // dep array can list it without hitting the TDZ.
+  const handleCycleStatus = useCallback(
+    async (task: TaskItem) => {
+      if (!activeUid) return
+      const colUid = activeUid
+      const itemUid = task.itemUid
+      const original: TaskItem = task
+      const nextStatus: TaskItem['todo']['status'] =
+        task.todo.status === 'NEEDS-ACTION'
+          ? 'IN-PROCESS'
+          : task.todo.status === 'IN-PROCESS'
+            ? 'COMPLETED'
+            : 'NEEDS-ACTION'
+      const optimistic: TaskItem = {
+        itemUid,
+        todo: { ...task.todo, status: nextStatus },
+      }
+
+      setMutationError(null)
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        next.add(itemUid)
+        return next
+      })
+      replaceCachedItem(colUid, itemUid, optimistic)
+
+      // Grace-period bookkeeping mirrors handleToggleComplete: a new
+      // COMPLETED gets the hide-grace timer; leaving COMPLETED clears it.
+      if (nextStatus === 'COMPLETED' && task.todo.status !== 'COMPLETED') {
+        markRecentlyCompleted(task.todo.uid)
+      } else if (
+        task.todo.status === 'COMPLETED' &&
+        nextStatus !== 'COMPLETED'
+      ) {
+        clearRecentlyCompleted(task.todo.uid)
+      }
+
+      try {
+        const result = await updateTask(colUid, itemUid, { status: nextStatus })
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, result)
+      } catch (err) {
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, original)
+        if (nextStatus === 'COMPLETED' && task.todo.status !== 'COMPLETED') {
+          clearRecentlyCompleted(task.todo.uid)
+        }
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to update task',
+        )
+      } finally {
+        if (!cancelledRef.current) {
+          setPendingItemUids((prev) => {
+            const next = new Set(prev)
+            next.delete(itemUid)
+            return next
+          })
+        }
+      }
+    },
+    [activeUid, markRecentlyCompleted, clearRecentlyCompleted],
+  )
 
   const handleStartCreateChild = useCallback((parent: TaskNode) => {
     setCreating({ parentUid: parent.todo.uid })
@@ -578,6 +1086,29 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
+      // Ctrl/Cmd+ArrowRight → enter the detail panel for the selected
+      // task. When already in details, the panel itself handles the
+      // matching Ctrl+ArrowLeft / Ctrl+Enter exits, so bail.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight') {
+        if (focusZone === 'details') return
+        if (!selectedTaskUid) return
+        e.preventDefault()
+        setFocusZone('details')
+        return
+      }
+
+      // Ctrl/Cmd+Enter outside the detail panel cycles the selected task's
+      // status: NEEDS-ACTION → IN-PROCESS → COMPLETED → NEEDS-ACTION. The
+      // detail panel reuses Ctrl+Enter for "save and exit", so don't
+      // intercept it there.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (focusZone === 'details') return
+        if (!selectedTaskItem) return
+        e.preventDefault()
+        void handleCycleStatus(selectedTaskItem)
+        return
+      }
+
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
@@ -595,6 +1126,33 @@ export function MainView({ onLoggedOut }: Props) {
         setFocusZone('tasks')
         return
       }
+      if (e.key === 'e' || e.key === 'E') {
+        if (!selectedTaskUid) return
+        e.preventDefault()
+        setFocusZone('details')
+        return
+      }
+      if (e.key === 'm' || e.key === 'M') {
+        if (!selectedTaskUid || !activeUid) return
+        const node = findNodeByUid(fullTree, selectedTaskUid)
+        if (!node) return
+        const itemUids = collectDescendantItemUids(node)
+        e.preventDefault()
+        setMoving({
+          itemUids,
+          rootVtodoUid: node.todo.uid,
+          summary: node.todo.summary,
+          descendantCount: itemUids.length - 1,
+        })
+        return
+      }
+      if (e.key === 's' || e.key === 'S') {
+        if (!activeUid) return
+        e.preventDefault()
+        setSortOpen((open) => !open)
+        setSortFocusKey((k) => k + 1)
+        return
+      }
       if (e.key === 'n' || e.key === 'N') {
         if (!activeUid || !activeItems) return
         e.preventDefault()
@@ -610,6 +1168,21 @@ export function MainView({ onLoggedOut }: Props) {
       if (e.key === '?') {
         e.preventDefault()
         setShowKeybindings(true)
+        return
+      }
+
+      // Tasks-mode fallback: when the list is empty the TaskTree isn't
+      // mounted, so its own ArrowLeft handler can't fire and the user
+      // would be stranded. Route ArrowLeft (and Backspace) straight to
+      // the sidebar in that case. Non-empty lists let the tree handle
+      // ArrowLeft (collapse / jump to parent).
+      if (
+        focusZone === 'tasks' &&
+        visibleTree.length === 0 &&
+        (e.key === 'ArrowLeft' || e.key === 'Backspace')
+      ) {
+        e.preventDefault()
+        setFocusZone('sidebar')
         return
       }
 
@@ -679,8 +1252,97 @@ export function MainView({ onLoggedOut }: Props) {
     sortedCollections,
     activeUid,
     activeItems,
+    selectedTaskUid,
+    selectedTaskItem,
+    visibleTree,
+    fullTree,
+    handleCycleStatus,
     handleStartCreateRoot,
   ])
+
+  const handleMovePick = useCallback(
+    async (destUid: string) => {
+      const cur = moving
+      const srcUid = activeUid
+      setMoving(null)
+      if (!cur || !srcUid || destUid === srcUid) return
+
+      // Optimistic: remove from source in-memory, then await server. On
+      // failure we re-fetch the source (cheap delta) so any half-done
+      // state is reconciled. The destination's items will appear when
+      // we switch to it and its sync runs.
+      const toMove = new Set(cur.itemUids)
+      const movedItems = (activeItems ?? []).filter((it) =>
+        toMove.has(it.itemUid),
+      )
+      setItemsByUid((prev) => {
+        const existing = prev.get(srcUid)
+        if (!existing) return prev
+        const next = new Map(prev)
+        next.set(
+          srcUid,
+          existing.filter((t) => !toMove.has(t.itemUid)),
+        )
+        return next
+      })
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        for (const uid of cur.itemUids) next.add(uid)
+        return next
+      })
+      setMutationError(null)
+
+      try {
+        const created = await moveTasksToCollection(
+          srcUid,
+          destUid,
+          cur.itemUids,
+        )
+        if (cancelledRef.current) return
+        // Splice the freshly-created items into the destination's in-
+        // memory list so the user sees them the moment they switch over.
+        setItemsByUid((prev) => {
+          const existing = prev.get(destUid) ?? []
+          const byId = new Map(existing.map((t) => [t.itemUid, t]))
+          for (const t of created) byId.set(t.itemUid, t)
+          const next = new Map(prev)
+          next.set(destUid, Array.from(byId.values()))
+          return next
+        })
+        // Follow the task: switch to the destination list and re-select
+        // it by its preserved VTODO uid.
+        setActiveUid(destUid)
+        setSelectedTaskUid(cur.rootVtodoUid)
+      } catch (err) {
+        if (cancelledRef.current) return
+        // Roll back the optimistic removal so the user doesn't think
+        // their data vanished.
+        setItemsByUid((prev) => {
+          const existing = prev.get(srcUid) ?? []
+          const byId = new Map(existing.map((t) => [t.itemUid, t]))
+          for (const t of movedItems) byId.set(t.itemUid, t)
+          const next = new Map(prev)
+          next.set(srcUid, Array.from(byId.values()))
+          return next
+        })
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to move task',
+        )
+      } finally {
+        if (!cancelledRef.current) {
+          setPendingItemUids((prev) => {
+            let mutated = false
+            const next = new Set(prev)
+            for (const uid of cur.itemUids) {
+              if (next.delete(uid)) mutated = true
+            }
+            return mutated ? next : prev
+          })
+        }
+      }
+    },
+    [moving, activeUid, activeItems],
+  )
 
   const handleConfirmDelete = useCallback(async () => {
     const target = confirmDelete
@@ -808,6 +1470,92 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid],
   )
 
+  const handleSaveDetails = useCallback(
+    async (patch: VTodoPatch) => {
+      if (!activeUid) return
+      if (Object.keys(patch).length === 0) return
+      const items = itemsByUid.get(activeUid)
+      const target = items?.find((it) => it.todo.uid === selectedTaskUid)
+      if (!target) return
+      const colUid = activeUid
+      const itemUid = target.itemUid
+      const original = target
+      const optimisticTodo = {
+        ...target.todo,
+        ...(patch.summary !== undefined && { summary: patch.summary }),
+        ...(patch.status !== undefined && { status: patch.status }),
+        ...(patch.priority !== undefined && { priority: patch.priority }),
+        ...(patch.description !== undefined && {
+          description: patch.description ?? undefined,
+        }),
+        ...(patch.due !== undefined && {
+          due:
+            patch.due === null
+              ? undefined
+              : `${patch.due.getFullYear()}${String(
+                  patch.due.getMonth() + 1,
+                ).padStart(2, '0')}${String(patch.due.getDate()).padStart(2, '0')}`,
+        }),
+        ...(patch.categories !== undefined && { categories: patch.categories }),
+      }
+      const optimistic: TaskItem = { itemUid, todo: optimisticTodo }
+
+      setMutationError(null)
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        next.add(itemUid)
+        return next
+      })
+      replaceCachedItem(colUid, itemUid, optimistic)
+
+      // If the panel changed the task to COMPLETED, run it through the
+      // grace-period flow so it doesn't blink out under Hide-done.
+      if (patch.status === 'COMPLETED' && original.todo.status !== 'COMPLETED') {
+        markRecentlyCompleted(original.todo.uid)
+      } else if (
+        patch.status !== undefined &&
+        patch.status !== 'COMPLETED' &&
+        original.todo.status === 'COMPLETED'
+      ) {
+        clearRecentlyCompleted(original.todo.uid)
+      }
+
+      try {
+        const result = await updateTask(colUid, itemUid, patch)
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, result)
+      } catch (err) {
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, original)
+        if (
+          patch.status === 'COMPLETED' &&
+          original.todo.status !== 'COMPLETED'
+        ) {
+          clearRecentlyCompleted(original.todo.uid)
+        }
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to save task',
+        )
+        throw err
+      } finally {
+        if (!cancelledRef.current) {
+          setPendingItemUids((prev) => {
+            const next = new Set(prev)
+            next.delete(itemUid)
+            return next
+          })
+        }
+      }
+    },
+    [
+      activeUid,
+      itemsByUid,
+      selectedTaskUid,
+      markRecentlyCompleted,
+      clearRecentlyCompleted,
+    ],
+  )
+
   const handleToggleComplete = useCallback(
     async (node: TaskNode) => {
       if (!activeUid) return
@@ -885,100 +1633,308 @@ export function MainView({ onLoggedOut }: Props) {
           onConfirm={handleConfirmDelete}
         />
       )}
+      {moving && sortedCollections && activeUid && (
+        <MoveTaskPicker
+          collections={sortedCollections}
+          excludeUid={activeUid}
+          taskSummary={moving.summary}
+          descendantCount={moving.descendantCount}
+          onCancel={() => setMoving(null)}
+          onPick={handleMovePick}
+        />
+      )}
       <aside
-        className={`flex w-60 shrink-0 flex-col border-r border-border bg-surface transition-[opacity,transform] duration-200 ${
-          focusZone === 'sidebar'
-            ? 'opacity-100 translate-x-0'
-            : 'opacity-50 -translate-x-1'
-        }`}
+        style={{
+          width:
+            focusZone === 'sidebar'
+              ? sidebarFocusedWidth
+              : sidebarCollapsedWidth,
+        }}
+        className={`relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-surface ${
+          isResizingSidebar
+            ? 'select-none'
+            : 'transition-[width,opacity] duration-300 ease-out'
+        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-80'}`}
       >
-        <div className="flex items-center justify-between px-4 py-3">
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-faint">
-            Lists
-          </span>
-        </div>
-        <div className="flex-1 overflow-y-auto px-2">
-          {sortedCollections === null && !collectionsError && (
-            <p className="px-2 py-3 text-xs text-text-faint">Loading…</p>
-          )}
-          {collectionsError && (
-            <p className="px-2 py-3 text-xs text-danger">{collectionsError}</p>
-          )}
-          {sortedCollections && sortedCollections.length === 0 && (
-            <p className="px-2 py-3 text-xs text-text-faint">
-              No task lists found.
-            </p>
-          )}
-          {sortedCollections?.map((c) => {
-            const isActive = c.uid === activeUid
-            const items = itemsByUid.get(c.uid)
-            const counts = items ? countTasks(items) : null
-            const failed = errorByUid.get(c.uid)
-            const sidebarHot = isActive && focusZone === 'sidebar'
-            return (
-              <button
-                key={c.uid}
-                data-collection-uid={c.uid}
-                type="button"
-                onClick={() => {
-                  setActiveUid(c.uid)
-                  setFocusZone('sidebar')
-                }}
-                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                  isActive
-                    ? sidebarHot
-                      ? 'bg-accent-soft text-text ring-1 ring-accent/40'
-                      : 'bg-accent-soft text-text'
-                    : 'text-text-muted hover:bg-surface-2 hover:text-text'
-                }`}
-              >
-                <span
-                  aria-hidden
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ background: c.color || 'var(--color-border-strong)' }}
-                />
-                <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                <span
-                  className={`shrink-0 text-xs tabular-nums ${
-                    isActive ? 'text-text-muted' : 'text-text-faint'
+        {(() => {
+          // Single source of truth for whether the sidebar renders the
+          // full row (names visible) or the strip (dots + counts only).
+          // Driven by the current rendered width so dragging either state
+          // past the threshold flips the look smoothly.
+          const renderedWidth =
+            focusZone === 'sidebar'
+              ? sidebarFocusedWidth
+              : sidebarCollapsedWidth
+          const showFull = renderedWidth >= SIDEBAR_FULL_THRESHOLD
+          return (
+            <>
+              <div className="flex items-center justify-between gap-1 px-3 py-3">
+                {showFull ? (
+                  <>
+                    <span className="text-xs font-semibold uppercase tracking-wider text-text-faint">
+                      Lists
+                    </span>
+                    <div className="relative flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSidebarSortOpen((open) => !open)
+                          setSidebarSortFocusKey((k) => k + 1)
+                        }}
+                        aria-expanded={sidebarSortOpen}
+                        aria-pressed={
+                          sidebarSort.sort !== DEFAULT_SIDEBAR_SORT.sort ||
+                          sidebarSort.reverse
+                        }
+                        title={`Sort lists — current: ${
+                          sidebarSort.sort === 'name'
+                            ? 'Name'
+                            : sidebarSort.sort === 'open'
+                              ? 'Open count'
+                              : 'Total count'
+                        }${sidebarSort.reverse ? ' (reversed)' : ''}`}
+                        aria-label="Open sidebar sort"
+                        className={`flex h-5 shrink-0 items-center justify-center rounded-md border px-1 text-[10px] transition-colors ${
+                          sidebarSort.sort !== DEFAULT_SIDEBAR_SORT.sort ||
+                          sidebarSort.reverse
+                            ? 'border-accent/40 bg-accent-soft text-text'
+                            : 'border-border text-text-faint hover:border-border-strong hover:text-text-muted'
+                        }`}
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className="h-3 w-3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <path d="M4 3v10M4 13l-2-2M4 13l2-2" />
+                          <path d="M9 4h6M9 8h4M9 12h2" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={toggleShowDeletedLists}
+                        aria-pressed={showDeletedLists}
+                        title={
+                          showDeletedLists
+                            ? 'Hide deleted lists'
+                            : 'Show deleted lists (tombstones from other clients)'
+                        }
+                        aria-label="Toggle deleted lists"
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] transition-colors ${
+                          showDeletedLists
+                            ? 'border-accent/40 bg-accent-soft text-text'
+                            : 'border-border text-text-faint hover:border-border-strong hover:text-text-muted'
+                        }`}
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className="h-3 w-3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <path d="M3 6h10M5 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+                          <path d="M4.5 6l.8 7.2a1 1 0 0 0 1 .8h3.4a1 1 0 0 0 1-.8L11.5 6" />
+                        </svg>
+                      </button>
+                      {sidebarSortOpen && (
+                        <SortPopover
+                          title="Sort lists"
+                          options={SIDEBAR_SORT_OPTIONS}
+                          spec={sidebarSort}
+                          onChange={setSidebarSort}
+                          onClose={() => setSidebarSortOpen(false)}
+                          focusKey={sidebarSortFocusKey}
+                          footer="Global. Saved automatically."
+                          positionClass="right-0 top-6"
+                        />
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <span
+                    aria-hidden
+                    className="text-xs font-semibold text-text-faint"
+                    title="Expand lists (l)"
+                  >
+                    ›
+                  </span>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto px-1">
+                {sortedCollections === null && !collectionsError && (
+                  <p className="px-2 py-3 text-xs text-text-faint">
+                    {showFull ? 'Loading…' : '…'}
+                  </p>
+                )}
+                {collectionsError && showFull && (
+                  <p className="px-2 py-3 text-xs text-danger">
+                    {collectionsError}
+                  </p>
+                )}
+                {sortedCollections &&
+                  sortedCollections.length === 0 &&
+                  showFull && (
+                    <p className="px-2 py-3 text-xs text-text-faint">
+                      No task lists found.
+                    </p>
+                  )}
+                {sortedCollections?.map((c) => {
+                  const isActive = c.uid === activeUid
+                  const items = itemsByUid.get(c.uid)
+                  const counts = items ? countTasks(items) : null
+                  const failed = errorByUid.get(c.uid)
+                  const sidebarHot = isActive && focusZone === 'sidebar'
+                  const deleted = c.isDeleted === true
+                  const baseTitle = deleted ? `${c.name} (deleted)` : c.name
+                  return (
+                    <button
+                      key={c.uid}
+                      data-collection-uid={c.uid}
+                      type="button"
+                      onClick={() => {
+                        setActiveUid(c.uid)
+                        setFocusZone('sidebar')
+                      }}
+                      title={
+                        showFull
+                          ? deleted
+                            ? `${c.name} — tombstoned. Cached items still visible; new edits will fail.`
+                            : undefined
+                          : counts
+                            ? `${baseTitle} — ${counts.open} open of ${counts.total}`
+                            : failed
+                              ? `${baseTitle} — ${failed}`
+                              : baseTitle
+                      }
+                      className={`flex w-full items-center gap-2 rounded-md py-1.5 text-left text-sm transition-colors ${
+                        showFull ? 'px-2 justify-start' : 'px-1 justify-center'
+                      } ${
+                        isActive
+                          ? sidebarHot
+                            ? 'bg-accent-soft text-text ring-1 ring-accent/40'
+                            : 'bg-accent-soft text-text'
+                          : 'text-text-muted hover:bg-surface-2 hover:text-text'
+                      } ${deleted ? 'opacity-50' : ''}`}
+                    >
+                      <span
+                        aria-hidden
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{
+                          background:
+                            c.color || 'var(--color-border-strong)',
+                        }}
+                      />
+                      {showFull && (
+                        <span
+                          className={`min-w-0 flex-1 truncate ${
+                            deleted ? 'line-through' : ''
+                          }`}
+                        >
+                          {c.name}
+                        </span>
+                      )}
+                      <span
+                        className={`shrink-0 text-xs tabular-nums ${
+                          isActive ? 'text-text-muted' : 'text-text-faint'
+                        }`}
+                        title={
+                          showFull
+                            ? counts
+                              ? `${counts.open} open of ${counts.total}`
+                              : failed
+                                ? failed
+                                : 'Loading…'
+                            : undefined
+                        }
+                      >
+                        {counts ? counts.open : failed ? '!' : '…'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="border-t border-border px-2 py-2">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  title={showFull ? undefined : 'Sign out'}
+                  aria-label="Sign out"
+                  className={`text-xs text-text-faint hover:text-text-muted ${
+                    showFull ? '' : 'flex w-full justify-center'
                   }`}
-                  title={
-                    counts
-                      ? `${counts.open} open of ${counts.total}`
-                      : failed
-                        ? failed
-                        : 'Loading…'
-                  }
                 >
-                  {counts ? counts.open : failed ? '!' : '…'}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-        <div className="border-t border-border px-3 py-2">
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="text-xs text-text-faint hover:text-text-muted"
-          >
-            Sign out
-          </button>
+                  {showFull ? (
+                    'Sign out'
+                  ) : (
+                    <svg
+                      viewBox="0 0 16 16"
+                      className="h-3.5 w-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
+                    >
+                      <path d="M6.5 2.5h-3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3" />
+                      <path d="M10 5l3 3-3 3M6 8h7" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </>
+          )
+        })()}
+        {/* Resize handle on the right edge. 6 px wide hit area; only a
+            1 px line shows on hover. Drag persists the width to the
+            current focus state's localStorage key. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={
+            focusZone === 'sidebar'
+              ? 'Resize sidebar (focused width)'
+              : 'Resize sidebar (collapsed width)'
+          }
+          onMouseDown={handleSidebarResizeStart}
+          className="group absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize"
+        >
+          <div
+            className={`mx-auto h-full w-px transition-colors ${
+              isResizingSidebar
+                ? 'bg-accent'
+                : 'bg-transparent group-hover:bg-accent/40'
+            }`}
+          />
         </div>
       </aside>
 
       <main
         data-focus-zone={focusZone}
-        className={`relative flex flex-1 flex-col overflow-hidden transition-opacity ${
+        className={`relative flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ease-out ${
           focusZone === 'tasks' ? 'opacity-100' : 'opacity-60'
         }`}
         onMouseDown={(e) => {
           // Pull focus to the tasks pane when the user clicks anywhere in
-          // the right column (without preventing the underlying click).
+          // the centre column (without preventing the underlying click).
           if (focusZone !== 'tasks') {
             const t = e.target as HTMLElement
-            // ignore clicks in modals
-            if (!t.closest('[role="dialog"]')) setFocusZone('tasks')
+            // ignore clicks in modals and in the detail panel
+            if (
+              !t.closest('[role="dialog"]') &&
+              !t.closest('[data-detail-zone]')
+            ) {
+              setFocusZone('tasks')
+            }
           }
         }}
       >
@@ -1011,8 +1967,47 @@ export function MainView({ onLoggedOut }: Props) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {activeLoading && (
-              <span className="text-xs text-text-faint">Syncing…</span>
+              <span
+                className="text-xs text-text-faint tabular-nums"
+                title={
+                  activeSyncEntry
+                    ? `${activeSyncEntry.count} item${activeSyncEntry.count === 1 ? '' : 's'} received over ${activeSyncElapsedS}s`
+                    : 'Sync in progress'
+                }
+              >
+                {activeSyncEntry
+                  ? activeSyncEntry.count > 0
+                    ? `Syncing… ${activeSyncEntry.count} item${activeSyncEntry.count === 1 ? '' : 's'} · ${activeSyncElapsedS}s`
+                    : `Syncing… ${activeSyncElapsedS}s`
+                  : 'Syncing…'}
+              </span>
             )}
+            <button
+              type="button"
+              onClick={refreshActive}
+              disabled={!activeUid || activeLoading}
+              title={
+                activeLoading
+                  ? 'Syncing…'
+                  : 'Force sync — re-fetch this list from the server'
+              }
+              aria-label="Force sync"
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className={`h-3.5 w-3.5 ${activeLoading ? 'animate-spin' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+                <path d="M13.5 2.5v3h-3" />
+              </svg>
+            </button>
             <button
               type="button"
               onClick={handleStartCreateRoot}
@@ -1123,6 +2118,124 @@ export function MainView({ onLoggedOut }: Props) {
                 />
               )}
             </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setSortOpen((open) => !open)
+                  setSortFocusKey((k) => k + 1)
+                }}
+                disabled={!activeUid}
+                aria-expanded={sortOpen}
+                aria-pressed={activeSort.sort !== DEFAULT_TASK_SORT.sort}
+                title={`Sort tasks (s) — ${activeSort.sort}${activeSort.reverse ? ' ↓' : ''}`}
+                className={`flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  activeSort.sort !== DEFAULT_TASK_SORT.sort ||
+                  activeSort.reverse
+                    ? 'border-accent/40 bg-accent-soft text-text'
+                    : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+                }`}
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M4 3v10M4 13l-2-2M4 13l2-2" />
+                  <path d="M9 4h6M9 8h4M9 12h2" />
+                </svg>
+                <span>Sort</span>
+              </button>
+              {sortOpen && activeUid && (
+                <SortPopover
+                  title="Sort tasks"
+                  options={TASK_SORT_OPTIONS}
+                  spec={activeSort}
+                  onChange={setActiveSort}
+                  onClose={() => setSortOpen(false)}
+                  focusKey={sortFocusKey}
+                  footer="Per-list. Saved automatically."
+                />
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={togglePhonePriority}
+              aria-pressed={phonePriority}
+              title={
+                phonePriority
+                  ? 'Phone-friendly priority on — dropdown shows 4 buckets (None/High/Medium/Low). Click for full 9 levels.'
+                  : 'Phone-friendly priority off — dropdown shows all 9 levels. Click for 4-bucket UI that survives phone round-trips.'
+              }
+              aria-label="Toggle phone-friendly priority"
+              className={`flex h-7 w-7 items-center justify-center rounded-md border text-xs transition-colors ${
+                phonePriority
+                  ? 'border-accent/40 bg-accent-soft text-text'
+                  : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+              }`}
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <rect x="4.5" y="1.5" width="7" height="13" rx="1.5" />
+                <path d="M7 12.5h2" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              title={
+                theme === 'dark'
+                  ? 'Switch to light theme'
+                  : 'Switch to dark theme'
+              }
+              aria-label="Toggle theme"
+              aria-pressed={theme === 'light'}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
+            >
+              {theme === 'dark' ? (
+                /* Sun — clicking goes to light. */
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <circle cx="8" cy="8" r="3" />
+                  <path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.3 3.3l1 1M11.7 11.7l1 1M3.3 12.7l1-1M11.7 4.3l1-1" />
+                </svg>
+              ) : (
+                /* Moon — clicking goes to dark. */
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M13.5 9.5A6 6 0 1 1 6.5 2.5a5 5 0 0 0 7 7z" />
+                </svg>
+              )}
+            </button>
             <button
               type="button"
               onClick={() => setShowKeybindings(true)}
@@ -1135,15 +2248,46 @@ export function MainView({ onLoggedOut }: Props) {
           </div>
         </header>
         <div className="flex-1 overflow-y-auto">
-          {activeError && (
-            <p className="px-5 py-4 text-sm text-danger">{activeError}</p>
+          {/* Sync error: full-page when we have nothing to show, otherwise
+              a non-blocking banner above the cached tree so the user can
+              keep working from what was previously synced. */}
+          {activeError && !activeItems && (
+            <div className="px-5 py-4 text-sm text-danger">
+              <p>{activeError}</p>
+              <button
+                type="button"
+                onClick={refreshActive}
+                disabled={activeLoading}
+                className="mt-2 rounded border border-danger/40 px-2 py-0.5 text-[11px] text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {activeLoading ? 'Retrying…' : 'Retry'}
+              </button>
+            </div>
+          )}
+          {activeError && activeItems && (
+            <div
+              role="status"
+              className="mx-5 mt-3 flex items-center gap-2 rounded-md border border-danger/30 bg-surface-2 px-3 py-2 text-xs text-danger"
+            >
+              <span className="flex-1">
+                Sync failed — showing cached tasks. {activeError}
+              </span>
+              <button
+                type="button"
+                onClick={refreshActive}
+                disabled={activeLoading}
+                className="shrink-0 rounded border border-danger/40 px-2 py-0.5 text-[11px] text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {activeLoading ? 'Retrying…' : 'Retry'}
+              </button>
+            </div>
           )}
           {!activeError &&
             activeItems === undefined &&
             !activeLoading && (
               <p className="px-5 py-4 text-sm text-text-faint">Loading tasks…</p>
             )}
-          {!activeError && activeItems && (visibleTree.length > 0 || creating) && (
+          {activeItems && (visibleTree.length > 0 || creating) && (
             <TaskTree
               roots={visibleTree}
               onToggleComplete={handleToggleComplete}
@@ -1157,6 +2301,7 @@ export function MainView({ onLoggedOut }: Props) {
               onChangePriority={handleChangePriority}
               onLeaveLeft={() => setFocusZone('sidebar')}
               fadingExpires={fadingExpires}
+              phonePriority={phonePriority}
               selectedUid={selectedTaskUid}
               onSelectChange={(uid) => {
                 setSelectedTaskUid(uid)
@@ -1165,20 +2310,35 @@ export function MainView({ onLoggedOut }: Props) {
               inactive={focusZone !== 'tasks'}
             />
           )}
-          {!activeError &&
-            activeItems &&
-            visibleTree.length === 0 &&
-            !creating && (
-              <p className="px-5 py-4 text-sm text-text-faint">
-                {activeLoading
-                  ? 'Loading tasks…'
-                  : isFilterActive(filter) && fullTree.length > 0
-                    ? 'No tasks match the current filter.'
-                    : 'No tasks in this list.'}
-              </p>
-            )}
+          {activeItems && visibleTree.length === 0 && !creating && (
+            <p className="px-5 py-4 text-sm text-text-faint">
+              {activeLoading
+                ? 'Loading tasks…'
+                : isFilterActive(filter) && fullTree.length > 0
+                  ? 'No tasks match the current filter.'
+                  : 'No tasks in this list.'}
+            </p>
+          )}
         </div>
       </main>
+
+      <DetailPanel
+        key={selectedTaskItem?.todo.uid ?? '__empty__'}
+        task={selectedTaskItem}
+        ancestors={detailAncestors}
+        focused={focusZone === 'details'}
+        pinned={detailPinned}
+        onTogglePin={toggleDetailPinned}
+        phonePriority={phonePriority}
+        onRequestFocus={() => setFocusZone('details')}
+        onExit={() => setFocusZone('tasks')}
+        onSave={handleSaveDetails}
+        pending={
+          selectedTaskItem
+            ? pendingItemUids.has(selectedTaskItem.itemUid)
+            : false
+        }
+      />
     </div>
   )
 }

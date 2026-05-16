@@ -25,8 +25,13 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     items: [
       { keys: ['←'], description: 'Collapse, then jump to parent' },
       { keys: ['→'], description: 'Expand a parent, or start a subtask' },
-      { keys: ['Enter'], description: 'Toggle complete' },
+      { keys: ['Enter'], description: 'Toggle complete (binary)' },
+      {
+        keys: ['Ctrl+Enter'],
+        description: 'Cycle status: needs-action → in-progress → completed',
+      },
       { keys: ['n'], description: 'New task at top of list' },
+      { keys: ['m'], description: 'Move task (and subtree) to another list' },
       { keys: ['+'], description: 'Raise priority on selected task' },
       { keys: ['-'], description: 'Lower priority on selected task' },
       { keys: ['F2', 'Double-click'], description: 'Rename a task' },
@@ -34,10 +39,19 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     ],
   },
   {
-    group: 'Filters',
+    group: 'Filters & sort',
     items: [
       { keys: ['f'], description: 'Open filter options' },
       { keys: ['Ctrl+F'], description: 'Open filter and focus search' },
+      { keys: ['s'], description: 'Open sort options (per-list)' },
+    ],
+  },
+  {
+    group: 'Details',
+    items: [
+      { keys: ['e', 'Ctrl+→'], description: 'Open detail panel' },
+      { keys: ['Ctrl+Enter'], description: 'Inside panel: save changes' },
+      { keys: ['Esc', 'Ctrl+←'], description: 'Leave detail panel' },
     ],
   },
   {

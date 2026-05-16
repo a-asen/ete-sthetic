@@ -12,6 +12,26 @@ function bumpPriority(current: Priority, delta: 1 | -1): Priority {
   return (current + 1) as Priority
 }
 
+// Phone-friendly version: snaps to the four RFC-recommended buckets
+// (None/High/Medium/Low → 0/1/5/9) instead of stepping through every
+// numeric value. Same direction semantics as bumpPriority.
+function bumpPriorityPhone(current: Priority, delta: 1 | -1): Priority {
+  const bucket: Priority =
+    current === 0 ? 0 : current <= 4 ? 1 : current === 5 ? 5 : 9
+  if (delta === 1) {
+    // more important: None → Medium → High (stays at High)
+    if (bucket === 0) return 5
+    if (bucket === 9) return 5
+    if (bucket === 5) return 1
+    return 1
+  }
+  // less important: High → Medium → Low → None
+  if (bucket === 1) return 5
+  if (bucket === 5) return 9
+  if (bucket === 9) return 0
+  return 0
+}
+
 interface Props {
   roots: TaskNode[]
   selectedUid: string | null
@@ -33,6 +53,10 @@ interface Props {
   // uid → expiry timestamp (ms). Rows in this map fade out and show a
   // countdown until they're removed by the caller's grace timer.
   fadingExpires?: ReadonlyMap<string, number>
+  // When true, +/- snap between the four RFC priority buckets instead
+  // of stepping one level at a time. Mirrors the detail panel's
+  // phone-friendly dropdown.
+  phonePriority?: boolean
 }
 
 const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
@@ -151,6 +175,7 @@ export function TaskTree({
   onChangePriority,
   onLeaveLeft,
   fadingExpires,
+  phonePriority = false,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Default: expand all roots one level
@@ -193,10 +218,13 @@ export function TaskTree({
 
   const visible = useMemo(() => flattenVisible(roots, expanded), [roots, expanded])
 
-  // When selection changes, focus the row and scroll it into view so Enter
-  // lands on it. Skip if focus is currently in a typing element so we don't
-  // disrupt inline editing or the create-task input.
+  // When selection changes — or when the tree becomes the active zone
+  // again after a trip through the sidebar / detail panel — focus the row
+  // and scroll it into view so Enter lands on it. Skip if focus is in a
+  // typing element so we don't disrupt inline editing or the create-task
+  // input.
   useEffect(() => {
+    if (inactive) return
     if (!selected) return
     const el = document.querySelector(
       `[data-task-uid="${CSS.escape(selected)}"]`,
@@ -208,7 +236,7 @@ export function TaskTree({
       active instanceof HTMLTextAreaElement
     if (!isTypingTarget) el.focus({ preventScroll: true })
     el.scrollIntoView({ block: 'nearest' })
-  }, [selected])
+  }, [selected, inactive])
 
   // Single keyboard handler for the tree: arrows, Enter, Del/Backspace.
   // Skipped while typing in any input/textarea or while a modal is open.
@@ -221,9 +249,22 @@ export function TaskTree({
         target instanceof HTMLTextAreaElement
       )
         return
+      // Modifier-key chords are handled by MainView (Ctrl+Enter to enter
+      // details, Ctrl+F for filter, etc.). The tree owns plain keys only,
+      // so bail out before we treat Ctrl+Enter as "toggle done".
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       if (editingUid) return
       if (document.querySelector('[role="dialog"]')) return
-      if (visible.length === 0) return
+      // Empty list: still let ArrowLeft escape back to the sidebar so the
+      // user isn't stranded on a list with no tasks. Other keys (Down/Up,
+      // Enter, etc.) have nothing to act on so we drop them.
+      if (visible.length === 0) {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault()
+          onLeaveLeft?.()
+        }
+        return
+      }
 
       const idx = selected
         ? visible.findIndex((n) => n.todo.uid === selected)
@@ -328,7 +369,9 @@ export function TaskTree({
           if (idx < 0 || !onChangePriority) return
           e.preventDefault()
           const node = visible[idx]
-          const next = bumpPriority(node.todo.priority, 1)
+          const next = phonePriority
+            ? bumpPriorityPhone(node.todo.priority, 1)
+            : bumpPriority(node.todo.priority, 1)
           if (next !== node.todo.priority) onChangePriority(node, next)
           break
         }
@@ -337,7 +380,9 @@ export function TaskTree({
           if (idx < 0 || !onChangePriority) return
           e.preventDefault()
           const node = visible[idx]
-          const next = bumpPriority(node.todo.priority, -1)
+          const next = phonePriority
+            ? bumpPriorityPhone(node.todo.priority, -1)
+            : bumpPriority(node.todo.priority, -1)
           if (next !== node.todo.priority) onChangePriority(node, next)
           break
         }
@@ -365,6 +410,7 @@ export function TaskTree({
     onRenameTask,
     onChangePriority,
     onLeaveLeft,
+    phonePriority,
   ])
 
   function toggle(uid: string) {
@@ -402,6 +448,7 @@ export function TaskTree({
         const isExpanded = expanded.has(node.todo.uid)
         const isSelected = selected === node.todo.uid
         const isDone = node.todo.status === 'COMPLETED'
+        const isInProgress = node.todo.status === 'IN-PROCESS'
         const due = formatDue(node.todo.due)
         const pLabel = priorityLabel(node.todo.priority)
         const expiresAt = fadingExpires?.get(node.todo.uid)
@@ -420,13 +467,20 @@ export function TaskTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
             onClick={() => setSelected(node.todo.uid)}
-            className={`group flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none ${
+            className={`group relative flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none ${
               isFading
                 ? 'opacity-10 transition-opacity duration-[5000ms] ease-linear'
                 : 'transition-opacity'
             } ${isSelected ? 'bg-accent-soft' : 'hover:bg-surface'}`}
             style={{ paddingLeft: 12 + node.depth * INDENT_PX }}
           >
+            {isInProgress && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-accent"
+                title="In progress"
+              />
+            )}
             <button
               type="button"
               onClick={(e) => {
@@ -459,8 +513,14 @@ export function TaskTree({
             <button
               type="button"
               role="checkbox"
-              aria-checked={isDone}
-              aria-label={isDone ? 'Mark not completed' : 'Mark completed'}
+              aria-checked={isDone ? true : isInProgress ? 'mixed' : false}
+              aria-label={
+                isDone
+                  ? 'Mark not completed'
+                  : isInProgress
+                    ? 'In progress — mark completed'
+                    : 'Mark completed'
+              }
               disabled={!onToggleComplete || pendingUids?.has(node.itemUid)}
               onClick={(e) => {
                 e.stopPropagation()
@@ -469,7 +529,9 @@ export function TaskTree({
               className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                 isDone
                   ? 'border-accent bg-accent text-bg hover:opacity-90'
-                  : 'border-border-strong bg-transparent hover:border-text-muted'
+                  : isInProgress
+                    ? 'border-accent bg-accent-soft text-accent hover:border-accent'
+                    : 'border-border-strong bg-transparent hover:border-text-muted'
               }`}
             >
               {isDone && (
@@ -484,6 +546,19 @@ export function TaskTree({
                   aria-hidden
                 >
                   <path d="M3 8l3.5 3.5L13 5" />
+                </svg>
+              )}
+              {!isDone && isInProgress && (
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3 w-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  aria-hidden
+                >
+                  <path d="M4 8h8" />
                 </svg>
               )}
             </button>
