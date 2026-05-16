@@ -144,20 +144,34 @@ async function getItemManager(
   return acc.getCollectionManager().getItemManager(collection)
 }
 
-export async function listCollections(): Promise<CollectionInfo[]> {
+export interface ListCollectionsOptions {
+  // When true, include server tombstones (collections deleted in some
+  // other client but not yet hard-purged) in the returned list. Each
+  // returned entry has `isDeleted: true`. Defaults to false — pim.etesync
+  // does the same client-side filter.
+  includeDeleted?: boolean
+}
+
+export async function listCollections(
+  options: ListCollectionsOptions = {},
+): Promise<CollectionInfo[]> {
   const acc = await ensureAccount()
   const cm = acc.getCollectionManager()
   const result = await cm.list(TASK_COLLECTION_TYPE)
-  return result.data.map((c) => {
-    collectionHandles.set(c.uid, c)
-    const meta = c.getMeta()
-    return {
-      uid: c.uid,
-      name: meta.name ?? '(untitled)',
-      description: meta.description,
-      color: meta.color,
-    }
-  })
+  return result.data
+    .filter((c) => options.includeDeleted || !c.isDeleted)
+    .map((c) => {
+      collectionHandles.set(c.uid, c)
+      const meta = c.getMeta()
+      const info: CollectionInfo = {
+        uid: c.uid,
+        name: meta.name ?? '(untitled)',
+        description: meta.description,
+        color: meta.color,
+      }
+      if (c.isDeleted) info.isDeleted = true
+      return info
+    })
 }
 
 export interface ListTaskItemsOptions {

@@ -35,6 +35,10 @@ export interface CollectionInfo {
   name: string
   description?: string
   color?: string
+  // True if this collection is a server-side tombstone (deleted in some
+  // other client but not yet hard-purged). Only set when the caller
+  // explicitly asked for deleted collections.
+  isDeleted?: boolean
 }
 
 export type TaskSort = 'priority' | 'due' | 'created' | 'summary'
