@@ -1,21 +1,16 @@
-import type { TaskItem, TaskNode } from '../types'
+import type { TaskItem, TaskNode, TaskSortSpec } from '../types'
+import { comparatorFor } from './sort'
 
 interface MutableNode extends TaskNode {
   children: MutableNode[]
 }
 
-function compareSiblings(a: MutableNode, b: MutableNode): number {
-  const aTime = a.todo.created ? Date.parse(a.todo.created) : NaN
-  const bTime = b.todo.created ? Date.parse(b.todo.created) : NaN
-  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
-    return aTime - bTime
-  }
-  return a.todo.summary.localeCompare(b.todo.summary)
-}
-
-function sortRecursive(node: MutableNode) {
-  node.children.sort(compareSiblings)
-  for (const child of node.children) sortRecursive(child)
+function sortRecursive(
+  node: MutableNode,
+  cmp: (a: MutableNode, b: MutableNode) => number,
+) {
+  node.children.sort(cmp)
+  for (const child of node.children) sortRecursive(child, cmp)
 }
 
 function assignDepth(node: MutableNode, depth: number) {
@@ -23,7 +18,15 @@ function assignDepth(node: MutableNode, depth: number) {
   for (const child of node.children) assignDepth(child, depth + 1)
 }
 
-export function buildTree(items: TaskItem[]): TaskNode[] {
+export function buildTree(
+  items: TaskItem[],
+  sortSpec?: TaskSortSpec,
+): TaskNode[] {
+  const cmp = comparatorFor(sortSpec) as (
+    a: MutableNode,
+    b: MutableNode,
+  ) => number
+
   const byUid = new Map<string, MutableNode>()
   for (const item of items) {
     byUid.set(item.todo.uid, {
@@ -44,9 +47,9 @@ export function buildTree(items: TaskItem[]): TaskNode[] {
     }
   }
 
-  roots.sort(compareSiblings)
+  roots.sort(cmp)
   for (const root of roots) {
-    sortRecursive(root)
+    sortRecursive(root, cmp)
     assignDepth(root, 0)
   }
 

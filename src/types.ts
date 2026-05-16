@@ -36,3 +36,15 @@ export interface CollectionInfo {
   description?: string
   color?: string
 }
+
+export type TaskSort = 'priority' | 'due' | 'created' | 'summary'
+
+export interface TaskSortSpec {
+  sort: TaskSort
+  reverse: boolean
+}
+
+export const DEFAULT_TASK_SORT: TaskSortSpec = {
+  sort: 'created',
+  reverse: false,
+}
