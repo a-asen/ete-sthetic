@@ -4,6 +4,8 @@ import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
 import { parseVEvent } from './vevent'
 import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
+import { clearAllCalSnapshots } from './calsnapshot'
+import { resetCalMemory } from './calstore'
 
 export const DEFAULT_SERVER = 'https://api.etebase.com'
 const TASK_COLLECTION_TYPE: ColType = 'etebase.vtodo'
@@ -88,8 +90,10 @@ export async function logout(): Promise<void> {
   }
   account = null
   clearHandles()
+  resetCalMemory()
   await clearSession()
   await clearAllSnapshots()
+  await clearAllCalSnapshots()
 }
 
 export function isAuthenticated(): boolean {

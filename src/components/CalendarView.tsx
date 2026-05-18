@@ -11,6 +11,8 @@ import {
   stepAnchor,
   viewDayRange,
 } from '../services/caldate'
+import { loadCalSnapshot, saveCalSnapshot } from '../services/calsnapshot'
+import { getCalMemory, patchCalMemory } from '../services/calstore'
 import { MonthGrid } from './calendar/MonthGrid'
 import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
@@ -27,41 +29,88 @@ const VIEWS: { id: CalView; label: string }[] = [
 const ACCENT = 'var(--color-accent)'
 
 export function CalendarView() {
-  const [calendars, setCalendars] = useState<CollectionInfo[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  // Events keyed by calendar uid so visibility toggles are pure filtering
-  // (no refetch).
-  const [eventsByCal, setEventsByCal] = useState<Map<string, EventItem[]>>(
-    () => new Map(),
+  // Seed all state from the process-lifetime memory cache, so switching
+  // back into the calendar is instant (no spinner, no refetch).
+  const m0 = getCalMemory()
+  const [calendars, setCalendars] = useState<CollectionInfo[] | null>(
+    () => m0.calendars,
   )
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  const [error, setError] = useState<string | null>(null)
+  const [eventsByCal, setEventsByCal] = useState<Map<string, EventItem[]>>(
+    () => new Map(m0.eventsByCal),
+  )
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set(m0.hidden))
   const [loadingCount, setLoadingCount] = useState(0)
-  const [view, setView] = useState<CalView>('month')
-  const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()))
+  const [view, setView] = useState<CalView>(() => m0.view)
+  const [anchor, setAnchor] = useState<Date>(() => new Date(m0.anchorMs))
+  // stoken per calendar — a ref (not render state); seeded from memory.
+  const stokenRef = useRef<Map<string, string>>(new Map(m0.stokenByCal))
   const loadAbort = useRef<AbortController | null>(null)
 
-  // Load calendars, then all their events in parallel.
-  useEffect(() => {
-    let cancelled = false
+  // Sync one calendar: start from whatever we already have for it
+  // (memory/snapshot), then apply a stoken delta from the server.
+  const syncCalendar = useCallback(
+    async (uid: string, signal: AbortSignal, seed: EventItem[]) => {
+      const acc = new Map(seed.map((e) => [e.itemUid, e]))
+      let fromStoken = stokenRef.current.get(uid)
+      // Cold (no memory seed): try the disk snapshot for an instant paint
+      // and a stoken to delta-sync from.
+      if (acc.size === 0 && !fromStoken) {
+        const snap = await loadCalSnapshot(uid)
+        if (snap && !signal.aborted) {
+          for (const e of snap.events) acc.set(e.itemUid, e)
+          fromStoken = snap.stoken
+          const seeded = [...acc.values()]
+          setEventsByCal((prev) => new Map(prev).set(uid, seeded))
+        }
+      }
+      const res = await listEventItems(uid, {
+        signal,
+        fromStoken,
+        onBatch: (batch) => {
+          if (signal.aborted) return
+          for (const e of batch) acc.set(e.itemUid, e)
+          setEventsByCal((prev) =>
+            new Map(prev).set(uid, [...acc.values()]),
+          )
+        },
+      })
+      if (signal.aborted) return
+      for (const removed of res.removed) acc.delete(removed)
+      const finalList = [...acc.values()]
+      setEventsByCal((prev) => new Map(prev).set(uid, finalList))
+      stokenRef.current.set(uid, res.stoken)
+      await saveCalSnapshot({
+        version: 1,
+        uid,
+        events: finalList,
+        stoken: res.stoken,
+        lastSyncedAt: Date.now(),
+      })
+    },
+    [],
+  )
+
+  const loadAll = useCallback(async () => {
     loadAbort.current?.abort()
     const ac = new AbortController()
     loadAbort.current = ac
-    listCalendars()
-      .then((cals) => {
-        if (cancelled) return
-        setCalendars(cals)
-        setLoadingCount(() => cals.length)
-        for (const c of cals) {
-          listEventItems(c.uid, {
-            signal: ac.signal,
-            onBatch: (batch) =>
-              setEventsByCal((prev) => {
-                if (ac.signal.aborted) return prev
-                const next = new Map(prev)
-                next.set(c.uid, [...(next.get(c.uid) ?? []), ...batch])
-                return next
-              }),
-          })
+    try {
+      const mem = getCalMemory()
+      let cals = mem.calendars
+      if (!cals) {
+        cals = await listCalendars()
+        if (ac.signal.aborted) return
+        setCalendars(() => cals)
+      }
+      setLoadingCount(() => cals.length)
+      await Promise.all(
+        cals.map((c) =>
+          syncCalendar(
+            c.uid,
+            ac.signal,
+            mem.eventsByCal.get(c.uid) ?? [],
+          )
             .catch((e) => {
               if (
                 ac.signal.aborted ||
@@ -73,25 +122,40 @@ export function CalendarView() {
             .finally(() => {
               if (!ac.signal.aborted)
                 setLoadingCount((n) => Math.max(0, n - 1))
-            })
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
-      })
-    return () => {
-      cancelled = true
-      ac.abort()
+            }),
+        ),
+      )
+      patchCalMemory({ warmed: true })
+    } catch (e) {
+      if (ac.signal.aborted) return
+      setError(() => (e instanceof Error ? e.message : String(e)))
     }
-  }, [])
+  }, [syncCalendar])
+
+  useEffect(() => {
+    void loadAll()
+    return () => loadAbort.current?.abort()
+  }, [loadAll])
+
+  // Mirror render state into the process-lifetime cache so an unmount
+  // (module switch) doesn't lose it. Not a setState — safe in an effect.
+  useEffect(() => {
+    patchCalMemory({
+      calendars,
+      eventsByCal,
+      stokenByCal: stokenRef.current,
+      hidden,
+      view,
+      anchorMs: anchor.getTime(),
+    })
+  }, [calendars, eventsByCal, hidden, view, anchor])
 
   const colorByCal = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const c of calendars ?? []) m.set(c.uid, c.color ?? ACCENT)
-    return m
+    const map = new Map<string, string>()
+    for (const c of calendars ?? []) map.set(c.uid, c.color ?? ACCENT)
+    return map
   }, [calendars])
 
-  // Flatten visible calendars; remember each item's calendar colour.
   const { visibleEvents, colorByItem } = useMemo(() => {
     const evs: EventItem[] = []
     const colors = new Map<string, string>()
@@ -156,8 +220,8 @@ export function CalendarView() {
     setView('day')
   }, [])
   const pickMonth = useCallback(
-    (m: number) => {
-      setAnchor(new Date(anchor.getFullYear(), m, 1))
+    (mo: number) => {
+      setAnchor(new Date(anchor.getFullYear(), mo, 1))
       setView('month')
     },
     [anchor],
