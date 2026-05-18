@@ -27,6 +27,7 @@ export function ConfirmModal({
   onDismiss,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const confirmRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     cancelRef.current?.focus()
@@ -37,6 +38,19 @@ export function ConfirmModal({
       if (e.key === 'Escape') {
         e.preventDefault()
         ;(onDismiss ?? onCancel)()
+        return
+      }
+      // ←/→ move focus between the two buttons (Cancel is left, the
+      // action is right). Tab still works natively; this is just a
+      // keyboard-friendly alternative.
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        cancelRef.current?.focus()
+        return
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        confirmRef.current?.focus()
         return
       }
       // Ctrl/Cmd+Enter confirms regardless of where focus sits (matches the
@@ -87,6 +101,7 @@ export function ConfirmModal({
             {cancelLabel}
           </button>
           <button
+            ref={confirmRef}
             type="button"
             onClick={onConfirm}
             className={`h-8 rounded-md px-3 text-xs font-medium transition-opacity hover:opacity-90 ${

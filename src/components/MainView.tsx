@@ -1307,6 +1307,7 @@ export function MainView({ onLoggedOut }: Props) {
         e.target instanceof HTMLTextAreaElement
       )
         return
+
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
       if (e.key === 'l' || e.key === 'L') {
@@ -1895,7 +1896,7 @@ export function MainView({ onLoggedOut }: Props) {
           isResizingSidebar
             ? 'select-none'
             : 'transition-[width,opacity] duration-300 ease-out'
-        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-80'}`}
+        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-50'}`}
       >
         {(() => {
           // Single source of truth for whether the sidebar renders the
@@ -2013,6 +2014,10 @@ export function MainView({ onLoggedOut }: Props) {
                           spec={sidebarSort}
                           onChange={setSidebarSort}
                           onClose={() => setSidebarSortOpen(false)}
+                          onConfirm={() => {
+                            setSidebarSortOpen(false)
+                            setFocusZone('sidebar')
+                          }}
                           focusKey={sidebarSortFocusKey}
                           footer="Global. Saved automatically."
                           positionClass="right-0 top-6"
@@ -2257,7 +2262,7 @@ export function MainView({ onLoggedOut }: Props) {
         data-focus-zone={focusZone}
         style={{ zoom: zoom.tasks }}
         className={`relative flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ease-out ${
-          focusZone === 'tasks' ? 'opacity-100' : 'opacity-60'
+          focusZone === 'tasks' ? 'opacity-100' : 'opacity-40'
         }`}
         onMouseDown={(e) => {
           // Pull focus to the tasks pane when the user clicks anywhere in
@@ -2494,6 +2499,10 @@ export function MainView({ onLoggedOut }: Props) {
                   spec={activeSort}
                   onChange={setActiveSort}
                   onClose={() => setSortOpen(false)}
+                  onConfirm={() => {
+                    setSortOpen(false)
+                    setFocusZone('tasks')
+                  }}
                   focusKey={sortFocusKey}
                   footer="Per-list. Saved automatically."
                 />

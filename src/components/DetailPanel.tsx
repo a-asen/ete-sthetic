@@ -459,10 +459,10 @@ export function DetailPanel({
   const collapsedTitle = task?.todo.summary || '(no task selected)'
   const showFullPanel = focused || pinned
   const asideClasses = pinned
-    ? `w-80 ${focused ? 'opacity-100 translate-x-0' : 'opacity-60 translate-x-1'}`
+    ? `w-80 ${focused ? 'opacity-100 translate-x-0' : 'opacity-40 translate-x-1'}`
     : focused
       ? 'w-80 opacity-100'
-      : 'w-10 opacity-80'
+      : 'w-10 opacity-60'
 
   return (
     <aside

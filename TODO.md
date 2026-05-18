@@ -11,6 +11,10 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
 - [x] Full VTODO field model + basic/advanced detail panel.
 - [x] Priority `0–9` hotkeys + card priority tint.
 - [x] Per-zone zoom (sidebar / tasks / details) with memory.
+- [x] #3 Sort popover: `Enter` confirms and returns focus to the task list.
+- [x] #5 `←/→` move focus between buttons in the confirm modal.
+- [x] #7 `Ctrl/Cmd+A` on the selected task starts inline rename (F2 alias).
+- [x] #8 Stronger fade for out-of-focus zones.
 
 ## Polish & fixes (queued 2026-05-18)
 
@@ -37,7 +41,7 @@ detail panel instead of the subtask being written.
   new task via `setSelectedTaskUid(newItem.todo.uid)`), then enter details for
   that new uid. If the input is empty, cancel instead of creating.
 
-### 3. Sort popover: `Enter` confirms and returns to the task items
+### 3. Sort popover: `Enter` confirms and returns to the task items — ✅ done
 **Task.** In sort (`s`), confirming a sort with `Enter` should close the
 popover and move focus back to the task list. Today it stays open.
 **Plan.**
@@ -58,7 +62,7 @@ descendants only reorder within their own sub-branch.
   visible flatten (`flattenVisible`) or a grouped view, fix there. Add the
   case to any sort reasoning notes.
 
-### 5. Arrow keys in the delete confirm modal
+### 5. Arrow keys in the delete confirm modal — ✅ done
 **Task.** `ConfirmModal` only responds to `Tab`; `←/→` do nothing and focus
 always starts on Cancel. Keep Tab, add `←/→` to move between buttons.
 **Plan.**
@@ -78,7 +82,7 @@ text entry vs tree navigation.
   rename, sidebar create/rename, DetailPanel fields). One small
   `EditModeIndicator` component fed by a focus listener.
 
-### 7. `Ctrl+A` on a task item enters rename (same as `F2`)
+### 7. `Ctrl+A` on a task item enters rename (same as `F2`) — ✅ done
 **Task.** Add `Ctrl/Cmd+A` as an alias for `F2` (start inline rename) on the
 selected task.
 **Plan.**
@@ -89,7 +93,7 @@ selected task.
   imperative/prop or a `renameRequestUid` prop TaskTree watches to set
   `editingUid`. `preventDefault` so it doesn't select-all.
 
-### 8. Stronger fade for out-of-focus zones
+### 8. Stronger fade for out-of-focus zones — ✅ done
 **Task.** Inactive zones (sidebar `opacity-80`, tasks `opacity-60`, detail
 `opacity-60/80`) are still too visible; deepen the de-emphasis.
 **Plan.**

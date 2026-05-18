@@ -17,6 +17,9 @@ interface Props<T extends string> {
   spec: GenericSortSpec<T>
   onChange: (next: GenericSortSpec<T>) => void
   onClose: () => void
+  // Enter inside the popover commits the (already-applied) selection and
+  // hands focus back somewhere useful. Falls back to onClose.
+  onConfirm?: () => void
   // Bumped by the parent every time the user opens via keyboard, so the
   // first radio gets focus on each open (mirrors FilterPopover's
   // focusKey).
@@ -34,6 +37,7 @@ export function SortPopover<T extends string>({
   spec,
   onChange,
   onClose,
+  onConfirm,
   focusKey,
   footer,
   positionClass = 'right-0 top-9',
@@ -55,6 +59,9 @@ export function SortPopover<T extends string>({
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        ;(onConfirm ?? onClose)()
       }
     }
     document.addEventListener('mousedown', onDocClick)
@@ -63,7 +70,7 @@ export function SortPopover<T extends string>({
       document.removeEventListener('mousedown', onDocClick)
       document.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [onClose, onConfirm])
 
   return (
     <div

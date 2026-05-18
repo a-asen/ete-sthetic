@@ -277,6 +277,21 @@ export function TaskTree({
         target instanceof HTMLTextAreaElement
       )
         return
+      // Ctrl/Cmd+A on the selected row starts inline rename — an alias
+      // for F2. Handled here (not MainView) so it stays an event-handler
+      // setState, and only when the tree is the active zone.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        (e.key === 'a' || e.key === 'A')
+      ) {
+        if (editingUid || document.querySelector('[role="dialog"]')) return
+        if (selected && onRenameTask) {
+          e.preventDefault()
+          setEditingUid(selected)
+        }
+        return
+      }
       // Modifier-key chords are handled by MainView (Ctrl+Enter to enter
       // details, Ctrl+F for filter, etc.). The tree owns plain keys only,
       // so bail out before we treat Ctrl+Enter as "toggle done".
