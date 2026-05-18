@@ -39,6 +39,20 @@ html[data-theme="light"] {
   --color-danger: #b04848;
 }
 
+/* Priority tint on task rows. Full background wash + a left bar that
+   gets thicker the higher the priority. red = high (1–4),
+   orange = medium (5), grey = low (6–9); priority 0 is untinted. */
+.prio-wash-high { background-color: rgba(197, 79, 79, 0.13); }
+.prio-wash-med  { background-color: rgba(214, 150, 46, 0.13); }
+.prio-wash-low  { background-color: rgba(140, 145, 155, 0.10); }
+.prio-bar-high  { width: 6px; background-color: rgba(197, 79, 79, 0.85); }
+.prio-bar-med   { width: 4px; background-color: rgba(214, 150, 46, 0.85); }
+.prio-bar-low   { width: 2px; background-color: rgba(140, 145, 155, 0.70); }
+
+html[data-theme="light"] .prio-wash-high { background-color: rgba(176, 56, 56, 0.10); }
+html[data-theme="light"] .prio-wash-med  { background-color: rgba(190, 120, 30, 0.12); }
+html[data-theme="light"] .prio-wash-low  { background-color: rgba(120, 125, 135, 0.10); }
+
 html, body, #root {
   height: 100%;
 }

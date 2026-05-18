@@ -59,6 +59,31 @@ interface Props {
   phonePriority?: boolean
 }
 
+// Map a typed digit to a priority value. In phone mode only 0–3 are
+// meaningful (None/High/Medium/Low → 0/1/5/9, the RFC bucket reps);
+// other digits return null and are ignored. Otherwise 0–9 map straight
+// through to the RFC numeric priority.
+function digitToPriority(key: string, phone: boolean): Priority | null {
+  if (key < '0' || key > '9') return null
+  const n = Number(key)
+  if (phone) {
+    if (n === 0) return 0
+    if (n === 1) return 1
+    if (n === 2) return 5
+    if (n === 3) return 9
+    return null
+  }
+  return n as Priority
+}
+
+// Priority tier for the row tint: null = untinted.
+function priorityTier(p: number): 'high' | 'med' | 'low' | null {
+  if (p === 0) return null
+  if (p <= 4) return 'high'
+  if (p === 5) return 'med'
+  return 'low'
+}
+
 const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
 
 function InlineCreate({
@@ -186,6 +211,9 @@ export function TaskTree({
   const selected = selectedUid
   const setSelected = onSelectChange
   const [editingUid, setEditingUid] = useState<string | null>(null)
+  // Row the mouse is currently over — target for the 0–9 priority keys
+  // (falls back to the keyboard selection when nothing is hovered).
+  const [hoveredUid, setHoveredUid] = useState<string | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -269,6 +297,23 @@ export function TaskTree({
       const idx = selected
         ? visible.findIndex((n) => n.todo.uid === selected)
         : -1
+
+      // 0–9 set priority directly on the hovered row (or the selected
+      // row when nothing is hovered).
+      const typedPriority = digitToPriority(e.key, !!phonePriority)
+      if (typedPriority !== null && onChangePriority) {
+        const targetUid = hoveredUid ?? selected
+        const node = targetUid
+          ? visible.find((n) => n.todo.uid === targetUid)
+          : undefined
+        if (node) {
+          e.preventDefault()
+          if (node.todo.priority !== typedPriority) {
+            onChangePriority(node, typedPriority)
+          }
+          return
+        }
+      }
 
       switch (e.key) {
         case 'ArrowDown': {
@@ -411,6 +456,7 @@ export function TaskTree({
     onChangePriority,
     onLeaveLeft,
     phonePriority,
+    hoveredUid,
   ])
 
   function toggle(uid: string) {
@@ -451,6 +497,7 @@ export function TaskTree({
         const isInProgress = node.todo.status === 'IN-PROCESS'
         const due = formatDue(node.todo.due)
         const pLabel = priorityLabel(node.todo.priority)
+        const pTier = priorityTier(node.todo.priority)
         const expiresAt = fadingExpires?.get(node.todo.uid)
         const isFading = expiresAt != null
         const fadingRemainingS = isFading
@@ -467,11 +514,23 @@ export function TaskTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
             onClick={() => setSelected(node.todo.uid)}
+            onMouseEnter={() => setHoveredUid(node.todo.uid)}
+            onMouseLeave={() =>
+              setHoveredUid((cur) =>
+                cur === node.todo.uid ? null : cur,
+              )
+            }
             className={`group relative flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none ${
               isFading
                 ? 'opacity-10 transition-opacity duration-[5000ms] ease-linear'
                 : 'transition-opacity'
-            } ${isSelected ? 'bg-accent-soft' : 'hover:bg-surface'}`}
+            } ${
+              isSelected
+                ? 'bg-accent-soft'
+                : pTier
+                  ? `prio-wash-${pTier}`
+                  : 'hover:bg-surface'
+            }`}
             style={{ paddingLeft: 12 + node.depth * INDENT_PX }}
           >
             {isInProgress && (
@@ -479,6 +538,12 @@ export function TaskTree({
                 aria-hidden
                 className="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-accent"
                 title="In progress"
+              />
+            )}
+            {pTier && (
+              <span
+                aria-hidden
+                className={`pointer-events-none absolute inset-y-0 left-0 prio-bar-${pTier}`}
               />
             )}
             <button
