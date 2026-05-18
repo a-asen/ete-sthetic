@@ -66,7 +66,7 @@ deliberate "compose" surface, not a list row.
   at their indent so the tree still reads.
 - Confirm it doesn't break the depth-based `paddingLeft` for subtask creates.
 
-### 2. `Ctrl+→` while writing a subtask should follow the NEW task
+### 2. `Ctrl+→` while writing a subtask should follow the NEW task — ✅ done
 **Task.** Creating a subtask then pressing `Ctrl+→` opens the *parent's*
 detail panel instead of the subtask being written.
 **Plan.**
@@ -85,7 +85,7 @@ popover and move focus back to the task list. Today it stays open.
   MainView. On `Enter` (commit) call `onClose()` and `setFocusZone('tasks')`.
 - Mirror for the sidebar sort popover for consistency.
 
-### 4. Strictly hierarchical priority sort
+### 4. Strictly hierarchical priority sort — ⚠ investigated, no code bug
 **Task.** A low-priority parent is being pulled into the high-priority group
 because it has a high-priority subtask. Sorting must be *per-sibling-group*:
 a node's position among its siblings depends only on its own priority;
@@ -97,6 +97,19 @@ descendants only reorder within their own sub-branch.
 - Reproduce with a low parent + high child; if the regression is in the
   visible flatten (`flattenVisible`) or a grouped view, fix there. Add the
   case to any sort reasoning notes.
+**Finding (investigated):** `buildTree` already sorts roots by each
+root's *own* priority and `sortRecursive` sorts each node's `children`
+by *their own* keys; `comparatorFor('priority')` reads only
+`node.todo.priority` — no descendant aggregation anywhere. So the sort
+is already strictly per-sibling-group. The reported symptom is therefore
+**not a sort bug** but almost certainly a parent/child *link-resolution*
+issue: if a subtask's `RELATED-TO;RELTYPE=PARENT` doesn't resolve (parent
+in another list, non-PARENT reltype, or — post broken-item work — a
+parent that got a synthetic `broken-…` uid the child can't match), the
+subtask becomes an orphan **root** and sorts by its own (high) priority,
+appearing away from its low-priority parent. Next step is to look at the
+actual offending items (raw `RELATED-TO`) rather than change correct sort
+code. Left open pending that data.
 
 ### 5. Arrow keys in the delete confirm modal — ✅ done
 **Task.** `ConfirmModal` only responds to `Tab`; `←/→` do nothing and focus
@@ -218,7 +231,7 @@ settings menu).
 - Settings menu doesn't exist yet — defer the % readout to that. When built:
   small panel listing the three zone zooms with +/-/reset and a numeric %.
 
-### 15. Discoverable task-card size control (PRIORITY)
+### 15. Discoverable task-card size control (PRIORITY) — ✅ done
 **Task.** Make resizing the task cards as discoverable as the
 sidebar/detail. Card size today = the tasks-zone zoom (focus tasks, then
 `Ctrl/Cmd +/-/0`); the user wants an obvious affordance, not just a hotkey.

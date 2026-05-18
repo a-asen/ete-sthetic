@@ -1207,6 +1207,17 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid, creating],
   )
 
+  // Commit an inline (sub)task then open ITS detail panel (Ctrl+→ while
+  // typing). handleConfirmCreate already selects the new task.
+  const handleConfirmCreateAndOpen = useCallback(
+    async (summary: string) => {
+      await handleConfirmCreate(summary)
+      if (cancelledRef.current) return
+      setFocusZone('details')
+    },
+    [handleConfirmCreate],
+  )
+
   const handleDeleteRequest = useCallback((node: TaskNode) => {
     const descendants = collectDescendantItemUids(node)
     setConfirmDelete({ node, descendantCount: descendants.length - 1 })
@@ -2668,6 +2679,36 @@ export function MainView({ onLoggedOut }: Props) {
                   : 'Syncing…'}
               </span>
             )}
+            <div
+              className="flex shrink-0 items-center rounded-md border border-border text-text-muted"
+              title="Task card size (Ctrl/Cmd + / - / 0)"
+            >
+              <button
+                type="button"
+                onClick={() => adjustZoom('tasks', -ZOOM_STEP)}
+                aria-label="Smaller task cards"
+                className="flex h-7 w-6 items-center justify-center rounded-l-md text-xs transition-colors hover:bg-surface-2 hover:text-text"
+              >
+                A−
+              </button>
+              <button
+                type="button"
+                onClick={() => adjustZoom('tasks', 'reset')}
+                aria-label="Reset task card size"
+                title="Reset (Ctrl/Cmd+0)"
+                className="h-7 min-w-[2.75rem] border-x border-border px-1 text-[11px] tabular-nums transition-colors hover:bg-surface-2 hover:text-text"
+              >
+                {Math.round(zoom.tasks * 100)}%
+              </button>
+              <button
+                type="button"
+                onClick={() => adjustZoom('tasks', ZOOM_STEP)}
+                aria-label="Larger task cards"
+                className="flex h-7 w-6 items-center justify-center rounded-r-md text-sm transition-colors hover:bg-surface-2 hover:text-text"
+              >
+                A+
+              </button>
+            </div>
             <button
               type="button"
               onClick={refreshActive}
@@ -2987,6 +3028,7 @@ export function MainView({ onLoggedOut }: Props) {
               creatingParent={creating ? creating.parentUid : undefined}
               onAddChild={handleStartCreateChild}
               onConfirmCreate={handleConfirmCreate}
+              onConfirmCreateAndOpen={handleConfirmCreateAndOpen}
               onCancelCreate={handleCancelCreate}
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}

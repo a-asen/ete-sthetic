@@ -47,6 +47,7 @@ interface Props {
   creatingParent?: string | null
   onAddChild?: (parent: TaskNode) => void
   onConfirmCreate?: (summary: string) => void
+  onConfirmCreateAndOpen?: (summary: string) => void
   onCancelCreate?: () => void
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
@@ -95,10 +96,14 @@ function InlineCreate({
   depth,
   onConfirm,
   onCancel,
+  onConfirmAndOpen,
 }: {
   depth: number
   onConfirm: (summary: string) => void
   onCancel: () => void
+  // Ctrl/Cmd+→ while typing: commit this (sub)task and follow it into
+  // the detail panel, instead of the global handler opening the parent.
+  onConfirmAndOpen?: (summary: string) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -114,6 +119,19 @@ function InlineCreate({
     } else if (e.key === 'Escape') {
       e.preventDefault()
       onCancel()
+    } else if (
+      (e.ctrlKey || e.metaKey) &&
+      e.key === 'ArrowRight' &&
+      onConfirmAndOpen
+    ) {
+      // Commit this (sub)task and follow it into details. stopPropagation
+      // so the global Ctrl+→ handler doesn't also fire (it would open the
+      // *parent's* detail since selection is still the parent).
+      e.preventDefault()
+      e.stopPropagation()
+      const value = inputRef.current?.value.trim() ?? ''
+      if (value) onConfirmAndOpen(value)
+      else onCancel()
     } else if (e.key === 'ArrowLeft') {
       // ArrowLeft on an empty input cancels (mirrors ArrowRight to start).
       // With any text in the field, this is a normal cursor move.
@@ -200,6 +218,7 @@ export function TaskTree({
   creatingParent,
   onAddChild,
   onConfirmCreate,
+  onConfirmCreateAndOpen,
   onCancelCreate,
   onRenameTask,
   onDeleteRequest,
@@ -516,6 +535,7 @@ export function TaskTree({
           depth={0}
           onConfirm={onConfirmCreate!}
           onCancel={onCancelCreate!}
+          onConfirmAndOpen={onConfirmCreateAndOpen}
         />
       )}
       {visible.map((node) => {
@@ -785,6 +805,7 @@ export function TaskTree({
                 depth={node.depth + 1}
                 onConfirm={onConfirmCreate!}
                 onCancel={onCancelCreate!}
+                onConfirmAndOpen={onConfirmCreateAndOpen}
               />
             </Fragment>
           )
