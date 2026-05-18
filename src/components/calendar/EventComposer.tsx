@@ -40,7 +40,7 @@ export function EventComposer({
   saving: boolean
   error: string | null
   onCreate: (calUid: string, args: NewVEventArgs) => void
-  onUpdate?: (patch: VEventPatch) => void
+  onUpdate?: (patch: VEventPatch, calUid: string) => void
   onDelete?: () => void
   onClose: () => void
 }) {
@@ -98,14 +98,17 @@ export function EventComposer({
     }
     setLocalErr(null)
     if (editing && onUpdate) {
-      onUpdate({
-        summary: summary.trim(),
-        start,
-        end,
-        allDay,
-        location: location.trim() || null,
-        description: description.trim() || null,
-      })
+      onUpdate(
+        {
+          summary: summary.trim(),
+          start,
+          end,
+          allDay,
+          location: location.trim() || null,
+          description: description.trim() || null,
+        },
+        calUid,
+      )
     } else {
       onCreate(calUid, {
         summary: summary.trim(),
@@ -149,8 +152,8 @@ export function EventComposer({
             <select
               value={calUid}
               onChange={(e) => setCalUid(e.target.value)}
-              disabled={!!editing}
-              className={`${field} disabled:opacity-60`}
+              title={editing ? 'Change calendar to move this event' : undefined}
+              className={field}
             >
               {calendars.map((c) => (
                 <option key={c.uid} value={c.uid}>

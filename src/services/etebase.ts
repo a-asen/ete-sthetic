@@ -666,3 +666,35 @@ export async function deleteEvent(
   await im.transaction([item])
   itemHandles.delete(itemKey(collectionUid, itemUid))
 }
+
+// Move one event to another calendar. Same copy-then-delete strategy as
+// moveTasksToCollection (Etebase has no native move); destination commits
+// first so a failure can't lose data. Returns the new EventItem.
+export async function moveEventToCollection(
+  sourceCollectionUid: string,
+  destCollectionUid: string,
+  itemUid: string,
+): Promise<EventItem> {
+  if (sourceCollectionUid === destCollectionUid) {
+    throw new Error('Source and destination collections are the same')
+  }
+  const source = await getItem(sourceCollectionUid, itemUid)
+  const content = await source.getContent(Etebase.OutputFormat.String)
+  const meta = source.getMeta<Record<string, unknown>>()
+
+  const acc = await ensureAccount()
+  const destCollection = await getCollection(destCollectionUid)
+  const destIm = acc.getCollectionManager().getItemManager(destCollection)
+  const created = await destIm.create({ ...meta, mtime: Date.now() }, content)
+  await destIm.transaction([created])
+  itemHandles.set(itemKey(destCollectionUid, created.uid), created)
+
+  source.delete()
+  const sourceIm = await getItemManager(sourceCollectionUid)
+  await sourceIm.transaction([source])
+  itemHandles.delete(itemKey(sourceCollectionUid, itemUid))
+
+  const event = parseVEvent(content)
+  if (!event) throw new Error('Moved VEVENT failed to parse')
+  return { itemUid: created.uid, event }
+}

@@ -6,6 +6,7 @@ import {
   forceUpdateEvent,
   listCalendars,
   listEventItems,
+  moveEventToCollection,
   updateEvent,
 } from '../services/etebase'
 import type { CollectionInfo, EventItem } from '../types'
@@ -458,6 +459,46 @@ export function CalendarView() {
     [spliceEvent],
   )
 
+  // Edit-save: if the calendar changed, move the event first, then apply
+  // field edits to the moved copy.
+  const handleEditSave = useCallback(
+    async (
+      origCalUid: string,
+      itemUid: string,
+      patch: VEventPatch,
+      newCalUid: string,
+    ) => {
+      if (!newCalUid || newCalUid === origCalUid) {
+        await handleUpdate(origCalUid, itemUid, patch)
+        return
+      }
+      setCreating(true)
+      setCreateErr(null)
+      try {
+        const moved = await moveEventToCollection(
+          origCalUid,
+          newCalUid,
+          itemUid,
+        )
+        spliceEvent(origCalUid, itemUid, null)
+        setEventsByCal((prev) =>
+          new Map(prev).set(newCalUid, [
+            ...(prev.get(newCalUid) ?? []),
+            moved,
+          ]),
+        )
+        const updated = await updateEvent(newCalUid, moved.itemUid, patch)
+        spliceEvent(newCalUid, moved.itemUid, updated)
+        setCreating(false)
+        setComposer(null)
+      } catch (e) {
+        setCreating(false)
+        setCreateErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [handleUpdate, spliceEvent],
+  )
+
   const handleDelete = useCallback(
     async (calUid: string, itemUid: string) => {
       setCreating(true)
@@ -665,11 +706,12 @@ export function CalendarView() {
           onCreate={handleCreate}
           onUpdate={
             composer.mode === 'edit'
-              ? (patch) =>
-                  handleUpdate(
+              ? (patch, newCalUid) =>
+                  handleEditSave(
                     composer.calUid,
                     composer.item.itemUid,
                     patch,
+                    newCalUid,
                   )
               : undefined
           }
