@@ -541,7 +541,7 @@ export function TaskTree({
                 : 'transition-opacity'
             } ${
               isSelected
-                ? 'bg-accent-soft'
+                ? 'bg-accent-soft ring-1 ring-inset ring-[var(--color-text)]'
                 : pTier
                   ? `prio-wash-${pTier}`
                   : 'hover:bg-surface'

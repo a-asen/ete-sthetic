@@ -53,6 +53,18 @@ export function ConfirmModal({
         confirmRef.current?.focus()
         return
       }
+      // Trap Tab inside the modal — there are only two buttons, so just
+      // toggle between them instead of letting focus escape to the
+      // (inert) UI behind the dialog.
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        if (document.activeElement === confirmRef.current) {
+          cancelRef.current?.focus()
+        } else {
+          confirmRef.current?.focus()
+        }
+        return
+      }
       // Ctrl/Cmd+Enter confirms regardless of where focus sits (matches the
       // DetailPanel shortcut that opens this modal — pressing the same combo
       // again commits). A bare Enter also confirms unless the user has Tab'd

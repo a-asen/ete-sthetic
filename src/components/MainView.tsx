@@ -1896,7 +1896,7 @@ export function MainView({ onLoggedOut }: Props) {
           isResizingSidebar
             ? 'select-none'
             : 'transition-[width,opacity] duration-300 ease-out'
-        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-50'}`}
+        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-40'}`}
       >
         {(() => {
           // Single source of truth for whether the sidebar renders the
@@ -2262,7 +2262,7 @@ export function MainView({ onLoggedOut }: Props) {
         data-focus-zone={focusZone}
         style={{ zoom: zoom.tasks }}
         className={`relative flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ease-out ${
-          focusZone === 'tasks' ? 'opacity-100' : 'opacity-40'
+          focusZone === 'tasks' ? 'opacity-100' : 'opacity-30'
         }`}
         onMouseDown={(e) => {
           // Pull focus to the tasks pane when the user clicks anywhere in
