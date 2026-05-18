@@ -30,7 +30,7 @@ export function MonthGrid({
   selected: Date
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date) => void
-  onOpenEvent: (item: EventItem) => void
+  onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
 }) {
   // 6 weeks of 7 days.
   const weeks: Date[][] = []
@@ -117,7 +117,7 @@ export function MonthGrid({
                             key={item.itemUid + k}
                             onClick={(e) => {
                               e.stopPropagation()
-                              onOpenEvent(item)
+                              onOpenEvent(item, { x: e.clientX, y: e.clientY })
                             }}
                             title={
                               (ev.recurring ? '↻ recurring · ' : '') +
@@ -172,7 +172,7 @@ export function MonthGrid({
                         key={item.itemUid + dayKey(week[0])}
                         onClick={(e) => {
                           e.stopPropagation()
-                          onOpenEvent(item)
+                          onOpenEvent(item, { x: e.clientX, y: e.clientY })
                         }}
                         title={
                           (ev.recurring ? '↻ recurring · ' : '') + ev.summary

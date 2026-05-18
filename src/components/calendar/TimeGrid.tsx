@@ -90,7 +90,7 @@ export function TimeGrid({
   selected: Date
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date, hour: number) => void
-  onOpenEvent: (item: EventItem) => void
+  onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
 }) {
   const hours = useMemo(
     () => Array.from({ length: 24 }, (_, i) => i),
@@ -204,7 +204,7 @@ export function TimeGrid({
                   key={item.itemUid}
                   onClick={(e) => {
                     e.stopPropagation()
-                    onOpenEvent(item)
+                    onOpenEvent(item, { x: e.clientX, y: e.clientY })
                   }}
                   title={
                     (ev.recurring ? '↻ recurring · ' : '') + ev.summary
@@ -296,7 +296,7 @@ export function TimeGrid({
                       key={item.itemUid}
                       onClick={(e) => {
                         e.stopPropagation()
-                        onOpenEvent(item)
+                        onOpenEvent(item, { x: e.clientX, y: e.clientY })
                       }}
                       title={
                         (ev.recurring ? '↻ recurring · ' : '') +

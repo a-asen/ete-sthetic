@@ -32,6 +32,7 @@ import { YearGrid } from './calendar/YearGrid'
 import { CalendarSidebar } from './calendar/CalendarSidebar'
 import { EventComposer } from './calendar/EventComposer'
 import { ConflictModal } from './calendar/ConflictModal'
+import { EventPopover } from './calendar/EventPopover'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -77,6 +78,12 @@ export function CalendarView() {
     serverRaw: string
   } | null>(null)
   const [conflictBusy, setConflictBusy] = useState(false)
+  const [popover, setPopover] = useState<{
+    item: EventItem
+    calUid: string
+    x: number
+    y: number
+  } | null>(null)
   // stoken per calendar — a ref (not render state); seeded from memory.
   const stokenRef = useRef<Map<string, string>>(new Map(m0.stokenByCal))
   const loadAbort = useRef<AbortController | null>(null)
@@ -390,15 +397,25 @@ export function CalendarView() {
     [],
   )
 
+  // Click an event → quick popover at the click point.
   const openEvent = useCallback(
-    (item: EventItem) => {
+    (item: EventItem, coords: { x: number; y: number }) => {
       const calUid = calByItem.get(item.itemUid)
       if (!calUid) return
-      setCreateErr(null)
-      setComposer({ mode: 'edit', item, calUid })
+      setPopover({ item, calUid, x: coords.x, y: coords.y })
     },
     [calByItem],
   )
+
+  const editFromPopover = useCallback(() => {
+    setPopover((p) => {
+      if (p) {
+        setCreateErr(null)
+        setComposer({ mode: 'edit', item: p.item, calUid: p.calUid })
+      }
+      return null
+    })
+  }, [])
 
   const handleUpdate = useCallback(
     async (calUid: string, itemUid: string, patch: VEventPatch) => {
@@ -641,6 +658,24 @@ export function CalendarView() {
           onKeepLocal={() => resolveConflict('local')}
           onKeepCloud={() => resolveConflict('cloud')}
           onClose={() => setConflict(null)}
+        />
+      )}
+
+      {popover && (
+        <EventPopover
+          item={popover.item}
+          calName={
+            calendars?.find((c) => c.uid === popover.calUid)?.name
+          }
+          x={popover.x}
+          y={popover.y}
+          busy={creating}
+          onEdit={editFromPopover}
+          onDelete={() => {
+            handleDelete(popover.calUid, popover.item.itemUid)
+            setPopover(null)
+          }}
+          onClose={() => setPopover(null)}
         />
       )}
     </div>
