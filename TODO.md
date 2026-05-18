@@ -15,6 +15,11 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
 - [x] #5 `←/→` move focus between buttons in the confirm modal.
 - [x] #7 `Ctrl/Cmd+A` on the selected task starts inline rename (F2 alias).
 - [x] #8 Stronger fade for out-of-focus zones.
+- [x] Visible "delete this list" button in the sidebar header (was
+      keyboard-only via `Del`).
+- [x] Entering a list (`→`/`Enter`/`t`) now selects the first task instead
+      of landing selection-less.
+- [x] ConfirmModal traps `Tab` focus between its two buttons.
 
 ## Polish & fixes (queued 2026-05-18)
 

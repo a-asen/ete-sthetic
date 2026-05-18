@@ -1140,6 +1140,17 @@ export function MainView({ onLoggedOut }: Props) {
     setConfirmDelete({ node, descendantCount: descendants.length - 1 })
   }, [])
 
+  // Enter the tasks zone and make sure something is selected so the user
+  // lands on the first task instead of a selection-less list they'd have
+  // to arrow into. Keeps the current selection if it's still visible.
+  const focusTasks = useCallback(() => {
+    setFocusZone('tasks')
+    setSelectedTaskUid((cur) => {
+      if (cur && findNodeByUid(visibleTree, cur)) return cur
+      return visibleTree[0]?.todo.uid ?? cur
+    })
+  }, [visibleTree])
+
   const refreshCollections = useCallback(() => {
     setCollectionsRefreshKey((k) => k + 1)
   }, [])
@@ -1317,7 +1328,7 @@ export function MainView({ onLoggedOut }: Props) {
       }
       if (e.key === 't' || e.key === 'T') {
         e.preventDefault()
-        setFocusZone('tasks')
+        focusTasks()
         return
       }
       if (e.key === 'e' || e.key === 'E') {
@@ -1460,7 +1471,7 @@ export function MainView({ onLoggedOut }: Props) {
               return
             }
             e.preventDefault()
-            setFocusZone('tasks')
+            focusTasks()
             return
           }
         }
@@ -1482,6 +1493,7 @@ export function MainView({ onLoggedOut }: Props) {
     startCreateList,
     startRenameList,
     adjustZoom,
+    focusTasks,
   ])
 
   const handleMovePick = useCallback(
@@ -1896,7 +1908,7 @@ export function MainView({ onLoggedOut }: Props) {
           isResizingSidebar
             ? 'select-none'
             : 'transition-[width,opacity] duration-300 ease-out'
-        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-40'}`}
+        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-30'}`}
       >
         {(() => {
           // Single source of truth for whether the sidebar renders the
@@ -1935,6 +1947,39 @@ export function MainView({ onLoggedOut }: Props) {
                           aria-hidden
                         >
                           <path d="M8 3v10M3 8h10" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const col = sortedCollections?.find(
+                            (c) => c.uid === activeUid,
+                          )
+                          if (col && !col.isDeleted) {
+                            setListError(null)
+                            setDeletingList(col)
+                          }
+                        }}
+                        disabled={
+                          !sortedCollections?.some(
+                            (c) => c.uid === activeUid && !c.isDeleted,
+                          )
+                        }
+                        title="Delete this list (Del)"
+                        aria-label="Delete this list"
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[10px] text-text-faint transition-colors hover:border-danger/50 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-text-faint"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className="h-3 w-3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8.4a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9L11 4.5" />
                         </svg>
                       </button>
                       <button
@@ -2262,7 +2307,7 @@ export function MainView({ onLoggedOut }: Props) {
         data-focus-zone={focusZone}
         style={{ zoom: zoom.tasks }}
         className={`relative flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ease-out ${
-          focusZone === 'tasks' ? 'opacity-100' : 'opacity-30'
+          focusZone === 'tasks' ? 'opacity-100' : 'opacity-20'
         }`}
         onMouseDown={(e) => {
           // Pull focus to the tasks pane when the user clicks anywhere in
