@@ -57,17 +57,18 @@ function asString(value: unknown): string | undefined {
 }
 
 export function parseVTodo(raw: string): VTodo | null {
-  let comp: ICAL.Component
+  // The ENTIRE parse is defensive: a single malformed item (bad iCal,
+  // missing VCALENDAR wrapper, odd jCal shape, …) must degrade to
+  // "skip this item" (null), never throw — otherwise one bad task aborts
+  // the whole collection sync. ical.js throws low-level errors like
+  // "undefined is not an object (evaluating 'comps.length')" for these.
   try {
     const jcal = ICAL.parse(raw)
-    comp = new ICAL.Component(jcal)
-  } catch {
-    return null
-  }
+    const comp = new ICAL.Component(jcal)
 
-  const vtodo =
-    comp.name === 'vtodo' ? comp : comp.getFirstSubcomponent('vtodo')
-  if (!vtodo) return null
+    const vtodo =
+      comp.name === 'vtodo' ? comp : comp.getFirstSubcomponent('vtodo')
+    if (!vtodo) return null
 
   const uid = vtodo.getFirstPropertyValue('uid')
   if (!uid) return null
@@ -169,6 +170,9 @@ export function parseVTodo(raw: string): VTodo | null {
     resources: resources.length > 0 ? resources : undefined,
     relatedTo: relatedTo.length > 0 ? relatedTo : undefined,
     raw,
+    }
+  } catch {
+    return null
   }
 }
 
