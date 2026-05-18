@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CollectionInfo } from '../../types'
-import type { NewVEventArgs } from '../../services/vevent'
+import type { CollectionInfo, EventItem } from '../../types'
+import type { NewVEventArgs, VEventPatch } from '../../services/vevent'
 
 function pad(n: number): string {
   return String(n).padStart(2, '0')
@@ -21,35 +21,48 @@ function fromInputs(date: string, time: string): Date {
 export function EventComposer({
   date,
   defaultHour,
+  editing,
   calendars,
   defaultCalUid,
   saving,
   error,
   onCreate,
+  onUpdate,
+  onDelete,
   onClose,
 }: {
   date: Date
   defaultHour?: number
+  // When set, the composer is in edit mode for this event.
+  editing?: EventItem
   calendars: CollectionInfo[]
   defaultCalUid: string
   saving: boolean
   error: string | null
   onCreate: (calUid: string, args: NewVEventArgs) => void
+  onUpdate?: (patch: VEventPatch) => void
+  onDelete?: () => void
   onClose: () => void
 }) {
-  const start0 = new Date(date)
-  start0.setHours(defaultHour ?? 9, 0, 0, 0)
-  const end0 = new Date(start0.getTime() + 60 * 60 * 1000)
+  const ev = editing?.event
+  const start0 = ev?.start ? new Date(ev.start) : new Date(date)
+  if (!ev?.start) start0.setHours(defaultHour ?? 9, 0, 0, 0)
+  // Stored all-day DTEND is exclusive; show the inclusive last day.
+  const end0 = ev?.end
+    ? new Date(
+        ev.allDay ? ev.end.getTime() - 24 * 60 * 60 * 1000 : ev.end.getTime(),
+      )
+    : new Date(start0.getTime() + 60 * 60 * 1000)
 
   const [calUid, setCalUid] = useState(defaultCalUid)
-  const [summary, setSummary] = useState('')
-  const [allDay, setAllDay] = useState(false)
+  const [summary, setSummary] = useState(ev?.summary ?? '')
+  const [allDay, setAllDay] = useState(ev?.allDay ?? false)
   const [startDate, setStartDate] = useState(toDateInput(start0))
   const [startTime, setStartTime] = useState(toTimeInput(start0))
   const [endDate, setEndDate] = useState(toDateInput(end0))
   const [endTime, setEndTime] = useState(toTimeInput(end0))
-  const [location, setLocation] = useState('')
-  const [description, setDescription] = useState('')
+  const [location, setLocation] = useState(ev?.location ?? '')
+  const [description, setDescription] = useState(ev?.description ?? '')
   const [localErr, setLocalErr] = useState<string | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
 
@@ -84,14 +97,25 @@ export function EventComposer({
       return
     }
     setLocalErr(null)
-    onCreate(calUid, {
-      summary: summary.trim(),
-      start,
-      end,
-      allDay,
-      location: location.trim() || undefined,
-      description: description.trim() || undefined,
-    })
+    if (editing && onUpdate) {
+      onUpdate({
+        summary: summary.trim(),
+        start,
+        end,
+        allDay,
+        location: location.trim() || null,
+        description: description.trim() || null,
+      })
+    } else {
+      onCreate(calUid, {
+        summary: summary.trim(),
+        start,
+        end,
+        allDay,
+        location: location.trim() || undefined,
+        description: description.trim() || undefined,
+      })
+    }
   }
 
   const field = 'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text outline-none focus:border-accent'
@@ -108,7 +132,9 @@ export function EventComposer({
         className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-4 text-sm font-medium text-text">New event</h3>
+        <h3 className="mb-4 text-sm font-medium text-text">
+          {editing ? 'Edit event' : 'New event'}
+        </h3>
 
         <div className="space-y-3">
           <input
@@ -123,7 +149,8 @@ export function EventComposer({
             <select
               value={calUid}
               onChange={(e) => setCalUid(e.target.value)}
-              className={field}
+              disabled={!!editing}
+              className={`${field} disabled:opacity-60`}
             >
               {calendars.map((c) => (
                 <option key={c.uid} value={c.uid}>
@@ -197,11 +224,21 @@ export function EventComposer({
           <p className="mt-3 text-xs text-danger">{localErr || error}</p>
         )}
 
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex items-center gap-2">
+          {editing && onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={saving}
+              className="h-8 rounded-md border border-border px-3 text-xs text-danger hover:border-danger disabled:opacity-50"
+            >
+              Delete
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
-            className="h-8 rounded-md border border-border px-3 text-xs text-text-muted hover:border-border-strong hover:text-text"
+            className="ml-auto h-8 rounded-md border border-border px-3 text-xs text-text-muted hover:border-border-strong hover:text-text"
           >
             Cancel
           </button>
@@ -211,7 +248,7 @@ export function EventComposer({
             disabled={saving}
             className="h-8 rounded-md bg-accent px-3 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-50"
           >
-            {saving ? 'Saving…' : 'Create'}
+            {saving ? 'Saving…' : editing ? 'Save' : 'Create'}
           </button>
         </div>
       </div>

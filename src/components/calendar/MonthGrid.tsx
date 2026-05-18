@@ -12,6 +12,7 @@ export function MonthGrid({
   today,
   onPickDay,
   onNewEvent,
+  onOpenEvent,
 }: {
   days: Date[]
   monthOf: number
@@ -20,6 +21,7 @@ export function MonthGrid({
   today: Date
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date) => void
+  onOpenEvent: (item: EventItem) => void
 }) {
   return (
     <div className="flex flex-1 flex-col">
@@ -74,12 +76,16 @@ export function MonthGrid({
                   return (
                     <div
                       key={item.itemUid + k}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onOpenEvent(item)
+                      }}
                       title={
                         (ev.recurring ? '↻ recurring · ' : '') +
                         ev.summary +
                         (ev.location ? ` · ${ev.location}` : '')
                       }
-                      className="flex items-center gap-1 truncate rounded-sm px-1 py-0.5 text-xs"
+                      className="flex cursor-pointer items-center gap-1 truncate rounded-sm px-1 py-0.5 text-xs hover:brightness-125"
                       style={{ backgroundColor: 'var(--color-accent-soft)' }}
                     >
                       <span

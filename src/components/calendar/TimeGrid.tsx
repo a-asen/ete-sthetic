@@ -74,6 +74,7 @@ export function TimeGrid({
   today,
   onPickDay,
   onNewEvent,
+  onOpenEvent,
 }: {
   days: Date[]
   byDay: Map<string, EventItem[]>
@@ -81,6 +82,7 @@ export function TimeGrid({
   today: Date
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date, hour: number) => void
+  onOpenEvent: (item: EventItem) => void
 }) {
   const hours = useMemo(
     () => Array.from({ length: 24 }, (_, i) => i),
@@ -143,8 +145,12 @@ export function TimeGrid({
               {evs.map((item) => (
                 <div
                   key={item.itemUid}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onOpenEvent(item)
+                  }}
                   title={item.event.summary}
-                  className="truncate rounded-sm px-1 text-xs"
+                  className="cursor-pointer truncate rounded-sm px-1 text-xs hover:brightness-125"
                   style={{ backgroundColor: 'var(--color-accent-soft)' }}
                 >
                   {item.event.recurring && '↻ '}
@@ -204,13 +210,16 @@ export function TimeGrid({
                   return (
                     <div
                       key={item.itemUid}
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onOpenEvent(item)
+                      }}
                       title={
                         (ev.recurring ? '↻ recurring · ' : '') +
                         ev.summary +
                         (ev.location ? ` · ${ev.location}` : '')
                       }
-                      className="absolute overflow-hidden rounded-sm border-l-2 px-1 py-0.5 text-xs"
+                      className="absolute cursor-pointer overflow-hidden rounded-sm border-l-2 px-1 py-0.5 text-xs hover:brightness-125"
                       style={{
                         top: `${topPx}px`,
                         height: `${heightPx}px`,

@@ -1,7 +1,13 @@
 import * as Etebase from 'etebase'
 import type { ColType, CollectionInfo, EventItem, TaskItem } from '../types'
 import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
-import { buildVEvent, parseVEvent, type NewVEventArgs } from './vevent'
+import {
+  buildVEvent,
+  parseVEvent,
+  updateVEvent,
+  type NewVEventArgs,
+  type VEventPatch,
+} from './vevent'
 import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
 import { clearAllCalSnapshots } from './calsnapshot'
@@ -569,4 +575,94 @@ export async function createEvent(
   const event = parseVEvent(raw)
   if (!event) throw new Error('Built VEVENT failed to parse')
   return { itemUid: item.uid, event }
+}
+
+// Raised when a transaction is rejected because the item changed on the
+// server since we last fetched it. Carries both sides so the UI can ask
+// the user how to resolve.
+export class EventConflictError extends Error {
+  readonly collectionUid: string
+  readonly itemUid: string
+  readonly localRaw: string
+  readonly serverRaw: string
+  constructor(
+    collectionUid: string,
+    itemUid: string,
+    localRaw: string,
+    serverRaw: string,
+  ) {
+    super('Event changed on the server')
+    this.name = 'EventConflictError'
+    this.collectionUid = collectionUid
+    this.itemUid = itemUid
+    this.localRaw = localRaw
+    this.serverRaw = serverRaw
+  }
+}
+
+export function updateEvent(
+  collectionUid: string,
+  itemUid: string,
+  patch: VEventPatch,
+): Promise<EventItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    const item = await getItem(collectionUid, itemUid)
+    const oldRaw = await item.getContent(Etebase.OutputFormat.String)
+    const newRaw = updateVEvent(oldRaw, patch)
+    await item.setContent(newRaw)
+    if (patch.summary !== undefined) setItemMeta(item, patch.summary)
+
+    const im = await getItemManager(collectionUid)
+    try {
+      await im.transaction([item])
+    } catch {
+      // Stale etag → server has a newer version. Refetch it so the
+      // caller can present local vs cloud.
+      itemHandles.delete(itemKey(collectionUid, itemUid))
+      const fresh = await im.fetch(itemUid)
+      itemHandles.set(itemKey(collectionUid, itemUid), fresh)
+      const serverRaw = await fresh.getContent(Etebase.OutputFormat.String)
+      throw new EventConflictError(
+        collectionUid,
+        itemUid,
+        newRaw,
+        serverRaw,
+      )
+    }
+    const event = parseVEvent(newRaw)
+    if (!event) throw new Error('Updated VEVENT failed to parse')
+    return { itemUid: item.uid, event }
+  })
+}
+
+// Resolve a conflict by forcing the local version onto the server. Fetches
+// a fresh handle (current etag) first so the transaction is accepted.
+export function forceUpdateEvent(
+  collectionUid: string,
+  itemUid: string,
+  localRaw: string,
+): Promise<EventItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    itemHandles.delete(itemKey(collectionUid, itemUid))
+    const im = await getItemManager(collectionUid)
+    const item = await im.fetch(itemUid)
+    await item.setContent(localRaw)
+    const event = parseVEvent(localRaw)
+    setItemMeta(item, event?.summary ?? '')
+    await im.transaction([item])
+    itemHandles.set(itemKey(collectionUid, itemUid), item)
+    if (!event) throw new Error('Local VEVENT failed to parse')
+    return { itemUid: item.uid, event }
+  })
+}
+
+export async function deleteEvent(
+  collectionUid: string,
+  itemUid: string,
+): Promise<void> {
+  const item = await getItem(collectionUid, itemUid)
+  item.delete()
+  const im = await getItemManager(collectionUid)
+  await im.transaction([item])
+  itemHandles.delete(itemKey(collectionUid, itemUid))
 }

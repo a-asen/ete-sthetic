@@ -161,3 +161,52 @@ export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
   cal.addSubcomponent(vevent)
   return { uid, raw: cal.toString() }
 }
+
+export interface VEventPatch {
+  summary?: string
+  start?: Date
+  end?: Date
+  allDay?: boolean
+  // '' or null clears; undefined leaves untouched.
+  description?: string | null
+  location?: string | null
+}
+
+// Update an existing raw VEVENT. Preserves unknown properties (RRULE,
+// ATTENDEE, X-*, …) and bumps LAST-MODIFIED/DTSTAMP. allDay must be passed
+// alongside start/end so DTSTART/DTEND are re-serialized with the right
+// VALUE type.
+export function updateVEvent(raw: string, patch: VEventPatch): string {
+  const jcal = ICAL.parse(raw)
+  const cal = new ICAL.Component(jcal)
+  const vevent =
+    cal.name === 'vevent' ? cal : cal.getFirstSubcomponent('vevent')
+  if (!vevent) throw new Error('VEVENT component missing')
+
+  if (patch.summary !== undefined) {
+    vevent.updatePropertyWithValue('summary', patch.summary)
+  }
+  const allDay =
+    patch.allDay ??
+    (vevent.getFirstProperty('dtstart')?.getFirstValue() as
+      | { isDate?: boolean }
+      | undefined)?.isDate === true
+  if (patch.start !== undefined) {
+    vevent.updatePropertyWithValue('dtstart', localTime(patch.start, allDay))
+  }
+  if (patch.end !== undefined) {
+    vevent.updatePropertyWithValue('dtend', localTime(patch.end, allDay))
+  }
+  if (patch.description !== undefined) {
+    if (!patch.description) vevent.removeAllProperties('description')
+    else vevent.updatePropertyWithValue('description', patch.description)
+  }
+  if (patch.location !== undefined) {
+    if (!patch.location) vevent.removeAllProperties('location')
+    else vevent.updatePropertyWithValue('location', patch.location)
+  }
+
+  vevent.updatePropertyWithValue('last-modified', icalUtcNow())
+  vevent.updatePropertyWithValue('dtstamp', icalUtcNow())
+  return cal.toString()
+}

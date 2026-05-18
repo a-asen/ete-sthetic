@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createEvent, listCalendars, listEventItems } from '../services/etebase'
+import {
+  EventConflictError,
+  createEvent,
+  deleteEvent,
+  forceUpdateEvent,
+  listCalendars,
+  listEventItems,
+  updateEvent,
+} from '../services/etebase'
 import type { CollectionInfo, EventItem } from '../types'
-import type { NewVEventArgs } from '../services/vevent'
+import {
+  parseVEvent,
+  type NewVEventArgs,
+  type VEventPatch,
+} from '../services/vevent'
 import {
   type CalView,
   addDays,
@@ -19,6 +31,7 @@ import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
 import { CalendarSidebar } from './calendar/CalendarSidebar'
 import { EventComposer } from './calendar/EventComposer'
+import { ConflictModal } from './calendar/ConflictModal'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -45,12 +58,21 @@ export function CalendarView() {
   const [loadingCount, setLoadingCount] = useState(0)
   const [view, setView] = useState<CalView>(() => m0.view)
   const [anchor, setAnchor] = useState<Date>(() => new Date(m0.anchorMs))
-  const [composer, setComposer] = useState<{
-    date: Date
-    hour?: number
-  } | null>(null)
+  // Composer is either creating (date/hour prefill) or editing an event.
+  const [composer, setComposer] = useState<
+    | { mode: 'new'; date: Date; hour?: number }
+    | { mode: 'edit'; item: EventItem; calUid: string }
+    | null
+  >(null)
   const [creating, setCreating] = useState(false)
   const [createErr, setCreateErr] = useState<string | null>(null)
+  const [conflict, setConflict] = useState<{
+    calUid: string
+    itemUid: string
+    localRaw: string
+    serverRaw: string
+  } | null>(null)
+  const [conflictBusy, setConflictBusy] = useState(false)
   // stoken per calendar — a ref (not render state); seeded from memory.
   const stokenRef = useRef<Map<string, string>>(new Map(m0.stokenByCal))
   const loadAbort = useRef<AbortController | null>(null)
@@ -164,18 +186,20 @@ export function CalendarView() {
     return map
   }, [calendars])
 
-  const { visibleEvents, colorByItem } = useMemo(() => {
+  const { visibleEvents, colorByItem, calByItem } = useMemo(() => {
     const evs: EventItem[] = []
     const colors = new Map<string, string>()
+    const cals = new Map<string, string>()
     for (const [uid, list] of eventsByCal) {
       if (hidden.has(uid)) continue
       const col = colorByCal.get(uid) ?? ACCENT
       for (const it of list) {
         evs.push(it)
         colors.set(it.itemUid, col)
+        cals.set(it.itemUid, uid)
       }
     }
-    return { visibleEvents: evs, colorByItem: colors }
+    return { visibleEvents: evs, colorByItem: colors, calByItem: cals }
   }, [eventsByCal, hidden, colorByCal])
 
   const colorFor = useCallback(
@@ -273,6 +297,98 @@ export function CalendarView() {
     [],
   )
 
+  // Replace (or, with null, remove) an event in a calendar's list.
+  const spliceEvent = useCallback(
+    (calUid: string, itemUid: string, next: EventItem | null) => {
+      setEventsByCal((prev) => {
+        const list = prev.get(calUid) ?? []
+        const updated = next
+          ? list.map((e) => (e.itemUid === itemUid ? next : e))
+          : list.filter((e) => e.itemUid !== itemUid)
+        return new Map(prev).set(calUid, updated)
+      })
+    },
+    [],
+  )
+
+  const openEvent = useCallback(
+    (item: EventItem) => {
+      const calUid = calByItem.get(item.itemUid)
+      if (!calUid) return
+      setCreateErr(null)
+      setComposer({ mode: 'edit', item, calUid })
+    },
+    [calByItem],
+  )
+
+  const handleUpdate = useCallback(
+    async (calUid: string, itemUid: string, patch: VEventPatch) => {
+      setCreating(true)
+      setCreateErr(null)
+      try {
+        const updated = await updateEvent(calUid, itemUid, patch)
+        spliceEvent(calUid, itemUid, updated)
+        setCreating(false)
+        setComposer(null)
+      } catch (e) {
+        setCreating(false)
+        if (e instanceof EventConflictError) {
+          setComposer(null)
+          setConflict({
+            calUid,
+            itemUid,
+            localRaw: e.localRaw,
+            serverRaw: e.serverRaw,
+          })
+          return
+        }
+        setCreateErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [spliceEvent],
+  )
+
+  const handleDelete = useCallback(
+    async (calUid: string, itemUid: string) => {
+      setCreating(true)
+      setCreateErr(null)
+      try {
+        await deleteEvent(calUid, itemUid)
+        spliceEvent(calUid, itemUid, null)
+        setCreating(false)
+        setComposer(null)
+      } catch (e) {
+        setCreating(false)
+        setCreateErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [spliceEvent],
+  )
+
+  const resolveConflict = useCallback(
+    async (keep: 'local' | 'cloud') => {
+      if (!conflict) return
+      const { calUid, itemUid, localRaw, serverRaw } = conflict
+      setConflictBusy(true)
+      try {
+        if (keep === 'local') {
+          const forced = await forceUpdateEvent(calUid, itemUid, localRaw)
+          spliceEvent(calUid, itemUid, forced)
+        } else {
+          const event = parseVEvent(serverRaw)
+          if (event) spliceEvent(calUid, itemUid, { itemUid, event })
+        }
+        setConflictBusy(false)
+        setConflict(null)
+      } catch (e) {
+        setConflictBusy(false)
+        setCreateErr(e instanceof Error ? e.message : String(e))
+        setConflict(null)
+      }
+    },
+    [conflict, spliceEvent],
+  )
+
   if (error) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
@@ -330,7 +446,7 @@ export function CalendarView() {
               Today
             </button>
             <button
-              onClick={() => setComposer({ date: anchor })}
+              onClick={() => setComposer({ mode: 'new', date: anchor })}
               className="ml-1 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90"
             >
               + New
@@ -378,7 +494,8 @@ export function CalendarView() {
             colorFor={colorFor}
             today={today}
             onPickDay={pickDay}
-            onNewEvent={(d) => setComposer({ date: d })}
+            onNewEvent={(d) => setComposer({ mode: 'new', date: d })}
+            onOpenEvent={openEvent}
           />
         ) : (
           <TimeGrid
@@ -387,24 +504,61 @@ export function CalendarView() {
             colorFor={colorFor}
             today={today}
             onPickDay={pickDay}
-            onNewEvent={(d, hour) => setComposer({ date: d, hour })}
+            onNewEvent={(d, hour) =>
+              setComposer({ mode: 'new', date: d, hour })
+            }
+            onOpenEvent={openEvent}
           />
         )}
       </div>
 
       {composer && calendars && calendars.length > 0 && (
         <EventComposer
-          date={composer.date}
-          defaultHour={composer.hour}
+          date={
+            composer.mode === 'new'
+              ? composer.date
+              : (composer.item.event.start ?? new Date())
+          }
+          defaultHour={composer.mode === 'new' ? composer.hour : undefined}
+          editing={composer.mode === 'edit' ? composer.item : undefined}
           calendars={calendars}
-          defaultCalUid={defaultCalUid}
+          defaultCalUid={
+            composer.mode === 'edit' ? composer.calUid : defaultCalUid
+          }
           saving={creating}
           error={createErr}
           onCreate={handleCreate}
+          onUpdate={
+            composer.mode === 'edit'
+              ? (patch) =>
+                  handleUpdate(
+                    composer.calUid,
+                    composer.item.itemUid,
+                    patch,
+                  )
+              : undefined
+          }
+          onDelete={
+            composer.mode === 'edit'
+              ? () =>
+                  handleDelete(composer.calUid, composer.item.itemUid)
+              : undefined
+          }
           onClose={() => {
             setComposer(null)
             setCreateErr(null)
           }}
+        />
+      )}
+
+      {conflict && (
+        <ConflictModal
+          localRaw={conflict.localRaw}
+          serverRaw={conflict.serverRaw}
+          busy={conflictBusy}
+          onKeepLocal={() => resolveConflict('local')}
+          onKeepCloud={() => resolveConflict('cloud')}
+          onClose={() => setConflict(null)}
         />
       )}
     </div>
