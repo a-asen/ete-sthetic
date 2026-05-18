@@ -21,6 +21,14 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     ],
   },
   {
+    group: 'Lists',
+    items: [
+      { keys: ['n'], description: 'New list (when lists are focused)' },
+      { keys: ['F2', 'Double-click'], description: 'Rename the selected list' },
+      { keys: ['Del', 'Backspace'], description: 'Delete the selected list' },
+    ],
+  },
+  {
     group: 'Tree',
     items: [
       { keys: ['←'], description: 'Collapse, then jump to parent' },
@@ -30,10 +38,15 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
         keys: ['Ctrl+Enter'],
         description: 'Cycle status: needs-action → in-progress → completed',
       },
-      { keys: ['n'], description: 'New task at top of list' },
+      { keys: ['n'], description: 'New task at top of list (tasks focused)' },
       { keys: ['m'], description: 'Move task (and subtree) to another list' },
       { keys: ['+'], description: 'Raise priority on selected task' },
       { keys: ['-'], description: 'Lower priority on selected task' },
+      {
+        keys: ['0–9'],
+        description:
+          'Set priority on the hovered task (or selected if none); phone mode uses 0–3',
+      },
       { keys: ['F2', 'Double-click'], description: 'Rename a task' },
       { keys: ['Del', 'Backspace'], description: 'Delete (with confirmation)' },
     ],
@@ -52,6 +65,16 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
       { keys: ['e', 'Ctrl+→'], description: 'Open detail panel' },
       { keys: ['Ctrl+Enter'], description: 'Inside panel: save changes' },
       { keys: ['Esc', 'Ctrl+←'], description: 'Leave detail panel' },
+    ],
+  },
+  {
+    group: 'View',
+    items: [
+      {
+        keys: ['Ctrl++', 'Ctrl+-'],
+        description: 'Zoom the focused zone (list / tasks / detail) in/out',
+      },
+      { keys: ['Ctrl+0'], description: 'Reset zoom for the focused zone' },
     ],
   },
   {

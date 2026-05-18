@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Priority, TaskItem, TaskStatus, VTodo } from '../types'
-import type { VTodoPatch } from '../services/vtodo'
+import type {
+  Classification,
+  Priority,
+  RelatedLink,
+  TaskItem,
+  TaskStatus,
+  VTodo,
+} from '../types'
+import type { DateValue, VTodoPatch } from '../services/vtodo'
 import { ConfirmModal } from './ConfirmModal'
 
 interface Props {
   task: TaskItem | null
   ancestors: VTodo[]
+  // Other tasks in the active list — used to resolve dependency links to
+  // titles and to offer add candidates.
+  allTasks: TaskItem[]
+  // CSS zoom factor for this zone (persisted/managed by MainView).
+  zoom: number
   focused: boolean
   // When pinned, the panel keeps its full width even when not focused —
   // it just dims and shifts slightly. When unpinned (the default), it
@@ -23,12 +35,26 @@ interface Props {
 }
 
 interface Draft {
+  // Basic
   summary: string
   description: string
   status: TaskStatus
   priority: Priority
-  due: string // YYYY-MM-DD or '' (matches <input type="date">)
+  dueDate: string // YYYY-MM-DD or ''
+  dueTime: string // HH:MM or ''
   categories: string[]
+  // Advanced
+  startDate: string
+  startTime: string
+  percent: string // '' or '0'..'100'
+  url: string
+  location: string
+  geoLat: string
+  geoLon: string
+  classification: '' | Classification
+  comment: string
+  resources: string[]
+  relatedTo: RelatedLink[]
 }
 
 const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
@@ -61,6 +87,31 @@ const PHONE_PRIORITY_OPTIONS: Array<{ value: Priority; label: string }> = [
   { value: 9, label: 'Low' },
 ]
 
+const CLASS_OPTIONS: Array<{ value: '' | Classification; label: string }> = [
+  { value: '', label: 'Not set' },
+  { value: 'PUBLIC', label: 'Public' },
+  { value: 'PRIVATE', label: 'Private' },
+  { value: 'CONFIDENTIAL', label: 'Confidential' },
+]
+
+const ADVANCED_OPEN_KEY = 'ete-stethic.detailAdvancedOpen'
+
+function readAdvancedOpen(): boolean {
+  try {
+    return localStorage.getItem(ADVANCED_OPEN_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeAdvancedOpen(open: boolean) {
+  try {
+    localStorage.setItem(ADVANCED_OPEN_KEY, open ? 'true' : 'false')
+  } catch {
+    // not fatal
+  }
+}
+
 function phoneBucket(p: Priority): Priority {
   if (p === 0) return 0
   if (p <= 4) return 1
@@ -68,54 +119,139 @@ function phoneBucket(p: Priority): Priority {
   return 9
 }
 
-// VTODO due strings look like "20260520" (date) or "20260520T140000Z" (datetime).
-// Reduce to a YYYY-MM-DD value for <input type="date">.
-function dueToInputValue(due: string | undefined): string {
-  if (!due) return ''
-  const m = due.match(/^(\d{4})(\d{2})(\d{2})/)
-  if (!m) return ''
-  return `${m[1]}-${m[2]}-${m[3]}`
+// VTODO date/date-time strings: "20260520" (date) or "20260520T140000Z" /
+// "20260520T140000" (date-time). Split into <input type="date"> and
+// <input type="time"> values; an empty time means "date-only".
+function splitIcalDateTime(raw: string | undefined): {
+  date: string
+  time: string
+} {
+  if (!raw) return { date: '', time: '' }
+  const m = raw.match(
+    /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?Z?)?$/,
+  )
+  if (!m) return { date: '', time: '' }
+  const date = `${m[1]}-${m[2]}-${m[3]}`
+  const time = m[4] != null ? `${m[4]}:${m[5]}` : ''
+  return { date, time }
 }
 
-function inputValueToDate(v: string): Date | null {
-  if (!v) return null
-  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!m) return null
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
-  return Number.isNaN(d.getTime()) ? null : d
+// Combine the date + (optional) time inputs into a DateValue, or null if
+// the date is empty. hasTime drives date-only vs date-time serialization.
+function toDateValue(dateStr: string, timeStr: string): DateValue | null {
+  const dm = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!dm) return null
+  const y = Number(dm[1])
+  const mo = Number(dm[2]) - 1
+  const d = Number(dm[3])
+  const tm = timeStr.match(/^(\d{2}):(\d{2})$/)
+  const date = tm
+    ? new Date(y, mo, d, Number(tm[1]), Number(tm[2]), 0)
+    : new Date(y, mo, d)
+  if (Number.isNaN(date.getTime())) return null
+  return { date, hasTime: tm != null }
 }
 
 function draftFromTask(task: TaskItem): Draft {
+  const t = task.todo
+  const due = splitIcalDateTime(t.due)
+  const start = splitIcalDateTime(t.dtStart)
   return {
-    summary: task.todo.summary,
-    description: task.todo.description ?? '',
-    status: task.todo.status,
-    priority: task.todo.priority,
-    due: dueToInputValue(task.todo.due),
-    categories: task.todo.categories.slice(),
+    summary: t.summary,
+    description: t.description ?? '',
+    status: t.status,
+    priority: t.priority,
+    dueDate: due.date,
+    dueTime: due.time,
+    categories: t.categories.slice(),
+    startDate: start.date,
+    startTime: start.time,
+    percent: t.percentComplete != null ? String(t.percentComplete) : '',
+    url: t.url ?? '',
+    location: t.location ?? '',
+    geoLat: t.geo ? String(t.geo.lat) : '',
+    geoLon: t.geo ? String(t.geo.lon) : '',
+    classification: t.classification ?? '',
+    comment: t.comment ?? '',
+    resources: (t.resources ?? []).slice(),
+    relatedTo: (t.relatedTo ?? []).map((r) => ({ ...r })),
   }
 }
 
-function arraysEqual(a: string[], b: string[]): boolean {
+function strArrEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
   return true
 }
 
+function relEqual(a: RelatedLink[], b: RelatedLink[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].uid !== b[i].uid || a[i].reltype !== b[i].reltype) return false
+  }
+  return true
+}
+
 function buildPatch(task: TaskItem, draft: Draft): VTodoPatch {
+  const t = task.todo
   const patch: VTodoPatch = {}
-  if (draft.summary !== task.todo.summary) patch.summary = draft.summary
-  if (draft.status !== task.todo.status) patch.status = draft.status
-  if (draft.priority !== task.todo.priority) patch.priority = draft.priority
-  if (draft.description !== (task.todo.description ?? '')) {
+  if (draft.summary !== t.summary) patch.summary = draft.summary
+  if (draft.status !== t.status) patch.status = draft.status
+  if (draft.priority !== t.priority) patch.priority = draft.priority
+  if (draft.description !== (t.description ?? '')) {
     patch.description = draft.description === '' ? null : draft.description
   }
-  const currentDue = dueToInputValue(task.todo.due)
-  if (draft.due !== currentDue) {
-    patch.due = draft.due === '' ? null : inputValueToDate(draft.due)
+
+  const curDue = splitIcalDateTime(t.due)
+  if (draft.dueDate !== curDue.date || draft.dueTime !== curDue.time) {
+    patch.due = draft.dueDate ? toDateValue(draft.dueDate, draft.dueTime) : null
   }
-  if (!arraysEqual(draft.categories, task.todo.categories)) {
+  const curStart = splitIcalDateTime(t.dtStart)
+  if (draft.startDate !== curStart.date || draft.startTime !== curStart.time) {
+    patch.dtStart = draft.startDate
+      ? toDateValue(draft.startDate, draft.startTime)
+      : null
+  }
+
+  if (!strArrEqual(draft.categories, t.categories)) {
     patch.categories = draft.categories
+  }
+  if (!strArrEqual(draft.resources, t.resources ?? [])) {
+    patch.resources = draft.resources
+  }
+
+  const curPct = t.percentComplete != null ? String(t.percentComplete) : ''
+  if (draft.percent !== curPct) {
+    patch.percentComplete =
+      draft.percent === '' ? null : Number(draft.percent)
+  }
+  if (draft.url !== (t.url ?? '')) patch.url = draft.url === '' ? null : draft.url
+  if (draft.location !== (t.location ?? '')) {
+    patch.location = draft.location === '' ? null : draft.location
+  }
+  if (draft.comment !== (t.comment ?? '')) {
+    patch.comment = draft.comment === '' ? null : draft.comment
+  }
+  if (draft.classification !== (t.classification ?? '')) {
+    patch.classification = draft.classification === '' ? null : draft.classification
+  }
+
+  const curLat = t.geo ? String(t.geo.lat) : ''
+  const curLon = t.geo ? String(t.geo.lon) : ''
+  if (draft.geoLat !== curLat || draft.geoLon !== curLon) {
+    const lat = Number(draft.geoLat)
+    const lon = Number(draft.geoLon)
+    patch.geo =
+      draft.geoLat !== '' &&
+      draft.geoLon !== '' &&
+      Number.isFinite(lat) &&
+      Number.isFinite(lon)
+        ? { lat, lon }
+        : null
+  }
+
+  if (!relEqual(draft.relatedTo, t.relatedTo ?? [])) {
+    patch.relatedTo = draft.relatedTo
   }
   return patch
 }
@@ -128,9 +264,16 @@ type FieldName =
   | 'due'
   | 'tag'
 
+const fieldClass =
+  'mt-1 w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong'
+const labelClass =
+  'block text-[11px] font-semibold uppercase tracking-wider text-text-faint'
+
 export function DetailPanel({
   task,
   ancestors,
+  allTasks,
+  zoom,
   focused,
   pinned,
   onTogglePin,
@@ -150,6 +293,9 @@ export function DetailPanel({
   const [confirming, setConfirming] = useState(false)
   const [saving, setSaving] = useState(false)
   const [tagInput, setTagInput] = useState('')
+  const [resourceInput, setResourceInput] = useState('')
+  const [depQuery, setDepQuery] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(() => readAdvancedOpen())
   const summaryRef = useRef<HTMLInputElement>(null)
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
   const statusRef = useRef<HTMLSelectElement>(null)
@@ -178,6 +324,14 @@ export function DetailPanel({
     }
   }
 
+  const toggleAdvanced = useCallback(() => {
+    setAdvancedOpen((cur) => {
+      const next = !cur
+      writeAdvancedOpen(next)
+      return next
+    })
+  }, [])
+
   // When focus moves into the panel, restore focus to the last-touched
   // field (defaults to summary on first entry). For text fields we also
   // pre-select so typing replaces the existing value.
@@ -205,9 +359,7 @@ export function DetailPanel({
   const isDirty = Object.keys(patch).length > 0
 
   // Blur whatever's focused inside the panel so the global keyboard
-  // handlers in MainView / TaskTree can pick up arrow keys again. Without
-  // this the caret stays in the title/notes input after Esc and every
-  // keystroke gets typed into the field instead of navigating the tree.
+  // handlers in MainView / TaskTree can pick up arrow keys again.
   const blurInsidePanel = useCallback(() => {
     const active = document.activeElement
     if (active instanceof HTMLElement && active.closest('[data-detail-zone]')) {
@@ -241,10 +393,10 @@ export function DetailPanel({
       }
       if (e.key === 'Escape') {
         const target = e.target
-        // Let Escape inside the tag input clear it first.
+        // Let Escape inside a chip input clear it first.
         if (
           target instanceof HTMLInputElement &&
-          target.dataset.tagInput === 'true' &&
+          target.dataset.chipInput === 'true' &&
           target.value !== ''
         ) {
           return
@@ -278,22 +430,33 @@ export function DetailPanel({
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
   }
 
-  function addTagFromInput() {
-    const v = tagInput.trim()
-    if (!v) return
-    if (!draft) return
-    if (draft.categories.some((c) => c.toLowerCase() === v.toLowerCase())) {
-      setTagInput('')
-      return
-    }
-    update('categories', [...draft.categories, v])
-    setTagInput('')
+  function addChip(key: 'categories' | 'resources', raw: string) {
+    const v = raw.trim()
+    if (!v || !draft) return
+    const list = draft[key]
+    if (list.some((c) => c.toLowerCase() === v.toLowerCase())) return
+    update(key, [...list, v])
+  }
+
+  const depCandidates = useMemo(() => {
+    if (!task) return []
+    const q = depQuery.trim().toLowerCase()
+    const linked = new Set((draft?.relatedTo ?? []).map((r) => r.uid))
+    return allTasks
+      .filter(
+        (it) =>
+          it.todo.uid !== task.todo.uid &&
+          !linked.has(it.todo.uid) &&
+          (q === '' || it.todo.summary.toLowerCase().includes(q)),
+      )
+      .slice(0, 6)
+  }, [allTasks, task, depQuery, draft?.relatedTo])
+
+  function summaryForUid(uid: string): string {
+    return allTasks.find((it) => it.todo.uid === uid)?.todo.summary || uid
   }
 
   const collapsedTitle = task?.todo.summary || '(no task selected)'
-  // Two display modes:
-  //   • pinned: stays w-80 always, just dims + slides slightly on focus loss
-  //   • unpinned (default): collapses to a w-10 vertical strip on focus loss
   const showFullPanel = focused || pinned
   const asideClasses = pinned
     ? `w-80 ${focused ? 'opacity-100 translate-x-0' : 'opacity-60 translate-x-1'}`
@@ -307,6 +470,7 @@ export function DetailPanel({
       onMouseDownCapture={() => {
         if (!focused) onRequestFocus()
       }}
+      style={{ zoom }}
       className={`flex shrink-0 flex-col overflow-hidden border-l border-border bg-surface transition-[width,opacity,transform] duration-300 ease-out ${asideClasses}`}
       aria-expanded={focused}
     >
@@ -347,10 +511,7 @@ export function DetailPanel({
           </span>
           <span
             className="mt-1 max-h-[18rem] truncate text-[11px] uppercase tracking-wider"
-            style={{
-              writingMode: 'vertical-rl',
-              transform: 'rotate(180deg)',
-            }}
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
           >
             {collapsedTitle}
           </span>
@@ -426,9 +587,8 @@ export function DetailPanel({
                   </div>
                 )}
 
-                <label className="block text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                  Title
-                </label>
+                {/* ---- Basic ---- */}
+                <label className={labelClass}>Title</label>
                 <input
                   ref={summaryRef}
                   type="text"
@@ -437,12 +597,10 @@ export function DetailPanel({
                   onFocus={() => {
                     lastFocusedRef.current = 'summary'
                   }}
-                  className="mt-1 w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
+                  className={fieldClass}
                 />
 
-                <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                  Notes
-                </label>
+                <label className={`mt-3 ${labelClass}`}>Notes</label>
                 <textarea
                   ref={descriptionRef}
                   value={draft.description}
@@ -450,16 +608,14 @@ export function DetailPanel({
                   onFocus={() => {
                     lastFocusedRef.current = 'description'
                   }}
-                  rows={6}
+                  rows={5}
                   placeholder="Plain-text description…"
-                  className="mt-1 w-full resize-y rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong placeholder:text-text-faint"
+                  className={`${fieldClass} resize-y placeholder:text-text-faint`}
                 />
 
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                      Status
-                    </label>
+                    <label className={labelClass}>Status</label>
                     <select
                       ref={statusRef}
                       value={draft.status}
@@ -469,7 +625,7 @@ export function DetailPanel({
                       onFocus={() => {
                         lastFocusedRef.current = 'status'
                       }}
-                      className="mt-1 w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
+                      className={fieldClass}
                     >
                       {STATUS_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -479,9 +635,7 @@ export function DetailPanel({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                      Priority
-                    </label>
+                    <label className={labelClass}>Priority</label>
                     <select
                       ref={priorityRef}
                       value={
@@ -495,7 +649,7 @@ export function DetailPanel({
                       onFocus={() => {
                         lastFocusedRef.current = 'priority'
                       }}
-                      className="mt-1 w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
+                      className={fieldClass}
                     >
                       {(phonePriority
                         ? PHONE_PRIORITY_OPTIONS
@@ -509,35 +663,41 @@ export function DetailPanel({
                   </div>
                 </div>
 
-                <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                  Due
-                </label>
+                <label className={`mt-3 ${labelClass}`}>Due</label>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     ref={dueRef}
                     type="date"
-                    value={draft.due}
-                    onChange={(e) => update('due', e.target.value)}
+                    value={draft.dueDate}
+                    onChange={(e) => update('dueDate', e.target.value)}
                     onFocus={() => {
                       lastFocusedRef.current = 'due'
                     }}
                     className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
                   />
-                  {draft.due && (
+                  <input
+                    type="time"
+                    value={draft.dueTime}
+                    disabled={!draft.dueDate}
+                    onChange={(e) => update('dueTime', e.target.value)}
+                    className="w-28 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong disabled:opacity-40"
+                  />
+                  {(draft.dueDate || draft.dueTime) && (
                     <button
                       type="button"
-                      onClick={() => update('due', '')}
+                      onClick={() => {
+                        update('dueDate', '')
+                        update('dueTime', '')
+                      }}
                       title="Clear due date"
-                      className="h-7 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
+                      className="h-7 shrink-0 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
                     >
                       Clear
                     </button>
                   )}
                 </div>
 
-                <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                  Tags
-                </label>
+                <label className={`mt-3 ${labelClass}`}>Tags</label>
                 <div className="mt-1 flex flex-wrap items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1.5">
                   {draft.categories.map((tag) => (
                     <span
@@ -564,7 +724,7 @@ export function DetailPanel({
                     ref={tagRef}
                     type="text"
                     value={tagInput}
-                    data-tag-input="true"
+                    data-chip-input="true"
                     onChange={(e) => setTagInput(e.target.value)}
                     onFocus={() => {
                       lastFocusedRef.current = 'tag'
@@ -572,7 +732,8 @@ export function DetailPanel({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ',') {
                         e.preventDefault()
-                        addTagFromInput()
+                        addChip('categories', tagInput)
+                        setTagInput('')
                       } else if (
                         e.key === 'Backspace' &&
                         tagInput === '' &&
@@ -585,13 +746,312 @@ export function DetailPanel({
                         setTagInput('')
                       }
                     }}
-                    onBlur={addTagFromInput}
-                    placeholder={
-                      draft.categories.length === 0 ? 'Add tag…' : ''
-                    }
+                    onBlur={() => {
+                      addChip('categories', tagInput)
+                      setTagInput('')
+                    }}
+                    placeholder={draft.categories.length === 0 ? 'Add tag…' : ''}
                     className="min-w-[6rem] flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-faint"
                   />
                 </div>
+
+                {/* ---- Advanced ---- */}
+                <button
+                  type="button"
+                  onClick={toggleAdvanced}
+                  aria-expanded={advancedOpen}
+                  className="mt-4 flex w-full items-center gap-1.5 border-t border-border pt-3 text-[11px] font-semibold uppercase tracking-wider text-text-faint transition-colors hover:text-text-muted"
+                >
+                  <span
+                    aria-hidden
+                    className={`transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+                  >
+                    ▸
+                  </span>
+                  Advanced
+                </button>
+
+                {advancedOpen && (
+                  <div className="mt-2 space-y-3">
+                    <div>
+                      <label className={labelClass}>Start</label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          type="date"
+                          value={draft.startDate}
+                          onChange={(e) =>
+                            update('startDate', e.target.value)
+                          }
+                          className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
+                        />
+                        <input
+                          type="time"
+                          value={draft.startTime}
+                          disabled={!draft.startDate}
+                          onChange={(e) =>
+                            update('startTime', e.target.value)
+                          }
+                          className="w-28 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong disabled:opacity-40"
+                        />
+                        {(draft.startDate || draft.startTime) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              update('startDate', '')
+                              update('startTime', '')
+                            }}
+                            title="Clear start date"
+                            className="h-7 shrink-0 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>
+                        Progress{' '}
+                        <span className="text-text-muted">
+                          {draft.percent === '' ? '—' : `${draft.percent}%`}
+                        </span>
+                      </label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={5}
+                          value={draft.percent === '' ? 0 : Number(draft.percent)}
+                          onChange={(e) => update('percent', e.target.value)}
+                          className="flex-1 accent-accent"
+                        />
+                        {draft.percent !== '' && (
+                          <button
+                            type="button"
+                            onClick={() => update('percent', '')}
+                            title="Clear progress"
+                            className="h-7 shrink-0 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>URL</label>
+                      <input
+                        type="url"
+                        value={draft.url}
+                        onChange={(e) => update('url', e.target.value)}
+                        placeholder="https://…"
+                        className={`${fieldClass} placeholder:text-text-faint`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>Location</label>
+                      <input
+                        type="text"
+                        value={draft.location}
+                        onChange={(e) => update('location', e.target.value)}
+                        className={fieldClass}
+                      />
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>Geo (lat, lon)</label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="any"
+                          value={draft.geoLat}
+                          onChange={(e) => update('geoLat', e.target.value)}
+                          placeholder="lat"
+                          className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong placeholder:text-text-faint"
+                        />
+                        <input
+                          type="number"
+                          step="any"
+                          value={draft.geoLon}
+                          onChange={(e) => update('geoLon', e.target.value)}
+                          placeholder="lon"
+                          className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong placeholder:text-text-faint"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>Class</label>
+                      <select
+                        value={draft.classification}
+                        onChange={(e) =>
+                          update(
+                            'classification',
+                            e.target.value as '' | Classification,
+                          )
+                        }
+                        className={fieldClass}
+                      >
+                        {CLASS_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>Comment</label>
+                      <textarea
+                        value={draft.comment}
+                        onChange={(e) => update('comment', e.target.value)}
+                        rows={3}
+                        className={`${fieldClass} resize-y`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>Resources</label>
+                      <div className="mt-1 flex flex-wrap items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1.5">
+                        {draft.resources.map((r) => (
+                          <span
+                            key={r}
+                            className="flex items-center gap-1 rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-text-muted"
+                          >
+                            {r}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                update(
+                                  'resources',
+                                  draft.resources.filter((x) => x !== r),
+                                )
+                              }
+                              aria-label={`Remove ${r}`}
+                              className="text-text-faint hover:text-text"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        <input
+                          type="text"
+                          value={resourceInput}
+                          data-chip-input="true"
+                          onChange={(e) => setResourceInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ',') {
+                              e.preventDefault()
+                              addChip('resources', resourceInput)
+                              setResourceInput('')
+                            } else if (
+                              e.key === 'Backspace' &&
+                              resourceInput === '' &&
+                              draft.resources.length > 0
+                            ) {
+                              e.preventDefault()
+                              update('resources', draft.resources.slice(0, -1))
+                            } else if (
+                              e.key === 'Escape' &&
+                              resourceInput !== ''
+                            ) {
+                              e.preventDefault()
+                              setResourceInput('')
+                            }
+                          }}
+                          onBlur={() => {
+                            addChip('resources', resourceInput)
+                            setResourceInput('')
+                          }}
+                          placeholder={
+                            draft.resources.length === 0 ? 'Add resource…' : ''
+                          }
+                          className="min-w-[6rem] flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-faint"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>Dependencies</label>
+                      <div className="mt-1 space-y-1">
+                        {draft.relatedTo.map((r) => (
+                          <div
+                            key={`${r.reltype}:${r.uid}`}
+                            className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2 py-1 text-xs"
+                          >
+                            <span className="rounded bg-bg px-1 py-0.5 text-[10px] uppercase tracking-wider text-text-faint">
+                              {r.reltype}
+                            </span>
+                            <span
+                              className="min-w-0 flex-1 truncate text-text-muted"
+                              title={r.uid}
+                            >
+                              {summaryForUid(r.uid)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                update(
+                                  'relatedTo',
+                                  draft.relatedTo.filter(
+                                    (x) =>
+                                      !(
+                                        x.uid === r.uid &&
+                                        x.reltype === r.reltype
+                                      ),
+                                  ),
+                                )
+                              }
+                              aria-label="Remove dependency"
+                              className="text-text-faint hover:text-text"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                        <input
+                          type="text"
+                          value={depQuery}
+                          data-chip-input="true"
+                          onChange={(e) => setDepQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape' && depQuery !== '') {
+                              e.preventDefault()
+                              setDepQuery('')
+                            }
+                          }}
+                          placeholder="Link another task (DEPENDS-ON)…"
+                          className={`${fieldClass} placeholder:text-text-faint`}
+                        />
+                        {depQuery.trim() !== '' && depCandidates.length > 0 && (
+                          <div className="overflow-hidden rounded-md border border-border">
+                            {depCandidates.map((it) => (
+                              <button
+                                key={it.todo.uid}
+                                type="button"
+                                onClick={() => {
+                                  update('relatedTo', [
+                                    ...draft.relatedTo,
+                                    {
+                                      uid: it.todo.uid,
+                                      reltype: 'DEPENDS-ON',
+                                    },
+                                  ])
+                                  setDepQuery('')
+                                }}
+                                className="block w-full truncate px-2 py-1 text-left text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+                              >
+                                {it.todo.summary || '(untitled)'}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
@@ -608,6 +1068,8 @@ export function DetailPanel({
                     onClick={() => {
                       if (task) setDraft(draftFromTask(task))
                       setTagInput('')
+                      setResourceInput('')
+                      setDepQuery('')
                     }}
                     disabled={!isDirty}
                     className="h-7 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"

@@ -1,5 +1,37 @@
 import ICAL from 'ical.js'
-import type { Priority, TaskStatus, VTodo } from '../types'
+import type {
+  Classification,
+  Priority,
+  RelatedLink,
+  TaskStatus,
+  VTodo,
+} from '../types'
+
+const VALID_CLASSES: ReadonlySet<Classification> = new Set([
+  'PUBLIC',
+  'PRIVATE',
+  'CONFIDENTIAL',
+])
+
+// GEO is "lat;lon" (RFC 5545). ical.js may hand it back as a [lat, lon]
+// array (structured value) or as the raw string — handle both.
+function parseGeo(value: unknown): { lat: number; lon: number } | undefined {
+  let lat: number
+  let lon: number
+  if (Array.isArray(value)) {
+    lat = Number(value[0])
+    lon = Number(value[1])
+  } else {
+    const s = asString(value)
+    if (!s) return undefined
+    const parts = s.split(';')
+    if (parts.length !== 2) return undefined
+    lat = Number(parts[0])
+    lon = Number(parts[1])
+  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return undefined
+  return { lat, lon }
+}
 
 const VALID_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'NEEDS-ACTION',
@@ -75,6 +107,45 @@ export function parseVTodo(raw: string): VTodo | null {
     }
   }
 
+  const resources: string[] = []
+  for (const prop of vtodo.getAllProperties('resources')) {
+    for (const value of prop.getValues()) {
+      const s = asString(value)?.trim()
+      if (s) resources.push(s)
+    }
+  }
+
+  // Non-PARENT RELATED-TO links (dependencies / siblings / children).
+  // The PARENT link is consumed above into `parentUid`.
+  const relatedTo: RelatedLink[] = []
+  for (const prop of vtodo.getAllProperties('related-to')) {
+    const reltype = prop.getParameter('reltype')?.toString().toUpperCase()
+    if (!reltype || reltype === 'PARENT') continue
+    const value = asString(prop.getFirstValue())
+    if (value) relatedTo.push({ uid: value, reltype })
+  }
+
+  const dtStart = asString(vtodo.getFirstPropertyValue('dtstart'))
+  const url = asString(vtodo.getFirstPropertyValue('url'))
+  const location = asString(vtodo.getFirstPropertyValue('location'))
+  const comment = asString(vtodo.getFirstPropertyValue('comment'))
+  const geo = parseGeo(vtodo.getFirstPropertyValue('geo'))
+
+  const rawClass = asString(vtodo.getFirstPropertyValue('class'))?.toUpperCase()
+  const classification =
+    rawClass && VALID_CLASSES.has(rawClass as Classification)
+      ? (rawClass as Classification)
+      : undefined
+
+  let percentComplete: number | undefined
+  const rawPct = vtodo.getFirstPropertyValue('percent-complete')
+  if (rawPct != null) {
+    const n = Number(rawPct)
+    if (Number.isFinite(n)) {
+      percentComplete = Math.max(0, Math.min(100, Math.round(n)))
+    }
+  }
+
   return {
     uid: String(uid),
     summary,
@@ -82,10 +153,19 @@ export function parseVTodo(raw: string): VTodo | null {
     status,
     priority,
     due,
+    dtStart,
     created,
     lastModified,
     parentUid,
     categories,
+    percentComplete,
+    url,
+    location,
+    geo,
+    classification,
+    comment,
+    resources: resources.length > 0 ? resources : undefined,
+    relatedTo: relatedTo.length > 0 ? relatedTo : undefined,
     raw,
   }
 }
@@ -145,29 +225,75 @@ export function buildVTodo(args: NewVTodoArgs): { uid: string; raw: string } {
   return { uid, raw: cal.toString() }
 }
 
+// A date the user picked, with whether they also picked a time. hasTime
+// false → serialized as a date-only value (YYYYMMDD); true → as a UTC
+// date-time (YYYYMMDDTHHMMSSZ).
+export interface DateValue {
+  date: Date
+  hasTime: boolean
+}
+
 export interface VTodoPatch {
   summary?: string
   status?: TaskStatus
   priority?: Priority
-  // '' or null clears the description; undefined leaves it untouched.
+  // '' or null clears; undefined leaves untouched. (Applies to all the
+  // string fields below.)
   description?: string | null
-  // Date sets a date-only DUE; null clears; undefined leaves untouched.
-  due?: Date | null
-  // Full replacement of CATEGORIES. [] clears.
+  // null clears; undefined leaves untouched. (Applies to due/dtStart.)
+  due?: DateValue | null
+  dtStart?: DateValue | null
+  // Full replacement. [] clears. (Applies to categories/resources.)
   categories?: string[]
+  resources?: string[]
+  // 0–100; null clears; undefined leaves untouched.
+  percentComplete?: number | null
+  url?: string | null
+  location?: string | null
+  comment?: string | null
+  classification?: Classification | null
+  geo?: { lat: number; lon: number } | null
+  // Full replacement of the non-PARENT RELATED-TO links. [] clears them
+  // all; the PARENT link is untouched (use parentUid for that).
+  relatedTo?: RelatedLink[]
   // null clears the parent (root). undefined leaves it untouched.
   parentUid?: string | null
 }
 
-function dateToIcalDate(date: Date): ICAL.Time {
-  // VTODO DUE as DATE (no time-of-day). isDate=true makes ical.js serialize
-  // it as YYYYMMDD per RFC 5545; zone is irrelevant for date-only values.
+function toIcalTime(v: DateValue): ICAL.Time {
+  if (!v.hasTime) {
+    // Date-only: isDate=true makes ical.js serialize as YYYYMMDD per
+    // RFC 5545; zone is irrelevant for date-only values.
+    return ICAL.Time.fromData({
+      year: v.date.getFullYear(),
+      month: v.date.getMonth() + 1,
+      day: v.date.getDate(),
+      isDate: true,
+    })
+  }
+  // Date-time stored as a floating (local, no TZID/Z) value: "YYYYMMDDThhmmss".
+  // For a single-user task client this preserves the wall-clock time the
+  // user typed without any timezone round-trip drift.
   return ICAL.Time.fromData({
-    year: date.getFullYear(),
-    month: date.getMonth() + 1,
-    day: date.getDate(),
-    isDate: true,
+    year: v.date.getFullYear(),
+    month: v.date.getMonth() + 1,
+    day: v.date.getDate(),
+    hour: v.date.getHours(),
+    minute: v.date.getMinutes(),
+    second: 0,
+    isDate: false,
   })
+}
+
+// Set or clear a single-value string property (treats '' / null / nullish
+// as "clear").
+function setOrClear(
+  vtodo: ICAL.Component,
+  name: string,
+  value: string | null | undefined,
+) {
+  if (!value) vtodo.removeAllProperties(name)
+  else vtodo.updatePropertyWithValue(name, value)
 }
 
 // Update an existing raw VTODO with patch fields. Preserves all unknown
@@ -202,17 +328,44 @@ export function updateVTodo(raw: string, patch: VTodoPatch): string {
     }
   }
   if (patch.description !== undefined) {
-    if (!patch.description) {
-      vtodo.removeAllProperties('description')
-    } else {
-      vtodo.updatePropertyWithValue('description', patch.description)
-    }
+    setOrClear(vtodo, 'description', patch.description)
+  }
+  if (patch.url !== undefined) setOrClear(vtodo, 'url', patch.url)
+  if (patch.location !== undefined) {
+    setOrClear(vtodo, 'location', patch.location)
+  }
+  if (patch.comment !== undefined) {
+    setOrClear(vtodo, 'comment', patch.comment)
+  }
+  if (patch.classification !== undefined) {
+    setOrClear(vtodo, 'class', patch.classification)
   }
   if (patch.due !== undefined) {
-    if (patch.due === null) {
-      vtodo.removeAllProperties('due')
+    if (patch.due === null) vtodo.removeAllProperties('due')
+    else vtodo.updatePropertyWithValue('due', toIcalTime(patch.due))
+  }
+  if (patch.dtStart !== undefined) {
+    if (patch.dtStart === null) vtodo.removeAllProperties('dtstart')
+    else vtodo.updatePropertyWithValue('dtstart', toIcalTime(patch.dtStart))
+  }
+  if (patch.percentComplete !== undefined) {
+    if (patch.percentComplete === null) {
+      vtodo.removeAllProperties('percent-complete')
     } else {
-      vtodo.updatePropertyWithValue('due', dateToIcalDate(patch.due))
+      const n = Math.max(0, Math.min(100, Math.round(patch.percentComplete)))
+      vtodo.updatePropertyWithValue('percent-complete', n)
+    }
+  }
+  if (patch.geo !== undefined) {
+    vtodo.removeAllProperties('geo')
+    if (patch.geo !== null) {
+      // jCal representation of a structured float pair: GEO:lat;lon.
+      vtodo.addProperty(
+        new ICAL.Property(
+          ['geo', {}, 'float', patch.geo.lat, patch.geo.lon],
+          vtodo,
+        ),
+      )
     }
   }
   if (patch.categories !== undefined) {
@@ -221,6 +374,25 @@ export function updateVTodo(raw: string, patch: VTodoPatch): string {
       const prop = new ICAL.Property('categories', vtodo)
       prop.setValues(patch.categories)
       vtodo.addProperty(prop)
+    }
+  }
+  if (patch.resources !== undefined) {
+    vtodo.removeAllProperties('resources')
+    if (patch.resources.length > 0) {
+      const prop = new ICAL.Property('resources', vtodo)
+      prop.setValues(patch.resources)
+      vtodo.addProperty(prop)
+    }
+  }
+  if (patch.relatedTo !== undefined) {
+    // Replace only the non-PARENT links; keep the PARENT link intact.
+    for (const prop of vtodo.getAllProperties('related-to')) {
+      const reltype = prop.getParameter('reltype')?.toString().toUpperCase()
+      if (reltype && reltype !== 'PARENT') vtodo.removeProperty(prop)
+    }
+    for (const link of patch.relatedTo) {
+      const prop = vtodo.addPropertyWithValue('related-to', link.uid)
+      prop.setParameter('reltype', link.reltype)
     }
   }
   if (patch.parentUid !== undefined) {

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  createCollection,
   createTask,
+  deleteCollection,
   deleteTasks,
   listCollections,
   listTaskItems,
   logout,
   moveTasksToCollection,
   toggleComplete,
+  updateCollectionMeta,
   updateTask,
 } from '../services/etebase'
 import {
@@ -17,7 +20,7 @@ import {
   findNodeByUid,
   getAncestorChain,
 } from '../services/tree'
-import type { VTodoPatch } from '../services/vtodo'
+import { parseVTodo, updateVTodo, type VTodoPatch } from '../services/vtodo'
 import {
   type CollectionSnapshot,
   deleteSnapshot,
@@ -232,10 +235,61 @@ function writeSidebarWidth(key: string, value: number) {
   }
 }
 
+// Per-zone zoom. Each focus zone (sidebar / tasks / details) keeps its
+// own factor so the user can size the list, the task pane and the detail
+// panel independently. Applied via the CSS `zoom` property (supported in
+// the WebKit/WebView2 runtimes Tauri uses).
+type ZoomZone = 'sidebar' | 'tasks' | 'details'
+const ZOOM_MIN = 0.6
+const ZOOM_MAX = 2
+const ZOOM_STEP = 0.1
+const ZOOM_KEY: Record<ZoomZone, string> = {
+  sidebar: 'ete-stethic.zoom.sidebar',
+  tasks: 'ete-stethic.zoom.tasks',
+  details: 'ete-stethic.zoom.details',
+}
+
+function clampZoom(n: number): number {
+  if (!Number.isFinite(n)) return 1
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n * 100) / 100))
+}
+
+function readZoom(zone: ZoomZone): number {
+  try {
+    const raw = localStorage.getItem(ZOOM_KEY[zone])
+    if (raw == null) return 1
+    return clampZoom(Number(raw))
+  } catch {
+    return 1
+  }
+}
+
+function writeZoom(zone: ZoomZone, value: number) {
+  try {
+    localStorage.setItem(ZOOM_KEY[zone], String(value))
+  } catch {
+    // not fatal
+  }
+}
+
 export function MainView({ onLoggedOut }: Props) {
   const [collections, setCollections] = useState<CollectionInfo[] | null>(null)
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
   const [activeUid, setActiveUid] = useState<string | null>(null)
+
+  // Bumped to force the collections-load effect to re-run after a
+  // create/rename/delete. Also tracks the pending-list operation so the
+  // sidebar can disable inputs and show errors.
+  const [collectionsRefreshKey, setCollectionsRefreshKey] = useState(0)
+  const [creatingList, setCreatingList] = useState(false)
+  const [newListName, setNewListName] = useState('')
+  const [renamingListUid, setRenamingListUid] = useState<string | null>(null)
+  const [renameListName, setRenameListName] = useState('')
+  const [deletingList, setDeletingList] = useState<CollectionInfo | null>(null)
+  const [listBusy, setListBusy] = useState(false)
+  const [listError, setListError] = useState<string | null>(null)
+  const newListRef = useRef<HTMLInputElement>(null)
+  const renameListRef = useRef<HTMLInputElement>(null)
 
   const [itemsByUid, setItemsByUid] = useState<Map<string, TaskItem[]>>(
     () => new Map(),
@@ -355,6 +409,23 @@ export function MainView({ onLoggedOut }: Props) {
   const [sidebarCollapsedWidth, setSidebarCollapsedWidth] = useState<number>(
     () => readSidebarWidth(SIDEBAR_COLLAPSED_WIDTH_KEY, 48),
   )
+  const [zoom, setZoom] = useState<Record<ZoomZone, number>>(() => ({
+    sidebar: readZoom('sidebar'),
+    tasks: readZoom('tasks'),
+    details: readZoom('details'),
+  }))
+  const adjustZoom = useCallback(
+    (zone: ZoomZone, delta: number | 'reset') => {
+      setZoom((cur) => {
+        const next = delta === 'reset' ? 1 : clampZoom(cur[zone] + delta)
+        if (next === cur[zone]) return cur
+        writeZoom(zone, next)
+        return { ...cur, [zone]: next }
+      })
+    },
+    [],
+  )
+
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const handleSidebarResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -744,7 +815,7 @@ export function MainView({ onLoggedOut }: Props) {
           err instanceof Error ? err.message : 'Failed to load collections',
         )
       })
-  }, [showDeletedLists])
+  }, [showDeletedLists, collectionsRefreshKey])
 
   const toggleShowDeletedLists = useCallback(() => {
     setShowDeletedListsState((cur) => {
@@ -1069,6 +1140,108 @@ export function MainView({ onLoggedOut }: Props) {
     setConfirmDelete({ node, descendantCount: descendants.length - 1 })
   }, [])
 
+  const refreshCollections = useCallback(() => {
+    setCollectionsRefreshKey((k) => k + 1)
+  }, [])
+
+  const startCreateList = useCallback(() => {
+    setListError(null)
+    setNewListName('')
+    setCreatingList(true)
+    setFocusZone('sidebar')
+    // Focus after the input mounts.
+    requestAnimationFrame(() => newListRef.current?.focus())
+  }, [])
+
+  const handleCreateList = useCallback(async () => {
+    const name = newListName.trim()
+    if (!name) {
+      setCreatingList(false)
+      return
+    }
+    setListBusy(true)
+    setListError(null)
+    try {
+      const info = await createCollection(name)
+      if (cancelledRef.current) return
+      setCreatingList(false)
+      setNewListName('')
+      // Select the new list; the load effect keeps it selected since it's
+      // present in the refreshed server list.
+      setActiveUid(info.uid)
+      refreshCollections()
+    } catch (err) {
+      if (cancelledRef.current) return
+      setListError(
+        err instanceof Error ? err.message : 'Failed to create list',
+      )
+    } finally {
+      if (!cancelledRef.current) setListBusy(false)
+    }
+  }, [newListName, refreshCollections])
+
+  const startRenameList = useCallback((c: CollectionInfo) => {
+    setListError(null)
+    setRenamingListUid(c.uid)
+    setRenameListName(c.name)
+    setFocusZone('sidebar')
+    requestAnimationFrame(() => {
+      const el = renameListRef.current
+      if (el) {
+        el.focus()
+        el.select()
+      }
+    })
+  }, [])
+
+  const handleRenameList = useCallback(async () => {
+    const uid = renamingListUid
+    if (!uid) return
+    const name = renameListName.trim()
+    const current = collections?.find((c) => c.uid === uid)
+    if (!name || name === current?.name) {
+      setRenamingListUid(null)
+      return
+    }
+    setListBusy(true)
+    setListError(null)
+    try {
+      await updateCollectionMeta(uid, { name })
+      if (cancelledRef.current) return
+      setRenamingListUid(null)
+      refreshCollections()
+    } catch (err) {
+      if (cancelledRef.current) return
+      setListError(
+        err instanceof Error ? err.message : 'Failed to rename list',
+      )
+    } finally {
+      if (!cancelledRef.current) setListBusy(false)
+    }
+  }, [renamingListUid, renameListName, collections, refreshCollections])
+
+  const handleDeleteList = useCallback(async () => {
+    const target = deletingList
+    if (!target) return
+    setListBusy(true)
+    setListError(null)
+    try {
+      await deleteCollection(target.uid)
+      if (cancelledRef.current) return
+      setDeletingList(null)
+      // The load effect auto-selects another list when the active one
+      // disappears from the refreshed server response.
+      refreshCollections()
+    } catch (err) {
+      if (cancelledRef.current) return
+      setListError(
+        err instanceof Error ? err.message : 'Failed to delete list',
+      )
+    } finally {
+      if (!cancelledRef.current) setListBusy(false)
+    }
+  }, [deletingList, refreshCollections])
+
   // Global single-key shortcuts: l / t to switch focus zones, n to start a
   // new task, f to toggle Hide done, plus sidebar arrow navigation while
   // focusZone === 'sidebar'. Skipped while typing or while a modal is open
@@ -1076,6 +1249,26 @@ export function MainView({ onLoggedOut }: Props) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (document.querySelector('[role="dialog"]')) return
+
+      // Ctrl/Cmd +/-/0 → zoom the currently-focused zone. Honored even
+      // from inside text inputs (it's a global view control).
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault()
+          adjustZoom(focusZone, ZOOM_STEP)
+          return
+        }
+        if (e.key === '-' || e.key === '_') {
+          e.preventDefault()
+          adjustZoom(focusZone, -ZOOM_STEP)
+          return
+        }
+        if (e.key === '0') {
+          e.preventDefault()
+          adjustZoom(focusZone, 'reset')
+          return
+        }
+      }
 
       // Ctrl/Cmd+F → open Filter and focus search (override browser find).
       // Honored even from inside text inputs.
@@ -1153,6 +1346,33 @@ export function MainView({ onLoggedOut }: Props) {
         setSortFocusKey((k) => k + 1)
         return
       }
+      // Sidebar list management. Takes precedence over the task-mode
+      // shortcuts below so `n` creates a list (not a task) when the
+      // sidebar is focused. Create works even with zero lists.
+      if (focusZone === 'sidebar') {
+        if (e.key === 'n' || e.key === 'N') {
+          e.preventDefault()
+          startCreateList()
+          return
+        }
+        const activeCol = sortedCollections?.find((c) => c.uid === activeUid)
+        if (e.key === 'F2' && activeCol && !activeCol.isDeleted) {
+          e.preventDefault()
+          startRenameList(activeCol)
+          return
+        }
+        if (
+          (e.key === 'Delete' || e.key === 'Backspace') &&
+          activeCol &&
+          !activeCol.isDeleted
+        ) {
+          e.preventDefault()
+          setListError(null)
+          setDeletingList(activeCol)
+          return
+        }
+      }
+
       if (e.key === 'n' || e.key === 'N') {
         if (!activeUid || !activeItems) return
         e.preventDefault()
@@ -1258,6 +1478,9 @@ export function MainView({ onLoggedOut }: Props) {
     fullTree,
     handleCycleStatus,
     handleStartCreateRoot,
+    startCreateList,
+    startRenameList,
+    adjustZoom,
   ])
 
   const handleMovePick = useCallback(
@@ -1480,23 +1703,17 @@ export function MainView({ onLoggedOut }: Props) {
       const colUid = activeUid
       const itemUid = target.itemUid
       const original = target
-      const optimisticTodo = {
-        ...target.todo,
-        ...(patch.summary !== undefined && { summary: patch.summary }),
-        ...(patch.status !== undefined && { status: patch.status }),
-        ...(patch.priority !== undefined && { priority: patch.priority }),
-        ...(patch.description !== undefined && {
-          description: patch.description ?? undefined,
-        }),
-        ...(patch.due !== undefined && {
-          due:
-            patch.due === null
-              ? undefined
-              : `${patch.due.getFullYear()}${String(
-                  patch.due.getMonth() + 1,
-                ).padStart(2, '0')}${String(patch.due.getDate()).padStart(2, '0')}`,
-        }),
-        ...(patch.categories !== undefined && { categories: patch.categories }),
+      // Apply the patch locally exactly the way the server will (update the
+      // raw VTODO, then re-parse) so the optimistic view reflects every
+      // field — not a hand-maintained subset. Falls back to the original
+      // todo if the round-trip throws; the awaited server call surfaces
+      // the real error in that case.
+      let optimisticTodo = target.todo
+      try {
+        const parsed = parseVTodo(updateVTodo(target.todo.raw, patch))
+        if (parsed) optimisticTodo = parsed
+      } catch {
+        // keep original
       }
       const optimistic: TaskItem = { itemUid, todo: optimisticTodo }
 
@@ -1633,6 +1850,29 @@ export function MainView({ onLoggedOut }: Props) {
           onConfirm={handleConfirmDelete}
         />
       )}
+      {deletingList && (
+        <ConfirmModal
+          title={`Delete list "${deletingList.name || '(untitled)'}"?`}
+          body={
+            listBusy
+              ? 'Deleting…'
+              : listError
+                ? listError
+                : 'The list is removed from this and other EteSync clients. Cached items stay visible until you toggle "show deleted lists" off. This cannot be undone from here.'
+          }
+          confirmLabel={listBusy ? 'Deleting…' : 'Delete'}
+          destructive
+          onCancel={() => {
+            if (!listBusy) {
+              setDeletingList(null)
+              setListError(null)
+            }
+          }}
+          onConfirm={() => {
+            if (!listBusy) void handleDeleteList()
+          }}
+        />
+      )}
       {moving && sortedCollections && activeUid && (
         <MoveTaskPicker
           collections={sortedCollections}
@@ -1649,6 +1889,7 @@ export function MainView({ onLoggedOut }: Props) {
             focusZone === 'sidebar'
               ? sidebarFocusedWidth
               : sidebarCollapsedWidth,
+          zoom: zoom.sidebar,
         }}
         className={`relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-surface ${
           isResizingSidebar
@@ -1675,6 +1916,26 @@ export function MainView({ onLoggedOut }: Props) {
                       Lists
                     </span>
                     <div className="relative flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={startCreateList}
+                        title="New list (n)"
+                        aria-label="New list"
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className="h-3 w-3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <path d="M8 3v10M3 8h10" />
+                        </svg>
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -1782,11 +2043,45 @@ export function MainView({ onLoggedOut }: Props) {
                 )}
                 {sortedCollections &&
                   sortedCollections.length === 0 &&
-                  showFull && (
+                  showFull &&
+                  !creatingList && (
                     <p className="px-2 py-3 text-xs text-text-faint">
                       No task lists found.
                     </p>
                   )}
+                {creatingList && showFull && (
+                  <div className="px-1 py-1">
+                    <input
+                      ref={newListRef}
+                      type="text"
+                      value={newListName}
+                      disabled={listBusy}
+                      onChange={(e) => setNewListName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          void handleCreateList()
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault()
+                          setCreatingList(false)
+                          setNewListName('')
+                          setListError(null)
+                        }
+                      }}
+                      onBlur={() => {
+                        if (newListName.trim()) void handleCreateList()
+                        else setCreatingList(false)
+                      }}
+                      placeholder="New list name…"
+                      className="w-full rounded-md border border-accent/40 bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-accent disabled:opacity-50"
+                    />
+                  </div>
+                )}
+                {listError && !deletingList && showFull && (
+                  <p className="px-2 py-1.5 text-[11px] text-danger">
+                    {listError}
+                  </p>
+                )}
                 {sortedCollections?.map((c) => {
                   const isActive = c.uid === activeUid
                   const items = itemsByUid.get(c.uid)
@@ -1795,6 +2090,43 @@ export function MainView({ onLoggedOut }: Props) {
                   const sidebarHot = isActive && focusZone === 'sidebar'
                   const deleted = c.isDeleted === true
                   const baseTitle = deleted ? `${c.name} (deleted)` : c.name
+                  if (renamingListUid === c.uid && showFull) {
+                    return (
+                      <div
+                        key={c.uid}
+                        data-collection-uid={c.uid}
+                        className="flex w-full items-center gap-2 px-2 py-1"
+                      >
+                        <span
+                          aria-hidden
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{
+                            background:
+                              c.color || 'var(--color-border-strong)',
+                          }}
+                        />
+                        <input
+                          ref={renameListRef}
+                          type="text"
+                          value={renameListName}
+                          disabled={listBusy}
+                          onChange={(e) => setRenameListName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              void handleRenameList()
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault()
+                              setRenamingListUid(null)
+                              setListError(null)
+                            }
+                          }}
+                          onBlur={() => void handleRenameList()}
+                          className="min-w-0 flex-1 rounded-md border border-accent/40 bg-surface-2 px-1.5 py-1 text-sm text-text outline-none focus:border-accent disabled:opacity-50"
+                        />
+                      </div>
+                    )
+                  }
                   return (
                     <button
                       key={c.uid}
@@ -1803,6 +2135,9 @@ export function MainView({ onLoggedOut }: Props) {
                       onClick={() => {
                         setActiveUid(c.uid)
                         setFocusZone('sidebar')
+                      }}
+                      onDoubleClick={() => {
+                        if (!deleted) startRenameList(c)
                       }}
                       title={
                         showFull
@@ -1920,6 +2255,7 @@ export function MainView({ onLoggedOut }: Props) {
 
       <main
         data-focus-zone={focusZone}
+        style={{ zoom: zoom.tasks }}
         className={`relative flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ease-out ${
           focusZone === 'tasks' ? 'opacity-100' : 'opacity-60'
         }`}
@@ -2326,6 +2662,8 @@ export function MainView({ onLoggedOut }: Props) {
         key={selectedTaskItem?.todo.uid ?? '__empty__'}
         task={selectedTaskItem}
         ancestors={detailAncestors}
+        allTasks={activeItems ?? []}
+        zoom={zoom.details}
         focused={focusZone === 'details'}
         pinned={detailPinned}
         onTogglePin={toggleDetailPinned}
