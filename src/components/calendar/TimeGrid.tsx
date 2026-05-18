@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EventItem } from '../../types'
 import { dayKey, sameDay, timeLabel } from '../../services/caldate'
 
@@ -90,6 +90,26 @@ export function TimeGrid({
   )
   const single = days.length === 1
 
+  // Live "now" for the current-time indicator; ticks each minute.
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+  const nowTopPx =
+    ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_PX
+
+  // Scroll the body to the current hour on mount (kept on nav so paging
+  // doesn't yank the user's scroll position).
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    el.scrollTop = Math.max(0, nowTopPx - el.clientHeight / 2)
+    // mount-only: intentionally not re-running on nowTopPx changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Day headers */}
@@ -163,7 +183,7 @@ export function TimeGrid({
       </div>
 
       {/* Scrollable time body */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={bodyRef} className="flex-1 overflow-y-auto">
         <div
           className="grid"
           style={{
@@ -205,6 +225,16 @@ export function TimeGrid({
                     style={{ top: `${h * HOUR_PX}px`, height: `${HOUR_PX}px` }}
                   />
                 ))}
+                {sameDay(d, now) && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 z-10 flex items-center"
+                    style={{ top: `${nowTopPx}px` }}
+                    aria-label={`Now ${timeLabel(now)}`}
+                  >
+                    <span className="-ml-1 h-2 w-2 shrink-0 rounded-full bg-danger" />
+                    <span className="h-px flex-1 bg-danger" />
+                  </div>
+                )}
                 {placed.map(({ item, topPx, heightPx, col, cols }) => {
                   const ev = item.event
                   return (
