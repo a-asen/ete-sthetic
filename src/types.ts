@@ -26,6 +26,8 @@ export interface VTodo {
   due?: string
   dtStart?: string
   created?: string
+  // COMPLETED timestamp (set when status → COMPLETED, cleared otherwise).
+  completed?: string
   lastModified?: string
   parentUid?: string
   categories: string[]

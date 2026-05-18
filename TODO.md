@@ -38,10 +38,12 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       asymmetric inset ring).
 - [x] `+` from "none" priority now goes to *low* first (then steps up),
       including phone mode (None→Low→Med→High).
-- [x] Change a list's colour from the app (sidebar header palette popover,
-      preset swatches + "default").
+- [x] Change a list's colour from the app (sidebar header palette popover:
+      preset swatches, full RGB/hex picker, and "default"/clear).
 - [x] Default-selected list is now the first in the *sorted* sidebar
       order (was raw server order).
+- [x] #16 Completion timestamp shown read-only in the detail panel's
+      Advanced section (data was already recorded by `updateVTodo`).
 - [x] Confirmed: COMPLETED timestamp is already written on completion and
       cleared when cycled off (`updateVTodo`). Not yet shown in the UI —
       see queued #16.
@@ -224,7 +226,7 @@ sidebar/detail. Card size today = the tasks-zone zoom (focus tasks, then
 - Decide: keep keyboard `Ctrl+±` as the power path, header buttons as the
   discoverable one. (Marked PRIORITY by the user.)
 
-### 16. Show the completion timestamp in the detail panel
+### 16. Show the completion timestamp in the detail panel — ✅ done
 **Task.** The `COMPLETED` time is already stored (and cleared on cycle-off);
 surface it read-only in the detail panel when the task is completed.
 **Plan.**

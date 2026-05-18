@@ -84,6 +84,7 @@ export function parseVTodo(raw: string): VTodo | null {
   const priority = clampPriority(vtodo.getFirstPropertyValue('priority'))
   const due = asString(vtodo.getFirstPropertyValue('due'))
   const created = asString(vtodo.getFirstPropertyValue('created'))
+  const completed = asString(vtodo.getFirstPropertyValue('completed'))
   const lastModified = asString(vtodo.getFirstPropertyValue('last-modified'))
 
   let parentUid: string | undefined
@@ -155,6 +156,7 @@ export function parseVTodo(raw: string): VTodo | null {
     due,
     dtStart,
     created,
+    completed,
     lastModified,
     parentUid,
     categories,

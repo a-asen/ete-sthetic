@@ -458,6 +458,7 @@ export function MainView({ onLoggedOut }: Props) {
   const [sidebarSortOpen, setSidebarSortOpen] = useState(false)
   const [sidebarSortFocusKey, setSidebarSortFocusKey] = useState(0)
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false)
+  const [customColor, setCustomColor] = useState('#5e8fd9')
   const colorPopoverRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!colorPopoverOpen) return
@@ -2128,7 +2129,17 @@ export function MainView({ onLoggedOut }: Props) {
                         type="button"
                         onClick={() => {
                           setFocusZone('sidebar')
-                          setColorPopoverOpen((open) => !open)
+                          setColorPopoverOpen((open) => {
+                            if (!open) {
+                              const cur = sortedCollections?.find(
+                                (c) => c.uid === activeUid,
+                              )?.color
+                              if (cur && /^#[0-9a-fA-F]{6}$/.test(cur)) {
+                                setCustomColor(cur)
+                              }
+                            }
+                            return !open
+                          })
                         }}
                         disabled={
                           !sortedCollections?.some(
@@ -2187,6 +2198,46 @@ export function MainView({ onLoggedOut }: Props) {
                               className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted"
                             >
                               ✕
+                            </button>
+                          </div>
+                          <div className="mt-2 flex items-center gap-1.5 border-t border-border px-1 pt-2">
+                            <input
+                              type="color"
+                              value={customColor}
+                              onChange={(e) => setCustomColor(e.target.value)}
+                              aria-label="Custom colour picker"
+                              title="Pick any colour"
+                              className="h-6 w-7 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0"
+                            />
+                            <input
+                              type="text"
+                              value={customColor}
+                              spellCheck={false}
+                              onChange={(e) => setCustomColor(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  if (/^#[0-9a-fA-F]{6}$/.test(customColor)) {
+                                    void handleSetListColor(
+                                      customColor.toLowerCase(),
+                                    )
+                                  }
+                                }
+                              }}
+                              aria-label="Custom colour hex"
+                              className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-1.5 py-1 font-mono text-xs text-text outline-none focus:border-border-strong"
+                            />
+                            <button
+                              type="button"
+                              disabled={!/^#[0-9a-fA-F]{6}$/.test(customColor)}
+                              onClick={() =>
+                                void handleSetListColor(
+                                  customColor.toLowerCase(),
+                                )
+                              }
+                              className="shrink-0 rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Set
                             </button>
                           </div>
                         </div>

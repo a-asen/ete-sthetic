@@ -761,6 +761,20 @@ export function DetailPanel({
 
                 {advancedOpen && (
                   <div className="mt-2 space-y-3">
+                    {task.todo.completed &&
+                      (() => {
+                        const c = splitIcalDateTime(task.todo.completed)
+                        if (!c.date) return null
+                        return (
+                          <div>
+                            <label className={labelClass}>Completed</label>
+                            <p className="mt-1 text-sm text-text-muted tabular-nums">
+                              {c.date}
+                              {c.time ? ` · ${c.time} UTC` : ''}
+                            </p>
+                          </div>
+                        )
+                      })()}
                     <div>
                       <label className={labelClass}>Start</label>
                       <div className="mt-1 flex items-center gap-2">
