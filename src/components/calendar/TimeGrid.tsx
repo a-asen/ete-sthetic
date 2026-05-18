@@ -111,7 +111,8 @@ export function TimeGrid({
   const allDay = useMemo(() => {
     const seen = new Map<string, EventItem>()
     for (const d of days)
-      for (const it of byDay.get(dayKey(d)) ?? []) seen.set(it.itemUid, it)
+      for (const it of byDay.get(dayKey(d)) ?? [])
+      seen.set(it.occId ?? it.itemUid, it)
     return layoutBars(days, [...seen.values()])
   }, [days, byDay])
   const ALLDAY_BAR_PX = 18
@@ -201,7 +202,7 @@ export function TimeGrid({
               const span = endIdx - startIdx + 1
               return (
                 <div
-                  key={item.itemUid}
+                  key={item.occId ?? item.itemUid}
                   onClick={(e) => {
                     e.stopPropagation()
                     onOpenEvent(item, { x: e.clientX, y: e.clientY })
@@ -293,7 +294,7 @@ export function TimeGrid({
                   const ev = item.event
                   return (
                     <div
-                      key={item.itemUid}
+                      key={item.occId ?? item.itemUid}
                       onClick={(e) => {
                         e.stopPropagation()
                         onOpenEvent(item, { x: e.clientX, y: e.clientY })

@@ -57,7 +57,7 @@ export function MonthGrid({
           const seen = new Map<string, EventItem>()
           for (const d of week)
             for (const it of byDay.get(dayKey(d)) ?? [])
-              seen.set(it.itemUid, it)
+              seen.set(it.occId ?? it.itemUid, it)
           const { segments, laneCount } = layoutBars(week, [...seen.values()])
           const barArea = laneCount * BAR_PX
 
@@ -116,7 +116,7 @@ export function MonthGrid({
                         const ev = item.event
                         return (
                           <div
-                            key={item.itemUid + k}
+                            key={(item.occId ?? item.itemUid) + k}
                             onClick={(e) => {
                               e.stopPropagation()
                               onOpenEvent(item, { x: e.clientX, y: e.clientY })
@@ -180,7 +180,7 @@ export function MonthGrid({
                     const span = endIdx - startIdx + 1
                     return (
                       <div
-                        key={item.itemUid + dayKey(week[0])}
+                        key={(item.occId ?? item.itemUid) + dayKey(week[0])}
                         onClick={(e) => {
                           e.stopPropagation()
                           onOpenEvent(item, { x: e.clientX, y: e.clientY })

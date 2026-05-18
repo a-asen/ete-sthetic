@@ -97,6 +97,11 @@ export interface VEvent {
 export interface EventItem {
   itemUid: string
   event: VEvent
+  // Set on expanded recurrence instances: a per-occurrence identity
+  // (`${itemUid}@${startMs}`) used for React keys / dedupe. The real
+  // itemUid is shared by every occurrence of the series, so edit/delete
+  // still act on the base event.
+  occId?: string
 }
 
 export type TaskSort = 'priority' | 'due' | 'created' | 'summary'

@@ -35,6 +35,7 @@ import { EventComposer } from './calendar/EventComposer'
 import { ConflictModal } from './calendar/ConflictModal'
 import { EventPopover } from './calendar/EventPopover'
 import { DayPopover } from './calendar/DayPopover'
+import { expandEvents } from '../services/recurrence'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -255,9 +256,15 @@ export function CalendarView() {
     }
   }, [view, anchor])
 
-  const byDay = useMemo(
-    () => bucketByDay(visibleEvents, rangeStart, rangeEnd),
+  // Expand recurring events into per-occurrence instances within the
+  // visible range, then bucket by day.
+  const expanded = useMemo(
+    () => expandEvents(visibleEvents, rangeStart, rangeEnd),
     [visibleEvents, rangeStart, rangeEnd],
+  )
+  const byDay = useMemo(
+    () => bucketByDay(expanded, rangeStart, rangeEnd),
+    [expanded, rangeStart, rangeEnd],
   )
 
   const goToday = useCallback(() => setAnchor(startOfDay(new Date())), [])

@@ -90,7 +90,7 @@ export function DayPopover({
             const ev = item.event
             return (
               <button
-                key={item.itemUid}
+                key={item.occId ?? item.itemUid}
                 onClick={(e) =>
                   onOpenEvent(item, { x: e.clientX, y: e.clientY })
                 }

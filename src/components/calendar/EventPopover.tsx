@@ -108,7 +108,7 @@ export function EventPopover({
           )}
           {ev.recurring && (
             <div className="text-text-faint">
-              Recurring · occurrences not expanded yet
+              ↻ Recurring · editing changes the whole series
             </div>
           )}
           {ev.description && (
