@@ -29,6 +29,16 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       invisible — felt like arrows/Tab did nothing).
 - [x] Fixed double task-list creation (Enter + unmount-blur double submit).
 - [x] Sidebar icons disambiguated: eye = show/hide deleted, trash = delete.
+- [x] ConfirmModal `←/→/Tab` cycle (toggle) between buttons — no dead state.
+- [x] `Ctrl+Enter` opens the detail panel (Enter cycles status now).
+- [x] Opening a sort popover focuses it + un-fades its zone.
+- [x] Sidebar type-to-search: a–z/0–9 jump/cycle lists; alphanumeric
+      task-view shortcuts no longer fire while the sidebar is focused.
+- [x] Selection indicator is now a symmetric inset border (was an
+      asymmetric inset ring).
+- [x] Confirmed: COMPLETED timestamp is already written on completion and
+      cleared when cycled off (`updateVTodo`). Not yet shown in the UI —
+      see queued #16.
 
 ## Polish & fixes (queued 2026-05-18)
 
@@ -169,6 +179,53 @@ case for a task deadline).
 - Note: overlaps conceptually with the calendar (VEVENT) module being built
   in the `worktree-calendar` branch — check whether a shared month-grid
   primitive should come from there before duplicating.
+
+### 13. Optimistic list create/delete with a "syncing" badge
+**Task.** Creating a list should show it in the sidebar immediately with a
+"syncing…" indicator until the server confirms; deleting one should likewise
+show "syncing…" on that row until the server confirms.
+**Plan.**
+- `createCollection`/`deleteCollection` currently await the server before the
+  sidebar refreshes. Add an optimistic overlay: a `syncingListUids` set (+ a
+  pending-create placeholder `CollectionInfo` with a temp uid) merged into
+  `sortedCollections` for render.
+- On success, `refreshCollections()` reconciles (replace temp uid / drop
+  deleted). On failure, remove the optimistic entry and surface `listError`.
+- Reuse the row layout; show the same "saving…"-style badge used on task
+  rows. Watch the load effect's orphan-prune so it doesn't nuke the
+  optimistic placeholder mid-flight.
+
+### 14. Modal zoom parity + zoom % in settings
+**Task.** The confirm/delete modal should render at the same zoom as the zone
+it was triggered from. Also expose the current zoom level as a % (a future
+settings menu).
+**Plan.**
+- Pass a `zoom` prop to `ConfirmModal` and apply CSS `zoom` to its inner box;
+  the caller passes the relevant zone factor (task delete → tasks zoom, list
+  delete → sidebar zoom, save-changes → details zoom).
+- Settings menu doesn't exist yet — defer the % readout to that. When built:
+  small panel listing the three zone zooms with +/-/reset and a numeric %.
+
+### 15. Discoverable task-card size control (PRIORITY)
+**Task.** Make resizing the task cards as discoverable as the
+sidebar/detail. Card size today = the tasks-zone zoom (focus tasks, then
+`Ctrl/Cmd +/-/0`); the user wants an obvious affordance, not just a hotkey.
+**Plan.**
+- Confirm tasks-zone zoom is working (it is: CSS `zoom` on `<main>`, persisted).
+- Add a visible control: a small "A−/A+" (or zoom) cluster in the task-pane
+  header that calls `adjustZoom('tasks', …)`, mirroring how the sidebar has a
+  drag handle. Optionally a drag handle / +/- on each pane for parity.
+- Decide: keep keyboard `Ctrl+±` as the power path, header buttons as the
+  discoverable one. (Marked PRIORITY by the user.)
+
+### 16. Show the completion timestamp in the detail panel
+**Task.** The `COMPLETED` time is already stored (and cleared on cycle-off);
+surface it read-only in the detail panel when the task is completed.
+**Plan.**
+- `parseVTodo` doesn't read `COMPLETED` into the model yet — add
+  `completed?: string` to `VTodo`, parse it, and render it (read-only,
+  "Completed: <date>") in DetailPanel's Advanced/Basic section when present.
+- No write path needed; `updateVTodo` already manages the property.
 
 ## Tracked elsewhere
 

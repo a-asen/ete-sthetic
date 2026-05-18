@@ -21,9 +21,10 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     ],
   },
   {
-    group: 'Lists',
+    group: 'Lists (sidebar focused)',
     items: [
-      { keys: ['n'], description: 'New list (when lists are focused)' },
+      { keys: ['a–z, 0–9'], description: 'Type to search lists (repeat to cycle)' },
+      { keys: ['+ button'], description: 'New list' },
       { keys: ['F2', 'Double-click'], description: 'Rename the selected list' },
       { keys: ['Del', 'Backspace'], description: 'Delete the selected list' },
     ],
@@ -34,7 +35,7 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
       { keys: ['←'], description: 'Collapse, then jump to parent' },
       { keys: ['→'], description: 'Expand a parent, or start a subtask' },
       {
-        keys: ['Enter', 'Ctrl+Enter'],
+        keys: ['Enter'],
         description: 'Cycle status: needs-action → in-progress → completed',
       },
       { keys: ['n'], description: 'New task at top of list (tasks focused)' },
@@ -61,8 +62,11 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
   {
     group: 'Details',
     items: [
-      { keys: ['e', 'Ctrl+→'], description: 'Open detail panel' },
-      { keys: ['Ctrl+Enter'], description: 'Inside panel: save changes' },
+      {
+        keys: ['e', 'Ctrl+→', 'Ctrl+Enter'],
+        description: 'Open detail panel for the selected task',
+      },
+      { keys: ['Ctrl+Enter'], description: 'Inside panel: save & exit' },
       { keys: ['Esc', 'Ctrl+←'], description: 'Leave detail panel' },
     ],
   },

@@ -553,7 +553,7 @@ export function TaskTree({
                 : 'transition-opacity'
             } ${
               isSelected
-                ? 'bg-accent-soft ring-1 ring-inset ring-[var(--color-text)]'
+                ? 'bg-accent-soft'
                 : pTier
                   ? `prio-wash-${pTier}`
                   : 'hover:bg-surface'
@@ -571,6 +571,12 @@ export function TaskTree({
               <span
                 aria-hidden
                 className={`pointer-events-none absolute inset-y-0 left-0 prio-bar-${pTier}`}
+              />
+            )}
+            {isSelected && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 border border-[var(--color-text)]"
               />
             )}
             <button

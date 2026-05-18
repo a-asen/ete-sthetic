@@ -293,6 +293,11 @@ export function MainView({ onLoggedOut }: Props) {
   // Guards against the create-list input firing twice (Enter then the
   // unmount blur), which was creating duplicate lists.
   const creatingListBusyRef = useRef(false)
+  // Type-to-search buffer for the sidebar list view.
+  const listTypeaheadRef = useRef<{ buf: string; time: number }>({
+    buf: '',
+    time: 0,
+  })
 
   const [itemsByUid, setItemsByUid] = useState<Map<string, TaskItem[]>>(
     () => new Map(),
@@ -1324,15 +1329,15 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      // Ctrl/Cmd+Enter outside the detail panel cycles the selected task's
-      // status: NEEDS-ACTION → IN-PROCESS → COMPLETED → NEEDS-ACTION. The
-      // detail panel reuses Ctrl+Enter for "save and exit", so don't
-      // intercept it there.
+      // Ctrl/Cmd+Enter opens the detail panel for the selected task
+      // (plain Enter now cycles status, so Ctrl+Enter is the "open card"
+      // accelerator, mirroring Ctrl+→). The detail panel reuses
+      // Ctrl+Enter for "save and exit", so don't intercept it there.
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         if (focusZone === 'details') return
-        if (!selectedTaskItem) return
+        if (!selectedTaskUid) return
         e.preventDefault()
-        void handleCycleStatus(selectedTaskItem)
+        setFocusZone('details')
         return
       }
 
@@ -1343,6 +1348,38 @@ export function MainView({ onLoggedOut }: Props) {
         return
 
       if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      // In the list (sidebar) view, plain letters/digits are a
+      // type-to-search, not shortcuts. This deliberately swallows ALL
+      // alphanumerics so none of the task-view single-key shortcuts
+      // (l/t/e/m/s/n/f/0-9) fire while browsing lists. Repeating the
+      // same single char cycles through matches.
+      if (focusZone === 'sidebar' && /^[a-z0-9]$/i.test(e.key)) {
+        e.preventDefault()
+        const lists = sortedCollections ?? []
+        if (lists.length > 0) {
+          const ch = e.key.toLowerCase()
+          const now = Date.now()
+          const st = listTypeaheadRef.current
+          let buf: string
+          if (now - st.time > 800) buf = ch
+          else if (st.buf.length === 1 && st.buf === ch) buf = ch
+          else buf = st.buf + ch
+          listTypeaheadRef.current = { buf, time: now }
+          const matches = lists.filter((c) =>
+            (c.name || '').toLowerCase().startsWith(buf),
+          )
+          if (matches.length > 0) {
+            let pick = matches[0]
+            if (buf.length === 1) {
+              const ci = matches.findIndex((c) => c.uid === activeUid)
+              if (ci >= 0) pick = matches[(ci + 1) % matches.length]
+            }
+            setActiveUid(pick.uid)
+          }
+        }
+        return
+      }
 
       if (e.key === 'l' || e.key === 'L') {
         e.preventDefault()
@@ -1377,19 +1414,14 @@ export function MainView({ onLoggedOut }: Props) {
       if (e.key === 's' || e.key === 'S') {
         if (!activeUid) return
         e.preventDefault()
+        setFocusZone('tasks')
         setSortOpen((open) => !open)
         setSortFocusKey((k) => k + 1)
         return
       }
-      // Sidebar list management. Takes precedence over the task-mode
-      // shortcuts below so `n` creates a list (not a task) when the
-      // sidebar is focused. Create works even with zero lists.
+      // Sidebar list management. (List creation is the header "+" button;
+      // plain letters are type-to-search, handled above.)
       if (focusZone === 'sidebar') {
-        if (e.key === 'n' || e.key === 'N') {
-          e.preventDefault()
-          startCreateList()
-          return
-        }
         const activeCol = sortedCollections?.find((c) => c.uid === activeUid)
         if (e.key === 'F2' && activeCol && !activeCol.isDeleted) {
           e.preventDefault()
@@ -2008,6 +2040,7 @@ export function MainView({ onLoggedOut }: Props) {
                       <button
                         type="button"
                         onClick={() => {
+                          setFocusZone('sidebar')
                           setSidebarSortOpen((open) => !open)
                           setSidebarSortFocusKey((k) => k + 1)
                         }}
@@ -2532,6 +2565,7 @@ export function MainView({ onLoggedOut }: Props) {
               <button
                 type="button"
                 onClick={() => {
+                  setFocusZone('tasks')
                   setSortOpen((open) => !open)
                   setSortFocusKey((k) => k + 1)
                 }}

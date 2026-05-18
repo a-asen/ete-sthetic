@@ -40,23 +40,15 @@ export function ConfirmModal({
         ;(onDismiss ?? onCancel)()
         return
       }
-      // ←/→ move focus between the two buttons (Cancel is left, the
-      // action is right). Tab still works natively; this is just a
-      // keyboard-friendly alternative.
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        cancelRef.current?.focus()
-        return
-      }
-      if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        confirmRef.current?.focus()
-        return
-      }
-      // Trap Tab inside the modal — there are only two buttons, so just
-      // toggle between them instead of letting focus escape to the
-      // (inert) UI behind the dialog.
-      if (e.key === 'Tab') {
+      // ←/→/Tab all cycle between the two buttons. With only two
+      // focusable elements "cycle" == "toggle to the other", which also
+      // guarantees focus never lands in an in-between (button-less)
+      // state and never escapes the dialog.
+      if (
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight' ||
+        e.key === 'Tab'
+      ) {
         e.preventDefault()
         if (document.activeElement === confirmRef.current) {
           cancelRef.current?.focus()
