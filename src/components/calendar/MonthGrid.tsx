@@ -8,14 +8,14 @@ export function MonthGrid({
   days,
   monthOf,
   byDay,
-  color,
+  colorFor,
   today,
   onPickDay,
 }: {
   days: Date[]
   monthOf: number
   byDay: Map<string, EventItem[]>
-  color: string
+  colorFor: (item: EventItem) => string
   today: Date
   onPickDay: (d: Date) => void
 }) {
@@ -76,7 +76,7 @@ export function MonthGrid({
                     >
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: color }}
+                        style={{ backgroundColor: colorFor(item) }}
                       />
                       <span className="truncate">
                         {ev.recurring && '↻ '}

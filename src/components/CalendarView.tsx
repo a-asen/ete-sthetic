@@ -14,6 +14,7 @@ import {
 import { MonthGrid } from './calendar/MonthGrid'
 import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
+import { CalendarSidebar } from './calendar/CalendarSidebar'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -23,63 +24,95 @@ const VIEWS: { id: CalView; label: string }[] = [
   { id: 'year', label: 'Year' },
 ]
 
+const ACCENT = 'var(--color-accent)'
+
 export function CalendarView() {
   const [calendars, setCalendars] = useState<CollectionInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [activeCal, setActiveCal] = useState<string | null>(null)
-  const [events, setEvents] = useState<EventItem[]>([])
-  const [loadingEvents, setLoadingEvents] = useState(false)
+  // Events keyed by calendar uid so visibility toggles are pure filtering
+  // (no refetch).
+  const [eventsByCal, setEventsByCal] = useState<Map<string, EventItem[]>>(
+    () => new Map(),
+  )
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  const [loadingCount, setLoadingCount] = useState(0)
   const [view, setView] = useState<CalView>('month')
   const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()))
   const loadAbort = useRef<AbortController | null>(null)
 
+  // Load calendars, then all their events in parallel.
   useEffect(() => {
     let cancelled = false
+    loadAbort.current?.abort()
+    const ac = new AbortController()
+    loadAbort.current = ac
     listCalendars()
       .then((cals) => {
         if (cancelled) return
         setCalendars(cals)
-        setActiveCal((cur) => cur ?? cals[0]?.uid ?? null)
+        setLoadingCount(() => cals.length)
+        for (const c of cals) {
+          listEventItems(c.uid, {
+            signal: ac.signal,
+            onBatch: (batch) =>
+              setEventsByCal((prev) => {
+                if (ac.signal.aborted) return prev
+                const next = new Map(prev)
+                next.set(c.uid, [...(next.get(c.uid) ?? []), ...batch])
+                return next
+              }),
+          })
+            .catch((e) => {
+              if (
+                ac.signal.aborted ||
+                (e as { name?: string })?.name === 'AbortError'
+              )
+                return
+              setError(() => (e instanceof Error ? e.message : String(e)))
+            })
+            .finally(() => {
+              if (!ac.signal.aborted)
+                setLoadingCount((n) => Math.max(0, n - 1))
+            })
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       })
     return () => {
       cancelled = true
+      ac.abort()
     }
   }, [])
 
-  const loadEvents = useCallback(async (calUid: string) => {
-    loadAbort.current?.abort()
-    const ac = new AbortController()
-    loadAbort.current = ac
-    setLoadingEvents(() => true)
-    setEvents(() => [])
-    try {
-      await listEventItems(calUid, {
-        signal: ac.signal,
-        onBatch: (batch) =>
-          setEvents((prev) => (ac.signal.aborted ? prev : [...prev, ...batch])),
-      })
-      if (!ac.signal.aborted) setLoadingEvents(() => false)
-    } catch (e) {
-      if (ac.signal.aborted || (e as { name?: string })?.name === 'AbortError')
-        return
-      setError(() => (e instanceof Error ? e.message : String(e)))
-      setLoadingEvents(() => false)
-    }
-  }, [])
+  const colorByCal = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const c of calendars ?? []) m.set(c.uid, c.color ?? ACCENT)
+    return m
+  }, [calendars])
 
-  useEffect(() => {
-    if (!activeCal) return
-    void loadEvents(activeCal)
-    return () => loadAbort.current?.abort()
-  }, [activeCal, loadEvents])
+  // Flatten visible calendars; remember each item's calendar colour.
+  const { visibleEvents, colorByItem } = useMemo(() => {
+    const evs: EventItem[] = []
+    const colors = new Map<string, string>()
+    for (const [uid, list] of eventsByCal) {
+      if (hidden.has(uid)) continue
+      const col = colorByCal.get(uid) ?? ACCENT
+      for (const it of list) {
+        evs.push(it)
+        colors.set(it.itemUid, col)
+      }
+    }
+    return { visibleEvents: evs, colorByItem: colors }
+  }, [eventsByCal, hidden, colorByCal])
+
+  const colorFor = useCallback(
+    (item: EventItem) => colorByItem.get(item.itemUid) ?? ACCENT,
+    [colorByItem],
+  )
 
   const today = startOfDay(new Date())
 
-  // The day range the active view spans, used both to bucket events and
-  // to feed the renderer.
   const { rangeStart, rangeEnd, dayRange, monthDays } = useMemo(() => {
     if (view === 'year') {
       const y = anchor.getFullYear()
@@ -109,8 +142,8 @@ export function CalendarView() {
   }, [view, anchor])
 
   const byDay = useMemo(
-    () => bucketByDay(events, rangeStart, rangeEnd),
-    [events, rangeStart, rangeEnd],
+    () => bucketByDay(visibleEvents, rangeStart, rangeEnd),
+    [visibleEvents, rangeStart, rangeEnd],
   )
 
   const goToday = useCallback(() => setAnchor(startOfDay(new Date())), [])
@@ -129,9 +162,14 @@ export function CalendarView() {
     },
     [anchor],
   )
-
-  const activeColor =
-    calendars?.find((c) => c.uid === activeCal)?.color ?? 'var(--color-accent)'
+  const toggleCal = useCallback((uid: string) => {
+    setHidden((prev) => {
+      const next = new Set(prev)
+      if (next.has(uid)) next.delete(uid)
+      else next.add(uid)
+      return next
+    })
+  }, [])
 
   if (error) {
     return (
@@ -152,95 +190,97 @@ export function CalendarView() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-text">
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => step(-1)}
-            className="rounded-md px-2 py-1 text-text-muted hover:bg-surface-2"
-            aria-label="Previous"
-          >
-            ‹
-          </button>
-          <button
-            onClick={() => step(1)}
-            className="rounded-md px-2 py-1 text-text-muted hover:bg-surface-2"
-            aria-label="Next"
-          >
-            ›
-          </button>
-          <button
-            onClick={goToday}
-            className="ml-1 rounded-md border border-border px-2.5 py-1 text-xs text-text-muted hover:bg-surface-2"
-          >
-            Today
-          </button>
-        </div>
-        <h1 className="text-sm font-semibold">{rangeTitle(view, anchor)}</h1>
+    <div className="flex h-screen bg-bg text-text">
+      <CalendarSidebar
+        key={`${anchor.getFullYear()}-${anchor.getMonth()}`}
+        anchor={anchor}
+        today={today}
+        rangeStart={rangeStart}
+        rangeEnd={rangeEnd}
+        calendars={calendars}
+        hidden={hidden}
+        onToggle={toggleCal}
+        onPickDay={(d) => setAnchor(startOfDay(d))}
+      />
 
-        {/* View switcher */}
-        <div className="ml-auto flex items-center gap-0.5 rounded-md border border-border p-0.5 text-xs">
-          {VIEWS.map((v) => (
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Toolbar */}
+        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+          <div className="flex items-center gap-1">
             <button
-              key={v.id}
-              onClick={() => setView(v.id)}
-              className={`rounded px-2 py-1 ${
-                view === v.id
-                  ? 'bg-accent-soft text-accent'
-                  : 'text-text-muted hover:bg-surface-2'
-              }`}
+              onClick={() => step(-1)}
+              className="rounded-md px-2 py-1 text-text-muted hover:bg-surface-2"
+              aria-label="Previous"
             >
-              {v.label}
+              ‹
             </button>
-          ))}
+            <button
+              onClick={() => step(1)}
+              className="rounded-md px-2 py-1 text-text-muted hover:bg-surface-2"
+              aria-label="Next"
+            >
+              ›
+            </button>
+            <button
+              onClick={goToday}
+              className="ml-1 rounded-md border border-border px-2.5 py-1 text-xs text-text-muted hover:bg-surface-2"
+            >
+              Today
+            </button>
+          </div>
+          <h1 className="truncate text-sm font-semibold">
+            {rangeTitle(view, anchor)}
+          </h1>
+
+          <div className="ml-auto flex items-center gap-0.5 rounded-md border border-border p-0.5 text-xs">
+            {VIEWS.map((v) => (
+              <button
+                key={v.id}
+                onClick={() => setView(v.id)}
+                className={`rounded px-2 py-1 ${
+                  view === v.id
+                    ? 'bg-accent-soft text-accent'
+                    : 'text-text-muted hover:bg-surface-2'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+
+          {loadingCount > 0 && (
+            <span className="text-xs text-text-faint">syncing…</span>
+          )}
         </div>
 
-        {loadingEvents && (
-          <span className="text-xs text-text-faint">syncing…</span>
-        )}
-        {calendars && calendars.length > 0 && (
-          <select
-            value={activeCal ?? ''}
-            onChange={(e) => setActiveCal(e.target.value)}
-            className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-text"
-          >
-            {calendars.map((c) => (
-              <option key={c.uid} value={c.uid}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+        {/* Active view */}
+        {view === 'year' ? (
+          <YearGrid
+            year={anchor.getFullYear()}
+            byDay={byDay}
+            today={today}
+            onPickDay={pickDay}
+            onPickMonth={pickMonth}
+          />
+        ) : view === 'month' ? (
+          <MonthGrid
+            days={monthDays}
+            monthOf={anchor.getMonth()}
+            byDay={byDay}
+            colorFor={colorFor}
+            today={today}
+            onPickDay={pickDay}
+          />
+        ) : (
+          <TimeGrid
+            days={dayRange}
+            byDay={byDay}
+            colorFor={colorFor}
+            today={today}
+            onPickDay={pickDay}
+          />
         )}
       </div>
-
-      {/* Active view */}
-      {view === 'year' ? (
-        <YearGrid
-          year={anchor.getFullYear()}
-          byDay={byDay}
-          today={today}
-          onPickDay={pickDay}
-          onPickMonth={pickMonth}
-        />
-      ) : view === 'month' ? (
-        <MonthGrid
-          days={monthDays}
-          monthOf={anchor.getMonth()}
-          byDay={byDay}
-          color={activeColor}
-          today={today}
-          onPickDay={pickDay}
-        />
-      ) : (
-        <TimeGrid
-          days={dayRange}
-          byDay={byDay}
-          color={activeColor}
-          today={today}
-          onPickDay={pickDay}
-        />
-      )}
     </div>
   )
 }

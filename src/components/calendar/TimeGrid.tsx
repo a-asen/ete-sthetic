@@ -70,13 +70,13 @@ function layoutDay(events: EventItem[], day: Date): Placed[] {
 export function TimeGrid({
   days,
   byDay,
-  color,
+  colorFor,
   today,
   onPickDay,
 }: {
   days: Date[]
   byDay: Map<string, EventItem[]>
-  color: string
+  colorFor: (item: EventItem) => string
   today: Date
   onPickDay: (d: Date) => void
 }) {
@@ -206,7 +206,7 @@ export function TimeGrid({
                         height: `${heightPx}px`,
                         left: `calc(${(col / cols) * 100}% + 2px)`,
                         width: `calc(${100 / cols}% - 4px)`,
-                        borderLeftColor: color,
+                        borderLeftColor: colorFor(item),
                         backgroundColor: 'var(--color-accent-soft)',
                       }}
                     >
