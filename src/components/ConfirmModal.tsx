@@ -108,7 +108,7 @@ export function ConfirmModal({
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="h-8 rounded-md border border-border px-3 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
+            className="h-8 rounded-md border border-border px-3 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
           >
             {cancelLabel}
           </button>
@@ -116,10 +116,10 @@ export function ConfirmModal({
             ref={confirmRef}
             type="button"
             onClick={onConfirm}
-            className={`h-8 rounded-md px-3 text-xs font-medium transition-opacity hover:opacity-90 ${
+            className={`h-8 rounded-md px-3 text-xs font-medium transition-opacity hover:opacity-90 outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface ${
               destructive
-                ? 'bg-danger text-bg'
-                : 'bg-accent text-bg'
+                ? 'bg-danger text-bg focus-visible:ring-danger'
+                : 'bg-accent text-bg focus-visible:ring-accent'
             }`}
           >
             {confirmLabel}

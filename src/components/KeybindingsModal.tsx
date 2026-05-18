@@ -33,9 +33,8 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     items: [
       { keys: ['←'], description: 'Collapse, then jump to parent' },
       { keys: ['→'], description: 'Expand a parent, or start a subtask' },
-      { keys: ['Enter'], description: 'Toggle complete (binary)' },
       {
-        keys: ['Ctrl+Enter'],
+        keys: ['Enter', 'Ctrl+Enter'],
         description: 'Cycle status: needs-action → in-progress → completed',
       },
       { keys: ['n'], description: 'New task at top of list (tasks focused)' },

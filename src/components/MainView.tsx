@@ -290,6 +290,9 @@ export function MainView({ onLoggedOut }: Props) {
   const [listError, setListError] = useState<string | null>(null)
   const newListRef = useRef<HTMLInputElement>(null)
   const renameListRef = useRef<HTMLInputElement>(null)
+  // Guards against the create-list input firing twice (Enter then the
+  // unmount blur), which was creating duplicate lists.
+  const creatingListBusyRef = useRef(false)
 
   const [itemsByUid, setItemsByUid] = useState<Map<string, TaskItem[]>>(
     () => new Map(),
@@ -1165,18 +1168,21 @@ export function MainView({ onLoggedOut }: Props) {
   }, [])
 
   const handleCreateList = useCallback(async () => {
+    // Re-entrancy guard: Enter submits, then the input unmounts and its
+    // blur handler fires a second submit. Bail on the second call.
+    if (creatingListBusyRef.current) return
     const name = newListName.trim()
-    if (!name) {
-      setCreatingList(false)
-      return
-    }
+    // Close the input immediately so it can't blur-resubmit and the user
+    // returns to the list right away.
+    setCreatingList(false)
+    setNewListName('')
+    if (!name) return
+    creatingListBusyRef.current = true
     setListBusy(true)
     setListError(null)
     try {
       const info = await createCollection(name)
       if (cancelledRef.current) return
-      setCreatingList(false)
-      setNewListName('')
       // Select the new list; the load effect keeps it selected since it's
       // present in the refreshed server list.
       setActiveUid(info.uid)
@@ -1187,6 +1193,7 @@ export function MainView({ onLoggedOut }: Props) {
         err instanceof Error ? err.message : 'Failed to create list',
       )
     } finally {
+      creatingListBusyRef.current = false
       if (!cancelledRef.current) setListBusy(false)
     }
   }, [newListName, refreshCollections])
@@ -1290,14 +1297,30 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      // Ctrl/Cmd+ArrowRight → enter the detail panel for the selected
-      // task. When already in details, the panel itself handles the
-      // matching Ctrl+ArrowLeft / Ctrl+Enter exits, so bail.
+      // Ctrl/Cmd+Arrow = zone meta-navigator. Steps through
+      // sidebar → tasks → details (and back) regardless of tree state;
+      // it never expands/collapses the hierarchy.
+      //   →  sidebar ⇒ enter the list; tasks ⇒ open details (if a task
+      //      is selected). In details the panel handles its own keys.
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight') {
         if (focusZone === 'details') return
-        if (!selectedTaskUid) return
         e.preventDefault()
-        setFocusZone('details')
+        if (focusZone === 'sidebar') {
+          focusTasks()
+        } else if (selectedTaskUid) {
+          setFocusZone('details')
+        }
+        return
+      }
+      //   ←  tasks ⇒ jump straight to the task lists (no collapse). In
+      //      details the panel owns Ctrl+← (save-aware exit), so don't
+      //      intercept it here.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowLeft') {
+        if (focusZone === 'details') return
+        if (focusZone === 'tasks') {
+          e.preventDefault()
+          setFocusZone('sidebar')
+        }
         return
       }
 
@@ -2048,8 +2071,9 @@ export function MainView({ onLoggedOut }: Props) {
                           strokeLinejoin="round"
                           aria-hidden
                         >
-                          <path d="M3 6h10M5 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-                          <path d="M4.5 6l.8 7.2a1 1 0 0 0 1 .8h3.4a1 1 0 0 0 1-.8L11.5 6" />
+                          <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
+                          <circle cx="8" cy="8" r="2" />
+                          {!showDeletedLists && <path d="M3 13L13 3" />}
                         </svg>
                       </button>
                       {sidebarSortOpen && (
@@ -2681,6 +2705,7 @@ export function MainView({ onLoggedOut }: Props) {
             <TaskTree
               roots={visibleTree}
               onToggleComplete={handleToggleComplete}
+              onCycleStatus={handleCycleStatus}
               pendingUids={pendingItemUids}
               creatingParent={creating ? creating.parentUid : undefined}
               onAddChild={handleStartCreateChild}

@@ -38,6 +38,9 @@ interface Props {
   onSelectChange: (uid: string | null) => void
   inactive?: boolean
   onToggleComplete?: (node: TaskNode) => void
+  // Enter cycles status (needs-action → in-progress → completed → …),
+  // matching Ctrl+Enter. The checkbox click still uses onToggleComplete.
+  onCycleStatus?: (node: TaskNode) => void
   pendingUids?: ReadonlySet<string>
   creatingParent?: string | null
   onAddChild?: (parent: TaskNode) => void
@@ -190,6 +193,7 @@ export function TaskTree({
   onSelectChange,
   inactive = false,
   onToggleComplete,
+  onCycleStatus,
   pendingUids,
   creatingParent,
   onAddChild,
@@ -413,9 +417,16 @@ export function TaskTree({
             target instanceof HTMLAnchorElement
           )
             return
-          if (idx < 0 || !onToggleComplete) return
-          e.preventDefault()
-          onToggleComplete(visible[idx])
+          if (idx < 0) return
+          // Enter cycles status (same as Ctrl+Enter); fall back to the
+          // binary toggle if no cycle handler was provided.
+          if (onCycleStatus) {
+            e.preventDefault()
+            onCycleStatus(visible[idx])
+          } else if (onToggleComplete) {
+            e.preventDefault()
+            onToggleComplete(visible[idx])
+          }
           break
         }
         case 'F2': {
@@ -465,6 +476,7 @@ export function TaskTree({
     editingUid,
     expanded,
     onToggleComplete,
+    onCycleStatus,
     onDeleteRequest,
     onAddChild,
     onRenameTask,
@@ -718,6 +730,15 @@ export function TaskTree({
                 title="Hiding soon"
               >
                 {fadingRemainingS}s
+              </span>
+            )}
+
+            {pendingUids?.has(node.itemUid) && (
+              <span
+                className="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-muted"
+                title="Not yet synced"
+              >
+                saving…
               </span>
             )}
 

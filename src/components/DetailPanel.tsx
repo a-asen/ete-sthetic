@@ -291,7 +291,6 @@ export function DetailPanel({
     task ? draftFromTask(task) : null,
   )
   const [confirming, setConfirming] = useState(false)
-  const [saving, setSaving] = useState(false)
   const [tagInput, setTagInput] = useState('')
   const [resourceInput, setResourceInput] = useState('')
   const [depQuery, setDepQuery] = useState('')
@@ -409,21 +408,19 @@ export function DetailPanel({
     return () => window.removeEventListener('keydown', handler)
   }, [focused, task, requestExit])
 
-  async function commitSave() {
+  function commitSave() {
     if (!task || !draft) {
       setConfirming(false)
       return
     }
     const p = buildPatch(task, draft)
-    setSaving(true)
-    try {
-      await onSave(p)
-    } finally {
-      setSaving(false)
-      setConfirming(false)
-      blurInsidePanel()
-      onExit()
-    }
+    // Return to the task view immediately; the save runs in the
+    // background and the row shows a "saving…" marker (pendingUids /
+    // optimistic update are handled by the caller) until it syncs.
+    setConfirming(false)
+    blurInsidePanel()
+    onExit()
+    void onSave(p)
   }
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -477,25 +474,16 @@ export function DetailPanel({
       {confirming && (
         <ConfirmModal
           title="Save changes?"
-          body={
-            saving
-              ? 'Saving…'
-              : 'Ctrl+Enter saves and exits. Esc exits without saving (your edits stay in the draft). Cancel keeps you in the editor.'
-          }
-          confirmLabel={saving ? 'Saving…' : 'Save'}
+          body="Save returns you to the list (it syncs in the background). Esc exits without saving (your edits stay in the draft). Cancel keeps you in the editor."
+          confirmLabel="Save"
           cancelLabel="Cancel"
-          onCancel={() => {
-            if (!saving) setConfirming(false)
-          }}
+          onCancel={() => setConfirming(false)}
           onDismiss={() => {
-            if (saving) return
             setConfirming(false)
             blurInsidePanel()
             onExit()
           }}
-          onConfirm={() => {
-            if (!saving) void commitSave()
-          }}
+          onConfirm={commitSave}
         />
       )}
       {!showFullPanel ? (

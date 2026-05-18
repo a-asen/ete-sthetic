@@ -20,6 +20,15 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
 - [x] Entering a list (`→`/`Enter`/`t`) now selects the first task instead
       of landing selection-less.
 - [x] ConfirmModal traps `Tab` focus between its two buttons.
+- [x] `Ctrl+←/→` are a zone meta-navigator (sidebar ↔ tasks ↔ details);
+      never expand/collapse the tree.
+- [x] `Enter` cycles task status (same as `Ctrl+Enter`).
+- [x] Saving a detail edit returns to the list immediately; the row shows
+      a "saving…" marker until it syncs.
+- [x] ConfirmModal buttons have a visible focus ring (keyboard focus was
+      invisible — felt like arrows/Tab did nothing).
+- [x] Fixed double task-list creation (Enter + unmount-blur double submit).
+- [x] Sidebar icons disambiguated: eye = show/hide deleted, trash = delete.
 
 ## Polish & fixes (queued 2026-05-18)
 
@@ -141,6 +150,25 @@ list to move it to that collection.
   uids are preserved so the subtree's parent/child links survive.
 - Independent of the deferred *intra-list* manual-order DnD (this is a
   cross-list move and needs no ordering store).
+
+### 12. Calendar popover for due / start dates
+**Task.** When setting a due (or start) date in the detail panel, offer a
+month calendar grid the user can navigate with the arrow keys instead of the
+raw native date input. Bias selection toward near-future dates (the common
+case for a task deadline).
+**Plan.**
+- New `CalendarPopover` component: month grid, `←/→/↑/↓` move by day/week,
+  `PageUp/PageDown` by month, `Enter` selects, `Esc` closes; opens anchored
+  to the Due/Start field in `DetailPanel.tsx`.
+- Initial focus = current value if set, else today (so "future" dates are
+  one keystroke away). Keep the existing `<input type=date>` as a fallback /
+  for typing; the popover is an enhancement layered on top.
+- Reuse the `splitIcalDateTime` / `toDateValue` helpers already in
+  `DetailPanel` so the time-of-day field and date-only vs date-time
+  semantics are unaffected.
+- Note: overlaps conceptually with the calendar (VEVENT) module being built
+  in the `worktree-calendar` branch — check whether a shared month-grid
+  primitive should come from there before duplicating.
 
 ## Tracked elsewhere
 
