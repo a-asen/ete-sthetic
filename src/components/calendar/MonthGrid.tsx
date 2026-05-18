@@ -21,6 +21,7 @@ export function MonthGrid({
   onPickDay,
   onNewEvent,
   onOpenEvent,
+  onShowMore,
 }: {
   days: Date[]
   monthOf: number
@@ -31,6 +32,7 @@ export function MonthGrid({
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date) => void
   onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
+  onShowMore: (d: Date, coords: { x: number; y: number }) => void
 }) {
   // 6 weeks of 7 days.
   const weeks: Date[][] = []
@@ -145,9 +147,18 @@ export function MonthGrid({
                         )
                       })}
                       {overflow > 0 && (
-                        <div className="px-1 text-xs text-text-faint">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onShowMore(day, {
+                              x: e.clientX,
+                              y: e.clientY,
+                            })
+                          }}
+                          className="px-1 text-xs text-text-faint hover:text-accent"
+                        >
                           +{overflow} more
-                        </div>
+                        </button>
                       )}
                     </div>
                   </div>

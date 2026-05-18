@@ -18,6 +18,7 @@ import {
   type CalView,
   addDays,
   bucketByDay,
+  dayKey,
   monthGridDays,
   rangeTitle,
   startOfDay,
@@ -33,6 +34,7 @@ import { CalendarSidebar } from './calendar/CalendarSidebar'
 import { EventComposer } from './calendar/EventComposer'
 import { ConflictModal } from './calendar/ConflictModal'
 import { EventPopover } from './calendar/EventPopover'
+import { DayPopover } from './calendar/DayPopover'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -81,6 +83,11 @@ export function CalendarView() {
   const [popover, setPopover] = useState<{
     item: EventItem
     calUid: string
+    x: number
+    y: number
+  } | null>(null)
+  const [dayPopover, setDayPopover] = useState<{
+    day: Date
     x: number
     y: number
   } | null>(null)
@@ -547,6 +554,25 @@ export function CalendarView() {
             >
               + New
             </button>
+            <input
+              type="date"
+              aria-label="Go to date"
+              title="Go to date"
+              value={`${anchor.getFullYear()}-${String(
+                anchor.getMonth() + 1,
+              ).padStart(2, '0')}-${String(anchor.getDate()).padStart(
+                2,
+                '0',
+              )}`}
+              onChange={(e) => {
+                const [y, mo, d] = e.target.value.split('-').map(Number)
+                if (!y || !mo || !d) return
+                const nd = startOfDay(new Date(y, mo - 1, d))
+                setAnchor(nd)
+                setSelected(nd)
+              }}
+              className="ml-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-muted"
+            />
           </div>
           <h1 className="truncate text-sm font-semibold">
             {rangeTitle(view, anchor)}
@@ -594,6 +620,9 @@ export function CalendarView() {
             onPickDay={pickDay}
             onNewEvent={(d) => setComposer({ mode: 'new', date: d })}
             onOpenEvent={openEvent}
+            onShowMore={(d, coords) =>
+              setDayPopover({ day: d, x: coords.x, y: coords.y })
+            }
           />
         ) : (
           <TimeGrid
@@ -676,6 +705,21 @@ export function CalendarView() {
             setPopover(null)
           }}
           onClose={() => setPopover(null)}
+        />
+      )}
+
+      {dayPopover && (
+        <DayPopover
+          day={dayPopover.day}
+          events={byDay.get(dayKey(dayPopover.day)) ?? []}
+          colorFor={colorFor}
+          x={dayPopover.x}
+          y={dayPopover.y}
+          onOpenEvent={(item, coords) => {
+            setDayPopover(null)
+            openEvent(item, coords)
+          }}
+          onClose={() => setDayPopover(null)}
         />
       )}
     </div>
