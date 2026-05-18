@@ -1,5 +1,6 @@
 import ICAL from 'ical.js'
 import type { EventItem } from '../types'
+import { registerTimezones } from './vevent'
 
 // Windowed recurrence expansion. Non-recurring events pass through; for
 // RRULE/RDATE/EXDATE events we materialise the occurrences that fall in
@@ -21,6 +22,8 @@ function expandOne(
   } catch {
     return [item]
   }
+  registerTimezones(comp)
+
   const ve =
     comp.name === 'vevent' ? comp : comp.getFirstSubcomponent('vevent')
   if (!ve) return [item]

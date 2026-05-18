@@ -27,6 +27,25 @@ function timeToDate(t: unknown): Date | undefined {
   return undefined
 }
 
+// Register any VTIMEZONE definitions carried in the VCALENDAR so that
+// ICAL.Time values with a TZID resolve to correct absolute instants.
+// Idempotent; safe to call per item. Named IANA zones without an inline
+// VTIMEZONE can't be resolved (we fall back to floating/local) — that's
+// the documented v1 limit.
+export function registerTimezones(comp: ICAL.Component): void {
+  for (const vtz of comp.getAllSubcomponents('vtimezone')) {
+    const tzid = asString(vtz.getFirstPropertyValue('tzid'))
+    if (!tzid || ICAL.TimezoneService.has(tzid)) continue
+    try {
+      ICAL.TimezoneService.register(
+        new ICAL.Timezone({ component: vtz, tzid }),
+      )
+    } catch {
+      // Malformed VTIMEZONE — skip; the time falls back to floating.
+    }
+  }
+}
+
 export function parseVEvent(raw: string): VEvent | null {
   let comp: ICAL.Component
   try {
@@ -35,6 +54,8 @@ export function parseVEvent(raw: string): VEvent | null {
   } catch {
     return null
   }
+
+  registerTimezones(comp)
 
   const vevent =
     comp.name === 'vevent' ? comp : comp.getFirstSubcomponent('vevent')
