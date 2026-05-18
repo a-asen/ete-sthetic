@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EventItem } from '../../types'
-import { dayKey, sameDay, timeLabel } from '../../services/caldate'
+import {
+  dayKey,
+  isBarEvent,
+  layoutBars,
+  sameDay,
+  timeLabel,
+} from '../../services/caldate'
 
 const HOUR_PX = 44
 const DAY_START_HOUR = 0
@@ -23,7 +29,7 @@ function layoutDay(events: EventItem[], day: Date): Placed[] {
     DAY_START_HOUR,
   ).getTime()
   const timed = events
-    .filter((e) => !e.event.allDay && e.event.start)
+    .filter((e) => !isBarEvent(e.event) && e.event.start)
     .sort(
       (a, b) =>
         (a.event.start?.getTime() ?? 0) - (b.event.start?.getTime() ?? 0),
@@ -101,6 +107,15 @@ export function TimeGrid({
   const nowTopPx =
     ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_PX
 
+  // All-day / multi-day events packed into spanning bars over the row.
+  const allDay = useMemo(() => {
+    const seen = new Map<string, EventItem>()
+    for (const d of days)
+      for (const it of byDay.get(dayKey(d)) ?? []) seen.set(it.itemUid, it)
+    return layoutBars(days, [...seen.values()])
+  }, [days, byDay])
+  const ALLDAY_BAR_PX = 18
+
   // Scroll the body to the current hour on mount (kept on nav so paging
   // doesn't yank the user's scroll position).
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -151,7 +166,7 @@ export function TimeGrid({
         })}
       </div>
 
-      {/* All-day row */}
+      {/* All-day / multi-day spanning bars */}
       <div
         className="grid border-b border-border bg-surface/40"
         style={{ gridTemplateColumns: `3rem repeat(${days.length}, 1fr)` }}
@@ -159,33 +174,66 @@ export function TimeGrid({
         <div className="py-1 pr-1 text-right text-[10px] text-text-faint">
           all-day
         </div>
-        {days.map((d) => {
-          const evs = (byDay.get(dayKey(d)) ?? []).filter(
-            (e) => e.event.allDay,
-          )
-          return (
+        <div
+          className="relative"
+          style={{
+            gridColumn: '2 / -1',
+            height: Math.max(1, allDay.laneCount) * ALLDAY_BAR_PX + 4,
+          }}
+        >
+          {days.map((d, i) => (
             <div
               key={dayKey(d)}
-              className="min-h-[1.5rem] space-y-0.5 border-l border-border p-0.5"
-            >
-              {evs.map((item) => (
+              className="absolute bottom-0 top-0 border-l border-border"
+              style={{ left: `${(i / days.length) * 100}%` }}
+            />
+          ))}
+          {allDay.segments.map(
+            ({
+              item,
+              startIdx,
+              endIdx,
+              lane,
+              continuesLeft,
+              continuesRight,
+            }) => {
+              const ev = item.event
+              const span = endIdx - startIdx + 1
+              return (
                 <div
                   key={item.itemUid}
                   onClick={(e) => {
                     e.stopPropagation()
                     onOpenEvent(item)
                   }}
-                  title={item.event.summary}
-                  className="cursor-pointer truncate rounded-sm px-1 text-xs hover:brightness-125"
-                  style={{ backgroundColor: 'var(--color-accent-soft)' }}
+                  title={
+                    (ev.recurring ? '↻ recurring · ' : '') + ev.summary
+                  }
+                  className="absolute flex cursor-pointer items-center gap-1 overflow-hidden px-1 text-xs text-bg hover:brightness-110"
+                  style={{
+                    left: `calc(${(startIdx / days.length) * 100}% + 2px)`,
+                    width: `calc(${(span / days.length) * 100}% - 4px)`,
+                    top: 2 + lane * ALLDAY_BAR_PX,
+                    height: ALLDAY_BAR_PX - 2,
+                    backgroundColor: colorFor(item),
+                    borderRadius: 3,
+                    borderTopLeftRadius: continuesLeft ? 0 : 3,
+                    borderBottomLeftRadius: continuesLeft ? 0 : 3,
+                    borderTopRightRadius: continuesRight ? 0 : 3,
+                    borderBottomRightRadius: continuesRight ? 0 : 3,
+                  }}
                 >
-                  {item.event.recurring && '↻ '}
-                  {item.event.summary || '(no title)'}
+                  {continuesLeft && <span>◀</span>}
+                  <span className="truncate font-medium">
+                    {ev.recurring && '↻ '}
+                    {ev.summary || '(no title)'}
+                  </span>
+                  {continuesRight && <span className="ml-auto">▶</span>}
                 </div>
-              ))}
-            </div>
-          )
-        })}
+              )
+            },
+          )}
+        </div>
       </div>
 
       {/* Scrollable time body */}

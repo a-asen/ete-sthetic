@@ -1,4 +1,4 @@
-import type { EventItem } from '../types'
+import type { EventItem, VEvent } from '../types'
 
 // Shared date math for the calendar views. Week starts Monday.
 
@@ -156,4 +156,97 @@ export function rangeTitle(view: CalView, anchor: Date): string {
   return sameMonth
     ? `${first.getDate()}–${last.getDate()} ${last.toLocaleDateString([], { month: 'long', year: 'numeric' })}`
     : `${f} – ${l}`
+}
+
+// Whole calendar days between two instants (DST-safe via round).
+function dayDiff(from: Date, to: Date): number {
+  return Math.round(
+    (startOfDay(to).getTime() - startOfDay(from).getTime()) / MS_DAY,
+  )
+}
+
+// An event is rendered as a spanning bar (rather than an inline chip) when
+// it's all-day or it touches more than one calendar day.
+export function isBarEvent(ev: VEvent): boolean {
+  if (ev.allDay) return true
+  if (!ev.start || !ev.end) return false
+  // DTEND is the end instant for timed events; the last *touched* day is
+  // the day containing end-1ms (so 23:00→00:00 stays single-day).
+  return dayDiff(ev.start, new Date(ev.end.getTime() - 1)) > 0
+}
+
+// Inclusive [firstDay, lastDay] (start-of-day) a bar event covers.
+function barDayRange(ev: VEvent): [Date, Date] | null {
+  if (!ev.start) return null
+  const first = startOfDay(ev.start)
+  if (ev.allDay) {
+    // DTEND exclusive: last day = end - 1 day (min: the start day).
+    const end = ev.end ?? new Date(ev.start.getTime() + MS_DAY)
+    const last = startOfDay(new Date(end.getTime() - MS_DAY))
+    return [first, last < first ? first : last]
+  }
+  const end = ev.end && ev.end > ev.start ? ev.end : ev.start
+  return [first, startOfDay(new Date(end.getTime() - 1))]
+}
+
+export interface EventSegment {
+  item: EventItem
+  startIdx: number
+  endIdx: number
+  lane: number
+  continuesLeft: boolean
+  continuesRight: boolean
+}
+
+// Pack bar events into horizontal segments over a contiguous row of days
+// (a month week, or a time-grid all-day row), assigning non-overlapping
+// lanes greedily. Longer bars get lower lanes.
+export function layoutBars(
+  rowDays: Date[],
+  events: EventItem[],
+): { segments: EventSegment[]; laneCount: number } {
+  if (rowDays.length === 0) return { segments: [], laneCount: 0 }
+  const rowStart = rowDays[0]
+  const lastIdx = rowDays.length - 1
+  const rowEnd = rowDays[lastIdx]
+
+  const prelim: Omit<EventSegment, 'lane'>[] = []
+  for (const item of events) {
+    if (!isBarEvent(item.event)) continue
+    const range = barDayRange(item.event)
+    if (!range) continue
+    const [first, last] = range
+    if (last < rowStart || first > rowEnd) continue
+    const startIdx = Math.max(0, Math.min(lastIdx, dayDiff(rowStart, first)))
+    const endIdx = Math.max(0, Math.min(lastIdx, dayDiff(rowStart, last)))
+    prelim.push({
+      item,
+      startIdx,
+      endIdx,
+      continuesLeft: first < rowStart,
+      continuesRight: last > rowEnd,
+    })
+  }
+
+  prelim.sort(
+    (a, b) =>
+      a.startIdx - b.startIdx ||
+      b.endIdx - b.startIdx - (a.endIdx - a.startIdx) ||
+      (a.item.event.start?.getTime() ?? 0) -
+        (b.item.event.start?.getTime() ?? 0),
+  )
+
+  const laneEnds: number[] = [] // last occupied column per lane
+  const segments: EventSegment[] = []
+  for (const p of prelim) {
+    let lane = laneEnds.findIndex((end) => end < p.startIdx)
+    if (lane === -1) {
+      lane = laneEnds.length
+      laneEnds.push(p.endIdx)
+    } else {
+      laneEnds[lane] = p.endIdx
+    }
+    segments.push({ ...p, lane })
+  }
+  return { segments, laneCount: laneEnds.length }
 }

@@ -1,8 +1,15 @@
 import type { EventItem } from '../../types'
-import { dayKey, sameDay } from '../../services/caldate'
+import {
+  dayKey,
+  isBarEvent,
+  layoutBars,
+  sameDay,
+} from '../../services/caldate'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const MAX_CHIPS = 3
+const DATE_ROW_PX = 24
+const BAR_PX = 18
+const MAX_CHIPS = 2
 
 export function MonthGrid({
   days,
@@ -25,6 +32,10 @@ export function MonthGrid({
   onNewEvent: (d: Date) => void
   onOpenEvent: (item: EventItem) => void
 }) {
+  // 6 weeks of 7 days.
+  const weeks: Date[][] = []
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7))
+
   return (
     <div className="flex flex-1 flex-col">
       <div className="grid grid-cols-7 border-b border-border">
@@ -37,86 +48,160 @@ export function MonthGrid({
           </div>
         ))}
       </div>
-      <div className="grid flex-1 grid-cols-7 grid-rows-6">
-        {days.map((day) => {
-          const inMonth = day.getMonth() === monthOf
-          const isToday = sameDay(day, today)
-          const k = dayKey(day)
-          const evs = byDay.get(k) ?? []
-          const shown = evs.slice(0, MAX_CHIPS)
-          const overflow = evs.length - shown.length
+
+      <div className="flex flex-1 flex-col">
+        {weeks.map((week) => {
+          // Dedupe events overlapping this week, then pack into bar lanes.
+          const seen = new Map<string, EventItem>()
+          for (const d of week)
+            for (const it of byDay.get(dayKey(d)) ?? [])
+              seen.set(it.itemUid, it)
+          const { segments, laneCount } = layoutBars(week, [...seen.values()])
+          const barArea = laneCount * BAR_PX
+
           return (
             <div
-              key={k}
-              onClick={() => onNewEvent(day)}
-              title="Click to add an event"
-              className={`min-h-0 cursor-pointer overflow-hidden border-b border-r border-border p-1 text-left hover:bg-surface-2/60 ${
-                inMonth ? '' : 'bg-surface/40 text-text-faint'
-              } ${
-                sameDay(day, selected)
-                  ? 'ring-1 ring-inset ring-accent'
-                  : ''
-              }`}
+              key={dayKey(week[0])}
+              className="relative grid min-h-0 flex-1 grid-cols-7"
             >
-              <div className="mb-0.5 flex justify-end">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onPickDay(day)
-                  }}
-                  title="Open day"
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs hover:ring-1 hover:ring-accent ${
-                    isToday
-                      ? 'bg-accent font-semibold text-bg'
-                      : inMonth
-                        ? 'text-text-muted'
-                        : 'text-text-faint'
-                  }`}
-                >
-                  {day.getDate()}
-                </button>
-              </div>
-              <div className="space-y-0.5">
-                {shown.map((item) => {
-                  const ev = item.event
-                  return (
+              {week.map((day) => {
+                const inMonth = day.getMonth() === monthOf
+                const isToday = sameDay(day, today)
+                const k = dayKey(day)
+                const chips = (byDay.get(k) ?? []).filter(
+                  (it) => !isBarEvent(it.event),
+                )
+                const shown = chips.slice(0, MAX_CHIPS)
+                const overflow = chips.length - shown.length
+                return (
+                  <div
+                    key={k}
+                    onClick={() => onNewEvent(day)}
+                    title="Click to add an event"
+                    className={`flex min-h-0 cursor-pointer flex-col overflow-hidden border-b border-r border-border p-1 hover:bg-surface-2/60 ${
+                      inMonth ? '' : 'bg-surface/40 text-text-faint'
+                    } ${
+                      sameDay(day, selected)
+                        ? 'ring-1 ring-inset ring-accent'
+                        : ''
+                    }`}
+                  >
                     <div
-                      key={item.itemUid + k}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onOpenEvent(item)
-                      }}
-                      title={
-                        (ev.recurring ? '↻ recurring · ' : '') +
-                        ev.summary +
-                        (ev.location ? ` · ${ev.location}` : '')
-                      }
-                      className="flex cursor-pointer items-center gap-1 truncate rounded-sm px-1 py-0.5 text-xs hover:brightness-125"
-                      style={{ backgroundColor: 'var(--color-accent-soft)' }}
+                      className="flex justify-end"
+                      style={{ height: DATE_ROW_PX }}
                     >
-                      <span
-                        className="h-1.5 w-1.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: colorFor(item) }}
-                      />
-                      <span className="truncate">
-                        {ev.recurring && '↻ '}
-                        {!ev.allDay && ev.start && (
-                          <span className="text-text-faint">
-                            {ev.start.toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}{' '}
-                          </span>
-                        )}
-                        {ev.summary || '(no title)'}
-                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onPickDay(day)
+                        }}
+                        title="Open day"
+                        className={`flex h-5 w-5 items-center justify-center rounded-full text-xs hover:ring-1 hover:ring-accent ${
+                          isToday
+                            ? 'bg-accent font-semibold text-bg'
+                            : inMonth
+                              ? 'text-text-muted'
+                              : 'text-text-faint'
+                        }`}
+                      >
+                        {day.getDate()}
+                      </button>
                     </div>
-                  )
-                })}
-                {overflow > 0 && (
-                  <div className="px-1 text-xs text-text-faint">
-                    +{overflow} more
+                    {/* Reserve vertical space for the bar overlay. */}
+                    <div style={{ height: barArea }} />
+                    <div className="min-h-0 space-y-0.5 overflow-hidden">
+                      {shown.map((item) => {
+                        const ev = item.event
+                        return (
+                          <div
+                            key={item.itemUid + k}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onOpenEvent(item)
+                            }}
+                            title={
+                              (ev.recurring ? '↻ recurring · ' : '') +
+                              ev.summary +
+                              (ev.location ? ` · ${ev.location}` : '')
+                            }
+                            className="flex cursor-pointer items-center gap-1 truncate rounded-sm px-1 text-xs hover:brightness-125"
+                          >
+                            <span
+                              className="h-1.5 w-1.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: colorFor(item) }}
+                            />
+                            <span className="truncate">
+                              {ev.start && (
+                                <span className="text-text-faint">
+                                  {ev.start.toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}{' '}
+                                </span>
+                              )}
+                              {ev.summary || '(no title)'}
+                            </span>
+                          </div>
+                        )
+                      })}
+                      {overflow > 0 && (
+                        <div className="px-1 text-xs text-text-faint">
+                          +{overflow} more
+                        </div>
+                      )}
+                    </div>
                   </div>
+                )
+              })}
+
+              {/* Spanning-bar overlay for this week. */}
+              <div className="pointer-events-none absolute inset-0">
+                {segments.map(
+                  ({
+                    item,
+                    startIdx,
+                    endIdx,
+                    lane,
+                    continuesLeft,
+                    continuesRight,
+                  }) => {
+                    const ev = item.event
+                    const span = endIdx - startIdx + 1
+                    return (
+                      <div
+                        key={item.itemUid + dayKey(week[0])}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onOpenEvent(item)
+                        }}
+                        title={
+                          (ev.recurring ? '↻ recurring · ' : '') + ev.summary
+                        }
+                        className="pointer-events-auto absolute flex cursor-pointer items-center gap-1 overflow-hidden px-1 text-xs text-bg hover:brightness-110"
+                        style={{
+                          left: `calc(${(startIdx / 7) * 100}% + 2px)`,
+                          width: `calc(${(span / 7) * 100}% - 4px)`,
+                          top: DATE_ROW_PX + lane * BAR_PX,
+                          height: BAR_PX - 2,
+                          backgroundColor: colorFor(item),
+                          borderRadius: 3,
+                          borderTopLeftRadius: continuesLeft ? 0 : 3,
+                          borderBottomLeftRadius: continuesLeft ? 0 : 3,
+                          borderTopRightRadius: continuesRight ? 0 : 3,
+                          borderBottomRightRadius: continuesRight ? 0 : 3,
+                        }}
+                      >
+                        {continuesLeft && <span>◀</span>}
+                        <span className="truncate font-medium">
+                          {ev.recurring && '↻ '}
+                          {ev.summary || '(no title)'}
+                        </span>
+                        {continuesRight && (
+                          <span className="ml-auto">▶</span>
+                        )}
+                      </div>
+                    )
+                  },
                 )}
               </div>
             </div>
