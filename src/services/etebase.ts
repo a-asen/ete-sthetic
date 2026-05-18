@@ -1,11 +1,13 @@
 import * as Etebase from 'etebase'
-import type { CollectionInfo, TaskItem } from '../types'
+import type { ColType, CollectionInfo, EventItem, TaskItem } from '../types'
 import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
+import { parseVEvent } from './vevent'
 import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
 
 export const DEFAULT_SERVER = 'https://api.etebase.com'
-const TASK_COLLECTION_TYPE = 'etebase.vtodo'
+const TASK_COLLECTION_TYPE: ColType = 'etebase.vtodo'
+const CALENDAR_COLLECTION_TYPE: ColType = 'etebase.vevent'
 
 let account: Etebase.Account | null = null
 
@@ -154,10 +156,11 @@ export interface ListCollectionsOptions {
 
 export async function listCollections(
   options: ListCollectionsOptions = {},
+  type: ColType = TASK_COLLECTION_TYPE,
 ): Promise<CollectionInfo[]> {
   const acc = await ensureAccount()
   const cm = acc.getCollectionManager()
-  const result = await cm.list(TASK_COLLECTION_TYPE)
+  const result = await cm.list(type)
   return result.data
     .filter((c) => options.includeDeleted || !c.isDeleted)
     .map((c) => {
@@ -470,4 +473,82 @@ export async function deleteCollection(uid: string): Promise<void> {
   collection.delete()
   await cm.upload(collection)
   collectionHandles.delete(uid)
+}
+
+// ---- Calendar (VEVENT), read-only for v1 ----
+// Appended as a separate block (not woven into the task functions) to keep
+// the merge surface with concurrent task work minimal. Reuses the same
+// type-agnostic collection/item plumbing above.
+
+export interface EventSyncResult {
+  items: EventItem[]
+  removed: string[]
+  stoken: string
+}
+
+export interface ListEventItemsOptions {
+  signal?: AbortSignal
+  onBatch?: (batch: EventItem[]) => void
+  fromStoken?: string
+}
+
+// Calendars are just collections of a different type.
+export function listCalendars(
+  options: ListCollectionsOptions = {},
+): Promise<CollectionInfo[]> {
+  return listCollections(options, CALENDAR_COLLECTION_TYPE)
+}
+
+// Mirror of listTaskItems for VEVENT. Same incremental-sync / batching /
+// abort shape; only the parser differs.
+export async function listEventItems(
+  collectionUid: string,
+  options: ListEventItemsOptions = {},
+): Promise<EventSyncResult> {
+  const { signal, onBatch, fromStoken } = options
+  checkAborted(signal)
+
+  const im = await getItemManager(collectionUid)
+  const accumulated: EventItem[] = []
+  const removed: string[] = []
+  let pendingBatch: EventItem[] = []
+
+  const flush = () => {
+    if (pendingBatch.length === 0) return
+    const batch = pendingBatch
+    pendingBatch = []
+    accumulated.push(...batch)
+    onBatch?.(batch)
+  }
+
+  let stoken: string | undefined = fromStoken
+  while (true) {
+    checkAborted(signal)
+    const page = await im.list({ stoken })
+    checkAborted(signal)
+
+    for (const item of page.data) {
+      checkAborted(signal)
+      if (item.isDeleted) {
+        removed.push(item.uid)
+        itemHandles.delete(itemKey(collectionUid, item.uid))
+        continue
+      }
+      const raw = await item.getContent(Etebase.OutputFormat.String)
+      const event = parseVEvent(raw)
+      if (!event) continue
+      itemHandles.set(itemKey(collectionUid, item.uid), item)
+      pendingBatch.push({ itemUid: item.uid, event })
+      if (pendingBatch.length >= BATCH_SIZE) {
+        flush()
+        await yieldToEventLoop()
+        checkAborted(signal)
+      }
+    }
+    stoken = page.stoken
+    if (page.done) break
+  }
+
+  flush()
+  return { items: accumulated, removed, stoken: stoken ?? '' }
 }

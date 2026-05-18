@@ -62,6 +62,43 @@ export interface CollectionInfo {
   isDeleted?: boolean
 }
 
+// ---- Calendar (VEVENT) ----
+
+// EteSync collection content types. Tasks already exist; calendar/contacts
+// are the unified-client expansion (docs/calendar-contacts-plan.md).
+export type ColType = 'etebase.vtodo' | 'etebase.vevent' | 'etebase.vcard'
+
+export interface VEvent {
+  uid: string
+  summary: string
+  description?: string
+  location?: string
+  // Raw iCalendar strings, e.g. "20260520" or "20260520T140000Z".
+  dtStart?: string
+  dtEnd?: string
+  // True when DTSTART is a VALUE=DATE (no time-of-day).
+  allDay: boolean
+  // Resolved to JS Date for grid placement. `end` is exclusive per
+  // RFC 5545 (DTEND is non-inclusive).
+  start?: Date
+  end?: Date
+  status?: string
+  categories: string[]
+  // Present verbatim when the event recurs. v1 does NOT expand occurrences
+  // (calendar-contacts-plan.md phase 4 — high risk); we surface the base
+  // event and flag it so the grid can mark it.
+  rrule?: string
+  recurring: boolean
+  created?: string
+  lastModified?: string
+  raw: string
+}
+
+export interface EventItem {
+  itemUid: string
+  event: VEvent
+}
+
 export type TaskSort = 'priority' | 'due' | 'created' | 'summary'
 
 export interface TaskSortSpec {
