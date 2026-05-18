@@ -10,6 +10,7 @@ export function MonthGrid({
   byDay,
   colorFor,
   today,
+  selected,
   onPickDay,
   onNewEvent,
   onOpenEvent,
@@ -19,6 +20,7 @@ export function MonthGrid({
   byDay: Map<string, EventItem[]>
   colorFor: (item: EventItem) => string
   today: Date
+  selected: Date
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date) => void
   onOpenEvent: (item: EventItem) => void
@@ -50,6 +52,10 @@ export function MonthGrid({
               title="Click to add an event"
               className={`min-h-0 cursor-pointer overflow-hidden border-b border-r border-border p-1 text-left hover:bg-surface-2/60 ${
                 inMonth ? '' : 'bg-surface/40 text-text-faint'
+              } ${
+                sameDay(day, selected)
+                  ? 'ring-1 ring-inset ring-accent'
+                  : ''
               }`}
             >
               <div className="mb-0.5 flex justify-end">

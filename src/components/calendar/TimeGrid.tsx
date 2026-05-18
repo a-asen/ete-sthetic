@@ -72,6 +72,7 @@ export function TimeGrid({
   byDay,
   colorFor,
   today,
+  selected,
   onPickDay,
   onNewEvent,
   onOpenEvent,
@@ -80,6 +81,7 @@ export function TimeGrid({
   byDay: Map<string, EventItem[]>
   colorFor: (item: EventItem) => string
   today: Date
+  selected: Date
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date, hour: number) => void
   onOpenEvent: (item: EventItem) => void
@@ -126,7 +128,11 @@ export function TimeGrid({
             <button
               key={dayKey(d)}
               onClick={() => onPickDay(d)}
-              className="border-l border-border py-1.5 text-center text-xs hover:bg-surface-2/60"
+              className={`border-l border-border py-1.5 text-center text-xs hover:bg-surface-2/60 ${
+                sameDay(d, selected)
+                  ? 'ring-1 ring-inset ring-accent'
+                  : ''
+              }`}
             >
               <span className="text-text-faint">
                 {d.toLocaleDateString([], { weekday: single ? 'long' : 'short' })}

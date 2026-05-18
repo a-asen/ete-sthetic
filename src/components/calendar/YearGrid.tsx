@@ -8,6 +8,7 @@ function MiniMonth({
   month,
   byDay,
   today,
+  selected,
   onPickDay,
   onPickMonth,
 }: {
@@ -15,6 +16,7 @@ function MiniMonth({
   month: number
   byDay: Map<string, EventItem[]>
   today: Date
+  selected: Date
   onPickDay: (d: Date) => void
   onPickMonth: (month: number) => void
 }) {
@@ -46,6 +48,10 @@ function MiniMonth({
                   : inMonth
                     ? 'text-text-muted'
                     : 'text-text-faint/50'
+              } ${
+                !isToday && sameDay(day, selected)
+                  ? 'ring-1 ring-inset ring-accent'
+                  : ''
               }`}
             >
               {day.getDate()}
@@ -64,12 +70,14 @@ export function YearGrid({
   year,
   byDay,
   today,
+  selected,
   onPickDay,
   onPickMonth,
 }: {
   year: number
   byDay: Map<string, EventItem[]>
   today: Date
+  selected: Date
   onPickDay: (d: Date) => void
   onPickMonth: (month: number) => void
 }) {
@@ -82,6 +90,7 @@ export function YearGrid({
           month={m}
           byDay={byDay}
           today={today}
+          selected={selected}
           onPickDay={onPickDay}
           onPickMonth={onPickMonth}
         />

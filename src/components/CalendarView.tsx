@@ -58,6 +58,10 @@ export function CalendarView() {
   const [loadingCount, setLoadingCount] = useState(0)
   const [view, setView] = useState<CalView>(() => m0.view)
   const [anchor, setAnchor] = useState<Date>(() => new Date(m0.anchorMs))
+  // Keyboard-focused day (arrow keys move it; the view pages to follow).
+  const [selected, setSelected] = useState<Date>(() =>
+    startOfDay(new Date(m0.anchorMs)),
+  )
   // Composer is either creating (date/hour prefill) or editing an event.
   const [composer, setComposer] = useState<
     | { mode: 'new'; date: Date; hour?: number }
@@ -266,6 +270,81 @@ export function CalendarView() {
       return next
     })
   }, [])
+
+  // Keyboard shortcuts. Disabled while a modal owns the keyboard or focus
+  // is in a form field. Arrow keys move the selected day and the view
+  // pages to keep it visible; Shift+arrow pages by the view's unit.
+  useEffect(() => {
+    if (composer || conflict) return
+    const handler = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (
+        t &&
+        (t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable)
+      )
+        return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      const viewByKey: Record<string, CalView> = {
+        '1': 'day',
+        '2': '3day',
+        '3': 'week',
+        '4': 'month',
+        '5': 'year',
+      }
+      if (viewByKey[e.key]) {
+        setView(viewByKey[e.key])
+        return
+      }
+      if (e.key === 't' || e.key === 'T') {
+        const td = startOfDay(new Date())
+        setSelected(td)
+        setAnchor(td)
+        return
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        setComposer({ mode: 'new', date: selected })
+        return
+      }
+
+      const arrows: Record<string, number> = {
+        ArrowLeft: -1,
+        ArrowRight: 1,
+        ArrowUp: -7,
+        ArrowDown: 7,
+      }
+      const delta = arrows[e.key]
+      if (delta === undefined) return
+      e.preventDefault()
+
+      if (e.shiftKey) {
+        setAnchor((a) => stepAnchor(view, a, delta < 0 ? -1 : 1))
+        return
+      }
+
+      const next = addDays(selected, delta)
+      setSelected(next)
+      // Page so `next` stays visible.
+      if (view === 'year') {
+        if (next.getFullYear() !== anchor.getFullYear())
+          setAnchor(new Date(next.getFullYear(), 0, 1))
+      } else if (view === 'month') {
+        if (
+          next.getMonth() !== anchor.getMonth() ||
+          next.getFullYear() !== anchor.getFullYear()
+        )
+          setAnchor(new Date(next.getFullYear(), next.getMonth(), 1))
+      } else {
+        const r = viewDayRange(view, anchor)
+        if (next < r.start || next >= r.end) setAnchor(next)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [view, anchor, selected, composer, conflict])
 
   // First visible calendar is the default target for new events.
   const defaultCalUid =
@@ -483,6 +562,7 @@ export function CalendarView() {
             year={anchor.getFullYear()}
             byDay={byDay}
             today={today}
+            selected={selected}
             onPickDay={pickDay}
             onPickMonth={pickMonth}
           />
@@ -493,6 +573,7 @@ export function CalendarView() {
             byDay={byDay}
             colorFor={colorFor}
             today={today}
+            selected={selected}
             onPickDay={pickDay}
             onNewEvent={(d) => setComposer({ mode: 'new', date: d })}
             onOpenEvent={openEvent}
@@ -503,6 +584,7 @@ export function CalendarView() {
             byDay={byDay}
             colorFor={colorFor}
             today={today}
+            selected={selected}
             onPickDay={pickDay}
             onNewEvent={(d, hour) =>
               setComposer({ mode: 'new', date: d, hour })
