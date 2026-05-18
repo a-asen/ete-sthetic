@@ -11,6 +11,7 @@ export function MonthGrid({
   colorFor,
   today,
   onPickDay,
+  onNewEvent,
 }: {
   days: Date[]
   monthOf: number
@@ -18,6 +19,7 @@ export function MonthGrid({
   colorFor: (item: EventItem) => string
   today: Date
   onPickDay: (d: Date) => void
+  onNewEvent: (d: Date) => void
 }) {
   return (
     <div className="flex flex-1 flex-col">
@@ -40,16 +42,22 @@ export function MonthGrid({
           const shown = evs.slice(0, MAX_CHIPS)
           const overflow = evs.length - shown.length
           return (
-            <button
+            <div
               key={k}
-              onClick={() => onPickDay(day)}
-              className={`min-h-0 overflow-hidden border-b border-r border-border p-1 text-left hover:bg-surface-2/60 ${
+              onClick={() => onNewEvent(day)}
+              title="Click to add an event"
+              className={`min-h-0 cursor-pointer overflow-hidden border-b border-r border-border p-1 text-left hover:bg-surface-2/60 ${
                 inMonth ? '' : 'bg-surface/40 text-text-faint'
               }`}
             >
               <div className="mb-0.5 flex justify-end">
-                <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onPickDay(day)
+                  }}
+                  title="Open day"
+                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs hover:ring-1 hover:ring-accent ${
                     isToday
                       ? 'bg-accent font-semibold text-bg'
                       : inMonth
@@ -58,7 +66,7 @@ export function MonthGrid({
                   }`}
                 >
                   {day.getDate()}
-                </span>
+                </button>
               </div>
               <div className="space-y-0.5">
                 {shown.map((item) => {
@@ -99,7 +107,7 @@ export function MonthGrid({
                   </div>
                 )}
               </div>
-            </button>
+            </div>
           )
         })}
       </div>

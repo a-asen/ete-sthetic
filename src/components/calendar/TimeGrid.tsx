@@ -73,12 +73,14 @@ export function TimeGrid({
   colorFor,
   today,
   onPickDay,
+  onNewEvent,
 }: {
   days: Date[]
   byDay: Map<string, EventItem[]>
   colorFor: (item: EventItem) => string
   today: Date
   onPickDay: (d: Date) => void
+  onNewEvent: (d: Date, hour: number) => void
 }) {
   const hours = useMemo(
     () => Array.from({ length: 24 }, (_, i) => i),
@@ -181,7 +183,14 @@ export function TimeGrid({
             return (
               <div
                 key={dayKey(d)}
-                className="relative border-l border-border"
+                onClick={(e) => {
+                  const y =
+                    e.clientY -
+                    e.currentTarget.getBoundingClientRect().top
+                  onNewEvent(d, Math.max(0, Math.min(23, Math.floor(y / HOUR_PX))))
+                }}
+                title="Click to add an event"
+                className="relative cursor-pointer border-l border-border"
               >
                 {hours.map((h) => (
                   <div
@@ -195,6 +204,7 @@ export function TimeGrid({
                   return (
                     <div
                       key={item.itemUid}
+                      onClick={(e) => e.stopPropagation()}
                       title={
                         (ev.recurring ? '↻ recurring · ' : '') +
                         ev.summary +

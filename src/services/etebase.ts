@@ -1,7 +1,7 @@
 import * as Etebase from 'etebase'
 import type { ColType, CollectionInfo, EventItem, TaskItem } from '../types'
 import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
-import { parseVEvent } from './vevent'
+import { buildVEvent, parseVEvent, type NewVEventArgs } from './vevent'
 import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
 import { clearAllCalSnapshots } from './calsnapshot'
@@ -555,4 +555,18 @@ export async function listEventItems(
 
   flush()
   return { items: accumulated, removed, stoken: stoken ?? '' }
+}
+
+export async function createEvent(
+  collectionUid: string,
+  args: NewVEventArgs,
+): Promise<EventItem> {
+  const im = await getItemManager(collectionUid)
+  const { raw } = buildVEvent(args)
+  const item = await im.create({ name: args.summary, mtime: Date.now() }, raw)
+  await im.transaction([item])
+  itemHandles.set(itemKey(collectionUid, item.uid), item)
+  const event = parseVEvent(raw)
+  if (!event) throw new Error('Built VEVENT failed to parse')
+  return { itemUid: item.uid, event }
 }

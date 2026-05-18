@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { listCalendars, listEventItems } from '../services/etebase'
+import { createEvent, listCalendars, listEventItems } from '../services/etebase'
 import type { CollectionInfo, EventItem } from '../types'
+import type { NewVEventArgs } from '../services/vevent'
 import {
   type CalView,
   addDays,
@@ -17,6 +18,7 @@ import { MonthGrid } from './calendar/MonthGrid'
 import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
 import { CalendarSidebar } from './calendar/CalendarSidebar'
+import { EventComposer } from './calendar/EventComposer'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -43,6 +45,12 @@ export function CalendarView() {
   const [loadingCount, setLoadingCount] = useState(0)
   const [view, setView] = useState<CalView>(() => m0.view)
   const [anchor, setAnchor] = useState<Date>(() => new Date(m0.anchorMs))
+  const [composer, setComposer] = useState<{
+    date: Date
+    hour?: number
+  } | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [createErr, setCreateErr] = useState<string | null>(null)
   // stoken per calendar — a ref (not render state); seeded from memory.
   const stokenRef = useRef<Map<string, string>>(new Map(m0.stokenByCal))
   const loadAbort = useRef<AbortController | null>(null)
@@ -235,6 +243,36 @@ export function CalendarView() {
     })
   }, [])
 
+  // First visible calendar is the default target for new events.
+  const defaultCalUid =
+    calendars?.find((c) => !hidden.has(c.uid))?.uid ??
+    calendars?.[0]?.uid ??
+    ''
+
+  const handleCreate = useCallback(
+    async (calUid: string, args: NewVEventArgs) => {
+      setCreating(true)
+      setCreateErr(null)
+      try {
+        const created = await createEvent(calUid, args)
+        // Optimistic insert. The disk snapshot picks this up on the next
+        // background delta sync (the item comes back under its stoken);
+        // the in-memory cache retains it immediately via the mirror effect.
+        setEventsByCal((prev) => {
+          const next = new Map(prev)
+          next.set(calUid, [...(next.get(calUid) ?? []), created])
+          return next
+        })
+        setCreating(false)
+        setComposer(null)
+      } catch (e) {
+        setCreating(false)
+        setCreateErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [],
+  )
+
   if (error) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
@@ -291,6 +329,12 @@ export function CalendarView() {
             >
               Today
             </button>
+            <button
+              onClick={() => setComposer({ date: anchor })}
+              className="ml-1 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90"
+            >
+              + New
+            </button>
           </div>
           <h1 className="truncate text-sm font-semibold">
             {rangeTitle(view, anchor)}
@@ -334,6 +378,7 @@ export function CalendarView() {
             colorFor={colorFor}
             today={today}
             onPickDay={pickDay}
+            onNewEvent={(d) => setComposer({ date: d })}
           />
         ) : (
           <TimeGrid
@@ -342,9 +387,26 @@ export function CalendarView() {
             colorFor={colorFor}
             today={today}
             onPickDay={pickDay}
+            onNewEvent={(d, hour) => setComposer({ date: d, hour })}
           />
         )}
       </div>
+
+      {composer && calendars && calendars.length > 0 && (
+        <EventComposer
+          date={composer.date}
+          defaultHour={composer.hour}
+          calendars={calendars}
+          defaultCalUid={defaultCalUid}
+          saving={creating}
+          error={createErr}
+          onCreate={handleCreate}
+          onClose={() => {
+            setComposer(null)
+            setCreateErr(null)
+          }}
+        />
+      )}
     </div>
   )
 }

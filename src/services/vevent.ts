@@ -101,3 +101,63 @@ export function parseVEvent(raw: string): VEvent | null {
     raw,
   }
 }
+
+const PRODID = '-//ete-stethic//EN'
+
+function icalUtcNow(): ICAL.Time {
+  return ICAL.Time.fromJSDate(new Date(), true)
+}
+
+// Local wall-clock time (floating, no TZID). v1 keeps timezone handling
+// out of scope (calendar-contacts-plan.md); a personal single-tz client
+// is fine with floating times. allDay → VALUE=DATE.
+function localTime(d: Date, allDay: boolean): ICAL.Time {
+  return ICAL.Time.fromData({
+    year: d.getFullYear(),
+    month: d.getMonth() + 1,
+    day: d.getDate(),
+    hour: allDay ? 0 : d.getHours(),
+    minute: allDay ? 0 : d.getMinutes(),
+    second: 0,
+    isDate: allDay,
+  })
+}
+
+export interface NewVEventArgs {
+  summary: string
+  start: Date
+  end: Date
+  allDay: boolean
+  description?: string
+  location?: string
+}
+
+// Build a fresh VCALENDAR + VEVENT for a new event. For all-day events
+// DTEND is exclusive per RFC 5545, so callers pass the day after the last
+// day; we serialize start/end as VALUE=DATE.
+export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
+  const uid = crypto.randomUUID()
+  const stamp = icalUtcNow()
+
+  const cal = new ICAL.Component(['vcalendar', [], []])
+  cal.updatePropertyWithValue('version', '2.0')
+  cal.updatePropertyWithValue('prodid', PRODID)
+
+  const vevent = new ICAL.Component('vevent')
+  vevent.updatePropertyWithValue('uid', uid)
+  vevent.updatePropertyWithValue('dtstamp', stamp)
+  vevent.updatePropertyWithValue('created', stamp)
+  vevent.updatePropertyWithValue('last-modified', stamp)
+  vevent.updatePropertyWithValue('summary', args.summary)
+  vevent.updatePropertyWithValue('dtstart', localTime(args.start, args.allDay))
+  vevent.updatePropertyWithValue('dtend', localTime(args.end, args.allDay))
+  if (args.description) {
+    vevent.updatePropertyWithValue('description', args.description)
+  }
+  if (args.location) {
+    vevent.updatePropertyWithValue('location', args.location)
+  }
+
+  cal.addSubcomponent(vevent)
+  return { uid, raw: cal.toString() }
+}
