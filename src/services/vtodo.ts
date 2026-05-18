@@ -56,12 +56,11 @@ function asString(value: unknown): string | undefined {
   return undefined
 }
 
-export function parseVTodo(raw: string): VTodo | null {
-  // The ENTIRE parse is defensive: a single malformed item (bad iCal,
-  // missing VCALENDAR wrapper, odd jCal shape, …) must degrade to
-  // "skip this item" (null), never throw — otherwise one bad task aborts
-  // the whole collection sync. ical.js throws low-level errors like
-  // "undefined is not an object (evaluating 'comps.length')" for these.
+// Strict parse: fully defensive (never throws — a malformed item must
+// not abort the whole collection sync), but only succeeds on
+// well-formed VCALENDAR/VTODO content. Returns null otherwise; the
+// lenient wrapper below decides what to do with a null.
+function strictParseVTodo(raw: string): VTodo | null {
   try {
     const jcal = ICAL.parse(raw)
     const comp = new ICAL.Component(jcal)
@@ -173,6 +172,64 @@ export function parseVTodo(raw: string): VTodo | null {
     }
   } catch {
     return null
+  }
+}
+
+// Small stable hash (djb2) → used to give an un-parseable item a
+// deterministic synthetic uid so it keeps its identity across syncs.
+function hashString(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = (h * 33) ^ s.charCodeAt(i)
+  return (h >>> 0).toString(36)
+}
+
+// Pull a single (line-unfolded) iCal property value out of raw text via
+// regex — last resort when ical.js can't build a component at all.
+function recoverProp(raw: string, name: string): string | undefined {
+  const m = raw.match(
+    new RegExp(`^${name}(?:;[^:\\r\\n]*)?:(.*(?:\\r?\\n[ \\t].*)*)`, 'im'),
+  )
+  if (!m) return undefined
+  return m[1].replace(/\r?\n[ \t]/g, '').trim() || undefined
+}
+
+// Lenient parse used everywhere. Tiers:
+//  1. strict parse (well-formed) — the common path.
+//  2. salvage: a bare VTODO with no VCALENDAR wrapper is extremely
+//     common from other clients — wrap it and re-parse strictly. If that
+//     works it's a *normal* task (and saving re-stores the fixed form).
+//  3. recover: ical.js still can't parse it — best-effort regex out
+//     uid/summary/status and return a `broken` VTodo that keeps the
+//     ORIGINAL raw, so the user can view/hand-fix it (raw editor) and
+//     it's never silently lost.
+export function parseVTodo(raw: string): VTodo | null {
+  const strict = strictParseVTodo(raw)
+  if (strict) return strict
+
+  if (!/BEGIN:VCALENDAR/i.test(raw) && /BEGIN:VTODO/i.test(raw)) {
+    const wrapped = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:${PRODID}\r\n${raw.trim()}\r\nEND:VCALENDAR\r\n`
+    const salvaged = strictParseVTodo(wrapped)
+    if (salvaged) return salvaged
+  }
+
+  if (!raw || !raw.trim()) return null
+
+  const uid = recoverProp(raw, 'UID') ?? `broken-${hashString(raw)}`
+  const summary = recoverProp(raw, 'SUMMARY') ?? '(unreadable task)'
+  const rawStatus = recoverProp(raw, 'STATUS')?.toUpperCase()
+  const status: TaskStatus =
+    rawStatus && VALID_STATUSES.has(rawStatus as TaskStatus)
+      ? (rawStatus as TaskStatus)
+      : 'NEEDS-ACTION'
+
+  return {
+    uid,
+    summary,
+    status,
+    priority: 0,
+    categories: [],
+    raw,
+    broken: true,
   }
 }
 

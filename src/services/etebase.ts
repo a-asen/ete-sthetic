@@ -307,6 +307,32 @@ export function updateTask(
   })
 }
 
+// Replace an item's content with a raw iCal string verbatim — no
+// updateVTodo re-serialization. Used by the raw editor to hand-fix a
+// `broken` item without the normal patch path (which would re-parse and
+// reject / strip the very content we're trying to repair).
+export function updateTaskRaw(
+  collectionUid: string,
+  itemUid: string,
+  rawString: string,
+): Promise<TaskItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    const item = await getItem(collectionUid, itemUid)
+    await item.setContent(rawString)
+
+    const todo = parseVTodo(rawString)
+    // Keep the meta name roughly in sync when we can read a summary;
+    // leave it untouched otherwise.
+    if (todo && !todo.broken) setItemMeta(item, todo.summary)
+
+    const im = await getItemManager(collectionUid)
+    await im.transaction([item])
+
+    if (!todo) throw new Error('Saved content still could not be parsed')
+    return { itemUid: item.uid, todo }
+  })
+}
+
 export async function toggleComplete(
   collectionUid: string,
   itemUid: string,

@@ -31,6 +31,9 @@ interface Props {
   onRequestFocus: () => void
   onExit: () => void
   onSave: (patch: VTodoPatch) => Promise<void>
+  // Raw-iCal passthrough save, used for `broken` items the normal patch
+  // editor can't represent.
+  onSaveRaw: (raw: string) => Promise<void>
   pending?: boolean
 }
 
@@ -281,6 +284,7 @@ export function DetailPanel({
   onRequestFocus,
   onExit,
   onSave,
+  onSaveRaw,
   pending = false,
 }: Props) {
   // Draft is seeded once per mount. MainView re-keys this component on
@@ -290,6 +294,11 @@ export function DetailPanel({
   const [draft, setDraft] = useState<Draft | null>(
     task ? draftFromTask(task) : null,
   )
+  // Raw-iCal editor state for `broken` items (seeded once per mount,
+  // like draft — MainView re-keys on uid change).
+  const broken = task?.todo.broken === true
+  const [rawDraft, setRawDraft] = useState(task?.todo.raw ?? '')
+  const [savingRaw, setSavingRaw] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [tagInput, setTagInput] = useState('')
   const [resourceInput, setResourceInput] = useState('')
@@ -355,7 +364,10 @@ export function DetailPanel({
     if (!task || !draft) return {} as VTodoPatch
     return buildPatch(task, draft)
   }, [task, draft])
-  const isDirty = Object.keys(patch).length > 0
+  const rawDirty = broken && rawDraft !== (task?.todo.raw ?? '')
+  const isDirty = broken
+    ? rawDirty
+    : Object.keys(patch).length > 0
 
   // Blur whatever's focused inside the panel so the global keyboard
   // handlers in MainView / TaskTree can pick up arrow keys again.
@@ -413,14 +425,17 @@ export function DetailPanel({
       setConfirming(false)
       return
     }
-    const p = buildPatch(task, draft)
-    // Return to the task view immediately; the save runs in the
-    // background and the row shows a "saving…" marker (pendingUids /
-    // optimistic update are handled by the caller) until it syncs.
     setConfirming(false)
     blurInsidePanel()
     onExit()
-    void onSave(p)
+    // Return to the task view immediately; the save runs in the
+    // background and the row shows a "saving…" marker (pendingUids /
+    // optimistic update are handled by the caller) until it syncs.
+    if (broken) {
+      void onSaveRaw(rawDraft).catch(() => {})
+    } else {
+      void onSave(buildPatch(task, draft))
+    }
   }
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -552,6 +567,64 @@ export function DetailPanel({
             <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-text-faint">
               Select a task to view and edit its details.
             </div>
+          ) : broken ? (
+            <>
+              <div className="flex-1 overflow-y-auto px-4 pb-4">
+                <div className="mb-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text-muted">
+                  ⚠ This item's iCal couldn't be parsed, so it's shown
+                  read-as-raw. Fix the text below and save to repair it —
+                  nothing was lost.
+                </div>
+                <label className={labelClass}>Raw iCal</label>
+                <textarea
+                  value={rawDraft}
+                  spellCheck={false}
+                  onChange={(e) => setRawDraft(e.target.value)}
+                  rows={18}
+                  className={`${fieldClass} resize-y font-mono text-[12px] leading-snug`}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+                <span className="text-[11px] text-text-faint">
+                  {rawDraft !== (task.todo.raw ?? '')
+                    ? 'Unsaved raw edits'
+                    : 'No changes'}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRawDraft(task.todo.raw ?? '')}
+                    disabled={
+                      savingRaw || rawDraft === (task.todo.raw ?? '')
+                    }
+                    className="h-7 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Revert
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      savingRaw || rawDraft === (task.todo.raw ?? '')
+                    }
+                    onClick={() => {
+                      setSavingRaw(true)
+                      void onSaveRaw(rawDraft)
+                        .then(() => {
+                          blurInsidePanel()
+                          onExit()
+                        })
+                        .catch(() => {
+                          /* error shown by caller */
+                        })
+                        .finally(() => setSavingRaw(false))
+                    }}
+                    className="h-7 rounded-md bg-accent px-2 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {savingRaw ? 'Saving…' : 'Save raw'}
+                  </button>
+                </div>
+              </div>
+            </>
           ) : (
             <>
               <div className="flex-1 overflow-y-auto px-4 pb-4">

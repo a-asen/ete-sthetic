@@ -741,6 +741,15 @@ export function TaskTree({
               </span>
             )}
 
+            {node.todo.broken && (
+              <span
+                className="shrink-0 rounded border border-danger/40 bg-danger/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-danger"
+                title="Couldn't parse this item's iCal — open to view/fix the raw content"
+              >
+                ⚠ unreadable
+              </span>
+            )}
+
             {pendingUids?.has(node.itemUid) && (
               <span
                 className="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-muted"

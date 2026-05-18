@@ -44,6 +44,10 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       order (was raw server order).
 - [x] #16 Completion timestamp shown read-only in the detail panel's
       Advanced section (data was already recorded by `updateVTodo`).
+- [x] Malformed items are no longer silently dropped: lenient parse
+      (strict → wrap bare VTODO → regex-recover), a "⚠ unreadable" row,
+      and a raw-iCal editor (save bypasses the patch path) so a broken
+      task can be viewed and hand-fixed instead of lost.
 - [x] Confirmed: COMPLETED timestamp is already written on completion and
       cleared when cycled off (`updateVTodo`). Not yet shown in the UI —
       see queued #16.

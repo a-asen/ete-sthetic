@@ -40,6 +40,11 @@ export interface VTodo {
   comment?: string
   resources?: string[]
   relatedTo?: RelatedLink[]
+  // True when the source iCal couldn't be parsed and this is a
+  // best-effort recovery. Most fields are defaults; `raw` holds the
+  // original content for the raw editor. Not normally editable via
+  // VTodoPatch — use the raw passthrough.
+  broken?: boolean
   raw: string
 }
 

@@ -8,6 +8,7 @@ import {
   listTaskItems,
   logout,
   moveTasksToCollection,
+  updateTaskRaw,
   toggleComplete,
   updateCollectionMeta,
   updateTask,
@@ -1929,6 +1930,43 @@ export function MainView({ onLoggedOut }: Props) {
     ],
   )
 
+  // Raw passthrough save for `broken` items: store the hand-edited iCal
+  // verbatim, then re-parse (leniently) to refresh the row.
+  const handleSaveRaw = useCallback(
+    async (rawString: string) => {
+      if (!activeUid) return
+      const colUid = activeUid
+      const items = itemsByUid.get(activeUid)
+      const target = items?.find((it) => it.todo.uid === selectedTaskUid)
+      if (!target) return
+      const itemUid = target.itemUid
+      const original = target
+      setMutationError(null)
+      setPendingItemUids((prev) => new Set(prev).add(itemUid))
+      try {
+        const result = await updateTaskRaw(colUid, itemUid, rawString)
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, result)
+      } catch (err) {
+        if (cancelledRef.current) return
+        replaceCachedItem(colUid, itemUid, original)
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to save raw content',
+        )
+        throw err
+      } finally {
+        if (!cancelledRef.current) {
+          setPendingItemUids((prev) => {
+            const next = new Set(prev)
+            next.delete(itemUid)
+            return next
+          })
+        }
+      }
+    },
+    [activeUid, itemsByUid, selectedTaskUid],
+  )
+
   const handleToggleComplete = useCallback(
     async (node: TaskNode) => {
       if (!activeUid) return
@@ -2989,6 +3027,7 @@ export function MainView({ onLoggedOut }: Props) {
         onRequestFocus={() => setFocusZone('details')}
         onExit={() => setFocusZone('tasks')}
         onSave={handleSaveDetails}
+        onSaveRaw={handleSaveRaw}
         pending={
           selectedTaskItem
             ? pendingItemUids.has(selectedTaskItem.itemUid)
