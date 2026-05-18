@@ -36,6 +36,12 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       task-view shortcuts no longer fire while the sidebar is focused.
 - [x] Selection indicator is now a symmetric inset border (was an
       asymmetric inset ring).
+- [x] `+` from "none" priority now goes to *low* first (then steps up),
+      including phone mode (None→Low→Med→High).
+- [x] Change a list's colour from the app (sidebar header palette popover,
+      preset swatches + "default").
+- [x] Default-selected list is now the first in the *sorted* sidebar
+      order (was raw server order).
 - [x] Confirmed: COMPLETED timestamp is already written on completion and
       cleared when cycled off (`updateVTodo`). Not yet shown in the UI —
       see queued #16.

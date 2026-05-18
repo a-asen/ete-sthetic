@@ -76,6 +76,46 @@ interface SidebarSortSpec {
 
 const DEFAULT_SIDEBAR_SORT: SidebarSortSpec = { sort: 'name', reverse: false }
 
+// Curated swatches for list colours — muted to fit the theme.
+const LIST_COLORS = [
+  '#d96f6f',
+  '#d99a4e',
+  '#d9c84e',
+  '#6fb86f',
+  '#4ea7a7',
+  '#5e8fd9',
+  '#9a7fd9',
+  '#c97fb8',
+  '#8a8f99',
+]
+
+// Single source of truth for sidebar ordering — used both for rendering
+// and for picking the default-selected list, so "the list we land on" is
+// always the one shown first.
+function sortCollections(
+  list: CollectionInfo[],
+  spec: SidebarSortSpec,
+  itemsByUid: Map<string, TaskItem[]>,
+): CollectionInfo[] {
+  const byName = (a: CollectionInfo, b: CollectionInfo) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  const sign = spec.reverse ? -1 : 1
+  if (spec.sort === 'name') {
+    return [...list].sort((a, b) => byName(a, b) * sign)
+  }
+  const count = (uid: string) => {
+    const items = itemsByUid.get(uid)
+    if (!items) return 0
+    const c = countTasks(items)
+    return spec.sort === 'open' ? c.open : c.total
+  }
+  return [...list].sort((a, b) => {
+    const diff = count(b.uid) - count(a.uid)
+    if (diff !== 0) return diff * sign
+    return byName(a, b)
+  })
+}
+
 const TASK_SORT_OPTIONS: Array<SortOption<TaskSort>> = [
   {
     value: 'priority',
@@ -302,6 +342,12 @@ export function MainView({ onLoggedOut }: Props) {
   const [itemsByUid, setItemsByUid] = useState<Map<string, TaskItem[]>>(
     () => new Map(),
   )
+  // Latest itemsByUid, readable from the (deps-stable) collections-load
+  // effect without making it re-run on every item change.
+  const itemsByUidRef = useRef(itemsByUid)
+  useEffect(() => {
+    itemsByUidRef.current = itemsByUid
+  }, [itemsByUid])
   const [errorByUid, setErrorByUid] = useState<Map<string, string>>(
     () => new Map(),
   )
@@ -403,12 +449,40 @@ export function MainView({ onLoggedOut }: Props) {
   const [sidebarSort, setSidebarSortState] = useState<SidebarSortSpec>(() =>
     readSidebarSort(),
   )
+  const sidebarSortRef = useRef(sidebarSort)
   const setSidebarSort = useCallback((next: SidebarSortSpec) => {
+    sidebarSortRef.current = next
     setSidebarSortState(next)
     writeSidebarSort(next)
   }, [])
   const [sidebarSortOpen, setSidebarSortOpen] = useState(false)
   const [sidebarSortFocusKey, setSidebarSortFocusKey] = useState(0)
+  const [colorPopoverOpen, setColorPopoverOpen] = useState(false)
+  const colorPopoverRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!colorPopoverOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setColorPopoverOpen(false)
+      }
+    }
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      // Ignore the toggle button itself so its onClick can close it
+      // (instead of this closing then the click reopening).
+      if (t.closest('[aria-label="Recolour this list"]')) return
+      if (!colorPopoverRef.current?.contains(t)) {
+        setColorPopoverOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [colorPopoverOpen])
   // Two persisted sidebar widths — one per focus state. Defaults match the
   // Tailwind w-52 / w-12 we had before the drag handle existed.
   const [sidebarFocusedWidth, setSidebarFocusedWidth] = useState<number>(() =>
@@ -760,11 +834,16 @@ export function MainView({ onLoggedOut }: Props) {
         setCollections(cs)
         setCollectionsError(null)
         if (cs.length > 0) {
-          // Only auto-select the first list if we don't already have an
-          // active one. Otherwise toggling "show deleted" would jump the
-          // selection around.
+          // Keep a still-valid selection (so toggling "show deleted"
+          // doesn't jump it); otherwise default to the list shown first
+          // in the *sorted* sidebar order, not raw server order.
+          const sortedFirst = sortCollections(
+            cs,
+            sidebarSortRef.current,
+            itemsByUidRef.current,
+          )[0]?.uid
           setActiveUid((cur) =>
-            cur && cs.some((c) => c.uid === cur) ? cur : cs[0].uid,
+            cur && cs.some((c) => c.uid === cur) ? cur : sortedFirst,
           )
         }
 
@@ -916,24 +995,7 @@ export function MainView({ onLoggedOut }: Props) {
   // `reverse` flips that.
   const sortedCollections = useMemo(() => {
     if (!collections) return null
-    const byName = (a: CollectionInfo, b: CollectionInfo) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-    if (sidebarSort.sort === 'name') {
-      const sign = sidebarSort.reverse ? -1 : 1
-      return [...collections].sort((a, b) => byName(a, b) * sign)
-    }
-    const count = (uid: string) => {
-      const items = itemsByUid.get(uid)
-      if (!items) return 0
-      const c = countTasks(items)
-      return sidebarSort.sort === 'open' ? c.open : c.total
-    }
-    const sign = sidebarSort.reverse ? -1 : 1
-    return [...collections].sort((a, b) => {
-      const diff = count(b.uid) - count(a.uid)
-      if (diff !== 0) return diff * sign
-      return byName(a, b)
-    })
+    return sortCollections(collections, sidebarSort, itemsByUid)
   }, [collections, sidebarSort, itemsByUid])
 
 
@@ -1264,6 +1326,31 @@ export function MainView({ onLoggedOut }: Props) {
       if (!cancelledRef.current) setListBusy(false)
     }
   }, [deletingList, refreshCollections])
+
+  const handleSetListColor = useCallback(
+    async (color: string | undefined) => {
+      const uid = activeUid
+      const col = sortedCollections?.find((c) => c.uid === uid)
+      if (!uid || !col || col.isDeleted) return
+      setColorPopoverOpen(false)
+      if ((col.color ?? undefined) === (color ?? undefined)) return
+      setListBusy(true)
+      setListError(null)
+      try {
+        await updateCollectionMeta(uid, { color })
+        if (cancelledRef.current) return
+        refreshCollections()
+      } catch (err) {
+        if (cancelledRef.current) return
+        setListError(
+          err instanceof Error ? err.message : 'Failed to recolour list',
+        )
+      } finally {
+        if (!cancelledRef.current) setListBusy(false)
+      }
+    },
+    [activeUid, sortedCollections, refreshCollections],
+  )
 
   // Global single-key shortcuts: l / t to switch focus zones, n to start a
   // new task, f to toggle Hide done, plus sidebar arrow navigation while
@@ -2037,6 +2124,73 @@ export function MainView({ onLoggedOut }: Props) {
                           <path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8.4a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9L11 4.5" />
                         </svg>
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFocusZone('sidebar')
+                          setColorPopoverOpen((open) => !open)
+                        }}
+                        disabled={
+                          !sortedCollections?.some(
+                            (c) => c.uid === activeUid && !c.isDeleted,
+                          )
+                        }
+                        aria-expanded={colorPopoverOpen}
+                        title="Recolour this list"
+                        aria-label="Recolour this list"
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className="h-3 w-3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <circle cx="8" cy="8" r="5.5" />
+                          <circle cx="8" cy="5" r="0.6" fill="currentColor" />
+                          <circle cx="5.2" cy="7.2" r="0.6" fill="currentColor" />
+                          <circle cx="6.4" cy="10.4" r="0.6" fill="currentColor" />
+                          <circle cx="10" cy="9.6" r="0.6" fill="currentColor" />
+                        </svg>
+                      </button>
+                      {colorPopoverOpen && (
+                        <div
+                          ref={colorPopoverRef}
+                          role="dialog"
+                          aria-label="List colour"
+                          className="absolute right-0 top-6 z-20 w-44 rounded-md border border-border bg-surface p-2 shadow-xl"
+                        >
+                          <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+                            List colour
+                          </p>
+                          <div className="flex flex-wrap gap-1.5 px-1">
+                            {LIST_COLORS.map((c) => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => void handleSetListColor(c)}
+                                title={c}
+                                aria-label={`Set colour ${c}`}
+                                className="h-5 w-5 rounded-full border border-border transition-transform hover:scale-110"
+                                style={{ background: c }}
+                              />
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => void handleSetListColor(undefined)}
+                              title="Default (no colour)"
+                              aria-label="Default colour"
+                              className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={() => {

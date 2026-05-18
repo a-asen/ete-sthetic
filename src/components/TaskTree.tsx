@@ -5,7 +5,9 @@ import { flattenVisible } from '../services/tree'
 function bumpPriority(current: Priority, delta: 1 | -1): Priority {
   // delta 1 = "more important" (toward 1). delta -1 = "less important".
   if (delta === 1) {
-    if (current === 0) return 5
+    // Starting from "none", the first bump is the *lowest* real
+    // priority; subsequent bumps step toward highest.
+    if (current === 0) return 9
     return Math.max(1, current - 1) as Priority
   }
   if (current === 0 || current === 9) return current
@@ -19,8 +21,8 @@ function bumpPriorityPhone(current: Priority, delta: 1 | -1): Priority {
   const bucket: Priority =
     current === 0 ? 0 : current <= 4 ? 1 : current === 5 ? 5 : 9
   if (delta === 1) {
-    // more important: None → Medium → High (stays at High)
-    if (bucket === 0) return 5
+    // more important: None → Low → Medium → High (stays at High)
+    if (bucket === 0) return 9
     if (bucket === 9) return 5
     if (bucket === 5) return 1
     return 1
