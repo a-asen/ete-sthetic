@@ -162,15 +162,7 @@ export async function listCollections(
     .filter((c) => options.includeDeleted || !c.isDeleted)
     .map((c) => {
       collectionHandles.set(c.uid, c)
-      const meta = c.getMeta()
-      const info: CollectionInfo = {
-        uid: c.uid,
-        name: meta.name ?? '(untitled)',
-        description: meta.description,
-        color: meta.color,
-      }
-      if (c.isDeleted) info.isDeleted = true
-      return info
+      return collectionInfo(c)
     })
 }
 
@@ -414,4 +406,68 @@ export async function moveTasksToCollection(
     out.push({ itemUid: created[i].uid, todo })
   }
   return out
+}
+
+function collectionInfo(c: Etebase.Collection): CollectionInfo {
+  const meta = c.getMeta()
+  const info: CollectionInfo = {
+    uid: c.uid,
+    name: meta.name ?? '(untitled)',
+    description: meta.description,
+    color: meta.color,
+  }
+  if (c.isDeleted) info.isDeleted = true
+  return info
+}
+
+// Create a new task list (collection). Etebase requires a non-undefined
+// content blob even for tasks collections, where the items live as
+// separate encrypted items — an empty string is the convention.
+export async function createCollection(
+  name: string,
+  opts: { description?: string; color?: string } = {},
+): Promise<CollectionInfo> {
+  const acc = await ensureAccount()
+  const cm = acc.getCollectionManager()
+  const collection = await cm.create(
+    TASK_COLLECTION_TYPE,
+    {
+      name,
+      description: opts.description,
+      color: opts.color,
+      mtime: Date.now(),
+    },
+    '',
+  )
+  await cm.upload(collection)
+  collectionHandles.set(collection.uid, collection)
+  return collectionInfo(collection)
+}
+
+// Rename (and optionally recolor / re-describe) an existing list. Merges
+// onto the existing meta so unknown keys survive the round-trip.
+export async function updateCollectionMeta(
+  uid: string,
+  patch: { name?: string; description?: string; color?: string },
+): Promise<CollectionInfo> {
+  const acc = await ensureAccount()
+  const cm = acc.getCollectionManager()
+  const collection = await getCollection(uid)
+  const meta = collection.getMeta()
+  collection.setMeta({ ...meta, ...patch, mtime: Date.now() })
+  await cm.upload(collection)
+  collectionHandles.set(uid, collection)
+  return collectionInfo(collection)
+}
+
+// Delete a list. This is a soft delete on the server (it becomes a
+// tombstone visible via listCollections({ includeDeleted: true })),
+// matching how other EteSync clients behave.
+export async function deleteCollection(uid: string): Promise<void> {
+  const acc = await ensureAccount()
+  const cm = acc.getCollectionManager()
+  const collection = await getCollection(uid)
+  collection.delete()
+  await cm.upload(collection)
+  collectionHandles.delete(uid)
 }
