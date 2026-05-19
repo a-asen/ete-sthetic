@@ -32,6 +32,8 @@ export function EventComposer({
   onUpdate,
   onDelete,
   onClose,
+  serverChanged,
+  onReload,
 }: {
   date: Date
   defaultHour?: number
@@ -48,6 +50,9 @@ export function EventComposer({
   onUpdate?: (patch: VEventPatch, calUid: string) => void
   onDelete?: () => void
   onClose: () => void
+  // The event changed on the server while it was open here.
+  serverChanged?: boolean
+  onReload?: () => void
 }) {
   const ev = editing?.event
   const start0 = ev?.start
@@ -149,6 +154,24 @@ export function EventComposer({
         <h3 className="mb-4 text-sm font-medium text-text">
           {editing ? 'Edit event' : 'New event'}
         </h3>
+
+        {serverChanged && (
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-danger/50 bg-danger/10 px-3 py-2 text-xs text-danger">
+            <span className="min-w-0 flex-1">
+              This event changed on the server while you had it open.
+              Saving will prompt to resolve the conflict.
+            </span>
+            {onReload && (
+              <button
+                type="button"
+                onClick={onReload}
+                className="shrink-0 rounded border border-danger/50 px-2 py-0.5 hover:bg-danger/20"
+              >
+                Discard &amp; reload
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="space-y-3">
           <input

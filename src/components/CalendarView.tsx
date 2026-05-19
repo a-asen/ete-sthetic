@@ -102,6 +102,10 @@ export function CalendarView() {
   // stoken per calendar — a ref (not render state); seeded from memory.
   const stokenRef = useRef<Map<string, string>>(new Map(m0.stokenByCal))
   const loadAbort = useRef<AbortController | null>(null)
+  // The event currently open in the editor + the raw it was opened with,
+  // so a background sync can warn if it changed underneath the user.
+  const editBaseRef = useRef<{ itemUid: string; raw: string } | null>(null)
+  const [serverChanged, setServerChanged] = useState(false)
 
   // Sync one calendar: start from whatever we already have for it
   // (memory/snapshot), then apply a stoken delta from the server.
@@ -134,6 +138,13 @@ export function CalendarView() {
       if (signal.aborted) return
       for (const removed of res.removed) acc.delete(removed)
       const finalList = [...acc.values()]
+      // If the event open in the editor changed on the server, flag it
+      // so the composer can warn rather than silently diverge.
+      const eb = editBaseRef.current
+      if (eb) {
+        const fresh = finalList.find((e) => e.itemUid === eb.itemUid)
+        if (fresh && fresh.event.raw !== eb.raw) setServerChanged(true)
+      }
       setEventsByCal((prev) => new Map(prev).set(uid, finalList))
       stokenRef.current.set(uid, res.stoken)
       await saveCalSnapshot({
@@ -432,10 +443,43 @@ export function CalendarView() {
     setPopover((p) => {
       if (p) {
         setCreateErr(null)
+        editBaseRef.current = {
+          itemUid: p.item.itemUid,
+          raw: p.item.event.raw,
+        }
+        setServerChanged(false)
         setComposer({ mode: 'edit', item: p.item, calUid: p.calUid })
       }
       return null
     })
+  }, [])
+
+  // Stop tracking the edit baseline once the editor isn't in edit mode
+  // (ref-only; safe in an effect).
+  useEffect(() => {
+    if (composer?.mode !== 'edit') editBaseRef.current = null
+  }, [composer])
+
+  // Discard local edits and reopen the editor on the server's version.
+  const reloadEditing = useCallback(() => {
+    const eb = editBaseRef.current
+    if (!eb) return
+    const calUid = calByItem.get(eb.itemUid)
+    if (!calUid) return
+    const fresh = (eventsByCal.get(calUid) ?? []).find(
+      (e) => e.itemUid === eb.itemUid,
+    )
+    if (!fresh) return
+    editBaseRef.current = { itemUid: fresh.itemUid, raw: fresh.event.raw }
+    setServerChanged(false)
+    setComposer({ mode: 'edit', item: fresh, calUid })
+  }, [calByItem, eventsByCal])
+
+  const closeComposer = useCallback(() => {
+    editBaseRef.current = null
+    setServerChanged(false)
+    setCreateErr(null)
+    setComposer(null)
   }, [])
 
   const handleUpdate = useCallback(
@@ -743,10 +787,9 @@ export function CalendarView() {
                   handleDelete(composer.calUid, composer.item.itemUid)
               : undefined
           }
-          onClose={() => {
-            setComposer(null)
-            setCreateErr(null)
-          }}
+          serverChanged={composer.mode === 'edit' && serverChanged}
+          onReload={composer.mode === 'edit' ? reloadEditing : undefined}
+          onClose={closeComposer}
         />
       )}
 
