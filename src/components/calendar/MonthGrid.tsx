@@ -1,4 +1,5 @@
 import type { EventItem } from '../../types'
+import type { CalTask } from '../../services/caltasks'
 import {
   dayKey,
   isBarEvent,
@@ -22,6 +23,8 @@ export function MonthGrid({
   onNewEvent,
   onOpenEvent,
   onShowMore,
+  tasksByDay,
+  onToggleTask,
 }: {
   days: Date[]
   monthOf: number
@@ -33,6 +36,8 @@ export function MonthGrid({
   onNewEvent: (d: Date) => void
   onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
   onShowMore: (d: Date, coords: { x: number; y: number }) => void
+  tasksByDay: Map<string, CalTask[]>
+  onToggleTask: (t: CalTask) => void
 }) {
   // 6 weeks of 7 days.
   const weeks: Date[][] = []
@@ -160,6 +165,31 @@ export function MonthGrid({
                           +{overflow} more
                         </button>
                       )}
+                      {(tasksByDay.get(k) ?? []).map((t) => {
+                        const done = t.status === 'COMPLETED'
+                        return (
+                          <button
+                            key={t.itemUid}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onToggleTask(t)
+                            }}
+                            title={`Task: ${t.summary}`}
+                            className="flex w-full items-center gap-1 truncate px-1 text-xs text-text-muted hover:text-accent"
+                          >
+                            <span className="shrink-0">
+                              {done ? '☑' : '☐'}
+                            </span>
+                            <span
+                              className={`truncate ${
+                                done ? 'text-text-faint line-through' : ''
+                              }`}
+                            >
+                              {t.summary || '(untitled task)'}
+                            </span>
+                          </button>
+                        )
+                      })}
                     </div>
                   </div>
                 )

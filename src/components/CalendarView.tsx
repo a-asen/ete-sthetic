@@ -9,8 +9,10 @@ import {
   listEventItems,
   moveEventToCollection,
   replaceEventRaw,
+  toggleComplete,
   updateEvent,
 } from '../services/etebase'
+import { loadCalTasks, type CalTask } from '../services/caltasks'
 import {
   addExdate,
   detachedEvent,
@@ -75,6 +77,8 @@ export function CalendarView() {
   const [loadingCount, setLoadingCount] = useState(0)
   const [view, setView] = useState<CalView>(() => m0.view)
   const [anchor, setAnchor] = useState<Date>(() => new Date(m0.anchorMs))
+  const [tasks, setTasks] = useState<CalTask[]>(() => m0.tasks)
+  const [showTasks, setShowTasks] = useState<boolean>(() => m0.showTasks)
   // Keyboard-focused day (arrow keys move it; the view pages to follow).
   const [selected, setSelected] = useState<Date>(() =>
     startOfDay(new Date(m0.anchorMs)),
@@ -225,6 +229,13 @@ export function CalendarView() {
             }),
         ),
       )
+      // Tasks overlay: load alongside (failures are non-fatal — the
+      // calendar still works without tasks).
+      loadCalTasks(ac.signal)
+        .then((t) => {
+          if (!ac.signal.aborted) setTasks(() => t)
+        })
+        .catch(() => {})
       patchCalMemory({ warmed: true })
     } catch (e) {
       if (ac.signal.aborted) return
@@ -247,8 +258,10 @@ export function CalendarView() {
       hidden,
       view,
       anchorMs: anchor.getTime(),
+      tasks,
+      showTasks,
     })
-  }, [calendars, eventsByCal, hidden, view, anchor])
+  }, [calendars, eventsByCal, hidden, view, anchor, tasks, showTasks])
 
   const colorByCal = useMemo(() => {
     const map = new Map<string, string>()
@@ -318,6 +331,19 @@ export function CalendarView() {
     [expanded, rangeStart, rangeEnd],
   )
 
+  // Tasks-with-due bucketed by their due day (when the overlay is on).
+  const tasksByDay = useMemo(() => {
+    const map = new Map<string, CalTask[]>()
+    if (!showTasks) return map
+    for (const t of tasks) {
+      const k = dayKey(startOfDay(t.due))
+      const arr = map.get(k)
+      if (arr) arr.push(t)
+      else map.set(k, [t])
+    }
+    return map
+  }, [tasks, showTasks])
+
   const goToday = useCallback(() => setAnchor(startOfDay(new Date())), [])
   const step = useCallback(
     (dir: 1 | -1) => setAnchor((a) => stepAnchor(view, a, dir)),
@@ -341,6 +367,27 @@ export function CalendarView() {
       else next.add(uid)
       return next
     })
+  }, [])
+
+  // Quick-complete a task from the calendar (optimistic).
+  const toggleTask = useCallback(async (t: CalTask) => {
+    const nextStatus =
+      t.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED'
+    setTasks((prev) =>
+      prev.map((x) =>
+        x.itemUid === t.itemUid ? { ...x, status: nextStatus } : x,
+      ),
+    )
+    try {
+      await toggleComplete(t.colUid, t.itemUid, t.status)
+    } catch {
+      // Roll back on failure.
+      setTasks((prev) =>
+        prev.map((x) =>
+          x.itemUid === t.itemUid ? { ...x, status: t.status } : x,
+        ),
+      )
+    }
   }, [])
 
   // Keyboard shortcuts. Disabled while a modal owns the keyboard or focus
@@ -764,6 +811,8 @@ export function CalendarView() {
         hidden={hidden}
         onToggle={toggleCal}
         onPickDay={(d) => setAnchor(startOfDay(d))}
+        showTasks={showTasks}
+        onToggleTasks={() => setShowTasks((s) => !s)}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -865,6 +914,8 @@ export function CalendarView() {
             onShowMore={(d, coords) =>
               setDayPopover({ day: d, x: coords.x, y: coords.y })
             }
+            tasksByDay={tasksByDay}
+            onToggleTask={toggleTask}
           />
         ) : (
           <TimeGrid
@@ -1014,6 +1065,7 @@ export function CalendarView() {
         <DayPopover
           day={dayPopover.day}
           events={byDay.get(dayKey(dayPopover.day)) ?? []}
+          tasks={tasksByDay.get(dayKey(dayPopover.day)) ?? []}
           colorFor={colorFor}
           x={dayPopover.x}
           y={dayPopover.y}
@@ -1021,6 +1073,7 @@ export function CalendarView() {
             setDayPopover(null)
             openEvent(item, coords)
           }}
+          onToggleTask={toggleTask}
           onClose={() => setDayPopover(null)}
         />
       )}

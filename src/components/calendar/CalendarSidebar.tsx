@@ -20,6 +20,8 @@ export function CalendarSidebar({
   hidden,
   onToggle,
   onPickDay,
+  showTasks,
+  onToggleTasks,
 }: {
   anchor: Date
   today: Date
@@ -29,6 +31,8 @@ export function CalendarSidebar({
   hidden: Set<string>
   onToggle: (uid: string) => void
   onPickDay: (d: Date) => void
+  showTasks: boolean
+  onToggleTasks: () => void
 }) {
   // The mini-month can be paged independently of the main view. The parent
   // remounts this component (via a year-month key) when the main anchor's
@@ -158,6 +162,38 @@ export function CalendarSidebar({
             </label>
           )
         })}
+
+        <div className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-wide text-text-faint">
+          Overlays
+        </div>
+        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-surface-2">
+          <input
+            type="checkbox"
+            checked={showTasks}
+            onChange={onToggleTasks}
+            className="sr-only"
+          />
+          <span
+            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
+              showTasks ? 'border-transparent bg-accent' : 'border-border-strong'
+            }`}
+          >
+            {showTasks && (
+              <svg
+                viewBox="0 0 12 12"
+                className="h-2.5 w-2.5"
+                fill="none"
+                stroke="var(--color-bg)"
+                strokeWidth="2.5"
+              >
+                <path d="M2.5 6.5l2.5 2.5 4.5-5" />
+              </svg>
+            )}
+          </span>
+          <span className={showTasks ? 'text-text' : 'text-text-faint'}>
+            Tasks with due dates
+          </span>
+        </label>
       </div>
     </aside>
   )

@@ -250,3 +250,20 @@ export function layoutBars(
   }
   return { segments, laneCount: laneEnds.length }
 }
+
+// Parse an iCalendar DATE / DATE-TIME value (VTODO due, etc.) to a JS Date.
+// Handles "YYYYMMDD", "YYYYMMDDTHHMMSS" (floating/local) and a trailing
+// "Z" (UTC). Falls back to Date() parsing, returns null if unusable.
+export function parseICalDate(s: string): Date | null {
+  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(
+    s.trim(),
+  )
+  if (!m) {
+    const d = new Date(s)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
+  const [, y, mo, d, h, mi, sec, z] = m
+  if (h === undefined) return new Date(+y, +mo - 1, +d)
+  if (z) return new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +sec))
+  return new Date(+y, +mo - 1, +d, +h, +mi, +sec)
+}

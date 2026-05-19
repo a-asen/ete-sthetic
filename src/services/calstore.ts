@@ -1,4 +1,5 @@
 import type { CalView } from './caldate'
+import type { CalTask } from './caltasks'
 import type { CollectionInfo, EventItem } from '../types'
 
 // Process-lifetime in-memory cache of the calendar module's state. Survives
@@ -16,6 +17,9 @@ export interface CalMemory {
   hidden: Set<string>
   view: CalView
   anchorMs: number
+  // Tasks-with-due-dates overlay (U1).
+  tasks: CalTask[]
+  showTasks: boolean
   // True once a network sync has completed at least once this session, so
   // remounts can skip straight to a background delta sync.
   warmed: boolean
@@ -28,6 +32,8 @@ const mem: CalMemory = {
   hidden: new Set(),
   view: 'month',
   anchorMs: Date.now(),
+  tasks: [],
+  showTasks: true,
   warmed: false,
 }
 
@@ -48,5 +54,7 @@ export function resetCalMemory(): void {
   mem.hidden = new Set()
   mem.view = 'month'
   mem.anchorMs = Date.now()
+  mem.tasks = []
+  mem.showTasks = true
   mem.warmed = false
 }
