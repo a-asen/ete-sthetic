@@ -3,6 +3,7 @@ import type { EventItem } from '../../types'
 import {
   dayKey,
   isBarEvent,
+  isoWeek,
   layoutBars,
   sameDay,
   startOfDay,
@@ -98,6 +99,7 @@ export function TimeGrid({
   onOpenEvent,
   onCreateRange,
   onMoveResize,
+  showWeekNum,
 }: {
   days: Date[]
   byDay: Map<string, EventItem[]>
@@ -109,6 +111,7 @@ export function TimeGrid({
   onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
   onCreateRange: (start: Date, end: Date) => void
   onMoveResize: (item: EventItem, start: Date, end: Date) => void
+  showWeekNum: boolean
 }) {
   const hours = useMemo(
     () => Array.from({ length: 24 }, (_, i) => i),
@@ -296,7 +299,9 @@ export function TimeGrid({
           gridTemplateColumns: `3rem repeat(${days.length}, 1fr)`,
         }}
       >
-        <div />
+        <div className="flex items-center justify-center text-[10px] tabular-nums text-text-faint">
+          {showWeekNum && days[0] ? `W${isoWeek(days[0])}` : ''}
+        </div>
         {days.map((d) => {
           const isToday = sameDay(d, today)
           return (

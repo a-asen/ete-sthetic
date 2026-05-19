@@ -3,6 +3,7 @@ import type { CalTask } from '../../services/caltasks'
 import {
   dayKey,
   isBarEvent,
+  isoWeek,
   layoutBars,
   sameDay,
 } from '../../services/caldate'
@@ -25,6 +26,7 @@ export function MonthGrid({
   onShowMore,
   tasksByDay,
   onToggleTask,
+  showWeekNum,
 }: {
   days: Date[]
   monthOf: number
@@ -38,22 +40,33 @@ export function MonthGrid({
   onShowMore: (d: Date, coords: { x: number; y: number }) => void
   tasksByDay: Map<string, CalTask[]>
   onToggleTask: (t: CalTask) => void
+  showWeekNum: boolean
 }) {
+  const WK = 'w-8 shrink-0'
   // 6 weeks of 7 days.
   const weeks: Date[][] = []
   for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7))
 
   return (
     <div className="flex flex-1 flex-col">
-      <div className="grid grid-cols-7 border-b border-border">
-        {WEEKDAYS.map((w) => (
+      <div className="flex border-b border-border">
+        {showWeekNum && (
           <div
-            key={w}
-            className="px-2 py-1.5 text-center text-xs font-medium text-text-faint"
+            className={`${WK} py-1.5 text-center text-[10px] font-medium text-text-faint`}
           >
-            {w}
+            Wk
           </div>
-        ))}
+        )}
+        <div className="grid flex-1 grid-cols-7">
+          {WEEKDAYS.map((w) => (
+            <div
+              key={w}
+              className="px-2 py-1.5 text-center text-xs font-medium text-text-faint"
+            >
+              {w}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col">
@@ -67,11 +80,16 @@ export function MonthGrid({
           const barArea = laneCount * BAR_PX
 
           return (
-            <div
-              key={dayKey(week[0])}
-              className="relative grid min-h-0 flex-1 grid-cols-7"
-            >
-              {week.map((day) => {
+            <div key={dayKey(week[0])} className="flex min-h-0 flex-1">
+              {showWeekNum && (
+                <div
+                  className={`${WK} flex items-start justify-center border-b border-r border-border pt-1 text-[10px] tabular-nums text-text-faint`}
+                >
+                  {isoWeek(week[0])}
+                </div>
+              )}
+              <div className="relative grid min-h-0 flex-1 grid-cols-7">
+                {week.map((day) => {
                 const inMonth = day.getMonth() === monthOf
                 const isToday = sameDay(day, today)
                 const k = dayKey(day)
@@ -244,6 +262,7 @@ export function MonthGrid({
                     )
                   },
                 )}
+              </div>
               </div>
             </div>
           )

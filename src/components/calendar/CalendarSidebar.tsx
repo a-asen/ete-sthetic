@@ -24,6 +24,10 @@ export function CalendarSidebar({
   onToggleTasks,
   onExportCalendar,
   onImportCalendar,
+  showWeekNum,
+  onToggleWeekNum,
+  defaultCalUid,
+  onSetDefaultCal,
 }: {
   anchor: Date
   today: Date
@@ -37,6 +41,10 @@ export function CalendarSidebar({
   onToggleTasks: () => void
   onExportCalendar: (uid: string) => void
   onImportCalendar: (uid: string) => void
+  showWeekNum: boolean
+  onToggleWeekNum: () => void
+  defaultCalUid: string
+  onSetDefaultCal: (uid: string) => void
 }) {
   // The mini-month can be paged independently of the main view. The parent
   // remounts this component (via a year-month key) when the main anchor's
@@ -125,6 +133,7 @@ export function CalendarSidebar({
         )}
         {calendars?.map((c) => {
           const on = !hidden.has(c.uid)
+          const isDefault = c.uid === defaultCalUid
           return (
             <div
               key={c.uid}
@@ -160,11 +169,35 @@ export function CalendarSidebar({
                   )}
                 </span>
                 <span
-                  className={`truncate ${on ? 'text-text' : 'text-text-faint'}`}
+                  className={`truncate ${
+                    isDefault
+                      ? 'font-medium text-accent'
+                      : on
+                        ? 'text-text'
+                        : 'text-text-faint'
+                  }`}
                 >
                   {c.name}
                 </span>
               </label>
+              <button
+                type="button"
+                onClick={() => onSetDefaultCal(c.uid)}
+                title={
+                  isDefault
+                    ? 'New events default to this calendar'
+                    : 'Make this the default calendar for new events'
+                }
+                aria-label={`Make ${c.name} the default calendar for new events`}
+                aria-pressed={isDefault}
+                className={`shrink-0 rounded px-1 hover:bg-surface ${
+                  isDefault
+                    ? 'text-accent'
+                    : 'text-text-faint opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
+                }`}
+              >
+                {isDefault ? '★' : '☆'}
+              </button>
               <button
                 type="button"
                 onClick={() => onImportCalendar(c.uid)}
@@ -216,6 +249,40 @@ export function CalendarSidebar({
           </span>
           <span className={showTasks ? 'text-text' : 'text-text-faint'}>
             Tasks with due dates
+          </span>
+        </label>
+
+        <div className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-wide text-text-faint">
+          Display
+        </div>
+        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-surface-2">
+          <input
+            type="checkbox"
+            checked={showWeekNum}
+            onChange={onToggleWeekNum}
+            className="sr-only"
+          />
+          <span
+            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
+              showWeekNum
+                ? 'border-transparent bg-accent'
+                : 'border-border-strong'
+            }`}
+          >
+            {showWeekNum && (
+              <svg
+                viewBox="0 0 12 12"
+                className="h-2.5 w-2.5"
+                fill="none"
+                stroke="var(--color-bg)"
+                strokeWidth="2.5"
+              >
+                <path d="M2.5 6.5l2.5 2.5 4.5-5" />
+              </svg>
+            )}
+          </span>
+          <span className={showWeekNum ? 'text-text' : 'text-text-faint'}>
+            Week numbers
           </span>
         </label>
       </div>

@@ -33,6 +33,19 @@ export function startOfWeek(d: Date): Date {
   return addDays(startOfDay(d), -mondayIndex(d))
 }
 
+// ISO-8601 week number (weeks start Monday; week 1 is the one containing
+// the first Thursday of the year).
+export function isoWeek(d: Date): number {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  // Thursday of this week decides the year the week belongs to.
+  t.setDate(t.getDate() - ((t.getDay() + 6) % 7) + 3)
+  const firstThu = new Date(t.getFullYear(), 0, 4)
+  firstThu.setDate(firstThu.getDate() - ((firstThu.getDay() + 6) % 7) + 3)
+  return (
+    1 + Math.round((t.getTime() - firstThu.getTime()) / (7 * MS_DAY))
+  )
+}
+
 export function dayKey(d: Date): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
 }

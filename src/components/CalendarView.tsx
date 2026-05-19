@@ -56,6 +56,39 @@ import { buildIcs, splitIcs } from '../services/ics'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
+// Persisted calendar UI prefs (localStorage; survive restart).
+const WEEKNUM_KEY = 'cal.weekNumbers'
+const DEFAULT_CAL_KEY = 'cal.defaultCal'
+
+function readBool(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+function writeBool(key: string, v: boolean): void {
+  try {
+    localStorage.setItem(key, v ? '1' : '0')
+  } catch {
+    // Private mode / storage disabled — pref just won't persist.
+  }
+}
+function readStr(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? ''
+  } catch {
+    return ''
+  }
+}
+function writeStr(key: string, v: string): void {
+  try {
+    localStorage.setItem(key, v)
+  } catch {
+    // Non-fatal — see writeBool.
+  }
+}
+
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
   { id: '3day', label: '3 days' },
@@ -87,6 +120,24 @@ export function CalendarView() {
   const [anchor, setAnchor] = useState<Date>(() => new Date(m0.anchorMs))
   const [tasks, setTasks] = useState<CalTask[]>(() => m0.tasks)
   const [showTasks, setShowTasks] = useState<boolean>(() => m0.showTasks)
+  const [showWeekNum, setShowWeekNum] = useState<boolean>(() =>
+    readBool(WEEKNUM_KEY),
+  )
+  // User-chosen calendar new events default into. '' = not set → fall back
+  // to the first visible calendar (resolved below).
+  const [defaultCalPref, setDefaultCalPref] = useState<string>(() =>
+    readStr(DEFAULT_CAL_KEY),
+  )
+  const toggleWeekNum = useCallback(() => {
+    setShowWeekNum((v) => {
+      writeBool(WEEKNUM_KEY, !v)
+      return !v
+    })
+  }, [])
+  const chooseDefaultCal = useCallback((uid: string) => {
+    setDefaultCalPref(uid)
+    writeStr(DEFAULT_CAL_KEY, uid)
+  }, [])
   // Keyboard-focused day (arrow keys move it; the view pages to follow).
   const [selected, setSelected] = useState<Date>(() =>
     startOfDay(new Date(m0.anchorMs)),
@@ -570,10 +621,13 @@ export function CalendarView() {
     return () => window.removeEventListener('keydown', handler)
   }, [view, anchor, selected, composer, conflict])
 
-  // First visible calendar is the default target for new events.
+  // Target for new events: the user's chosen default if it still exists,
+  // otherwise the first visible calendar, otherwise the first calendar.
   const defaultCalUid =
-    calendars?.find((c) => !hidden.has(c.uid))?.uid ??
-    calendars?.[0]?.uid ??
+    (defaultCalPref &&
+      calendars?.find((c) => c.uid === defaultCalPref)?.uid) ||
+    calendars?.find((c) => !hidden.has(c.uid))?.uid ||
+    calendars?.[0]?.uid ||
     ''
 
   const handleCreate = useCallback(
@@ -920,6 +974,10 @@ export function CalendarView() {
         onToggleTasks={() => setShowTasks((s) => !s)}
         onExportCalendar={handleExportCalendar}
         onImportCalendar={handleImportCalendar}
+        showWeekNum={showWeekNum}
+        onToggleWeekNum={toggleWeekNum}
+        defaultCalUid={defaultCalUid}
+        onSetDefaultCal={chooseDefaultCal}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1023,12 +1081,14 @@ export function CalendarView() {
             }
             tasksByDay={tasksByDay}
             onToggleTask={toggleTask}
+            showWeekNum={showWeekNum}
           />
         ) : (
           <TimeGrid
             days={dayRange}
             byDay={byDay}
             colorFor={colorFor}
+            showWeekNum={showWeekNum}
             today={today}
             selected={selected}
             onPickDay={pickDay}
