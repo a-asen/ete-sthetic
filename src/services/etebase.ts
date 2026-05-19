@@ -415,10 +415,48 @@ export async function moveTasksToCollection(
     itemHandles.set(itemKey(destCollectionUid, newItem.uid), newItem)
   }
 
-  // Now safe to delete the source items.
+  // Now delete the source items.
   for (const item of sourceItems) item.delete()
   const sourceIm = await getItemManager(sourceCollectionUid)
   await sourceIm.transaction(sourceItems)
+
+  // VERIFY the server actually recorded the deletions. Copy-then-delete
+  // must not silently leave the originals behind: the copies already
+  // exist in the destination, so a missed delete = the same task visible
+  // in two lists across every client. sourceIm.fetch() bypasses our
+  // handle cache and returns the server truth (a deleted item comes back
+  // with isDeleted = true).
+  const stillPresent = async (): Promise<string[]> => {
+    const remaining: string[] = []
+    for (const uid of itemUids) {
+      try {
+        const fresh = await sourceIm.fetch(uid)
+        if (!fresh.isDeleted) remaining.push(uid)
+      } catch {
+        // Unfetchable → treat as gone.
+      }
+    }
+    return remaining
+  }
+  let stuck = await stillPresent()
+  if (stuck.length > 0) {
+    // One retry with fresh handles (handles a stale-etag race).
+    const retry = await Promise.all(stuck.map((uid) => sourceIm.fetch(uid)))
+    for (const it of retry) it.delete()
+    await sourceIm.transaction(retry)
+    stuck = await stillPresent()
+  }
+  if (stuck.length > 0) {
+    // Surface loudly. The caller rolls the source list back (the items
+    // ARE still on the server) and shows this message; the destination
+    // copies remain, so the user can retry the stragglers.
+    throw new Error(
+      `Move incomplete: ${stuck.length} item(s) are still in the source ` +
+        `list on the server (copies were created in the destination). ` +
+        `Re-open the source list and move the remaining item(s) again.`,
+    )
+  }
+
   for (const uid of itemUids) {
     itemHandles.delete(itemKey(sourceCollectionUid, uid))
   }

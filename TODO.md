@@ -70,6 +70,13 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       `--color-accent` / derived `--color-accent-soft` (no flash).
 - [x] #6 Writing-mode indicator: a fixed "✎ Editing — Esc/Enter to exit"
       pill appears whenever a text field is focused (EditModeIndicator).
+- [x] Hardened move: after the source delete, verify via fresh
+      `sourceIm.fetch` that each item is actually tombstoned (one retry,
+      then throw a clear "move incomplete" error instead of assuming
+      success). On success, invalidate the source snapshot/stoken so this
+      app never re-shows moved items from a stale cache. (Phone clients
+      still apply the deletions on their own sync cadence — out of our
+      control — but a real delete failure is now caught, not silent.)
 
 ## Polish & fixes (queued 2026-05-18)
 

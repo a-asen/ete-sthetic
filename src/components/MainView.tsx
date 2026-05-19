@@ -1765,6 +1765,24 @@ export function MainView({ onLoggedOut }: Props) {
           next.set(destUid, Array.from(byId.values()))
           return next
         })
+        // Invalidate the SOURCE's cached snapshot + stoken so this app
+        // can never show the moved items again from a stale on-disk
+        // snapshot: next time the source list is opened it does a fresh
+        // sync and sees the server tombstones. (In-memory already had
+        // them optimistically removed above.)
+        void deleteSnapshot(srcUid)
+        setStokenByUid((prev) => {
+          if (!prev.has(srcUid)) return prev
+          const next = new Map(prev)
+          next.delete(srcUid)
+          return next
+        })
+        setLoadedUids((prev) => {
+          if (!prev.has(srcUid)) return prev
+          const next = new Set(prev)
+          next.delete(srcUid)
+          return next
+        })
         // Follow the task: switch to the destination list and re-select
         // it by its preserved VTODO uid.
         setActiveUid(destUid)
