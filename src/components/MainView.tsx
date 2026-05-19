@@ -2368,6 +2368,12 @@ export function MainView({ onLoggedOut }: Props) {
         />
       )}
       <aside
+        onMouseDown={() => {
+          // Click anywhere in the list pane focuses it — important when
+          // there are no list rows to click (e.g. a load error shows an
+          // empty sidebar).
+          if (focusZone !== 'sidebar') setFocusZone('sidebar')
+        }}
         style={{
           width:
             focusZone === 'sidebar'
