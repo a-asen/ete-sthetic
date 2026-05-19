@@ -3084,15 +3084,23 @@ export function MainView({ onLoggedOut }: Props) {
         onMouseDown={(e) => {
           // Pull focus to the tasks pane when the user clicks anywhere in
           // the centre column (without preventing the underlying click).
-          if (focusZone !== 'tasks') {
-            const t = e.target as HTMLElement
-            // ignore clicks in modals and in the detail panel
-            if (
-              !t.closest('[role="dialog"]') &&
-              !t.closest('[data-detail-zone]')
-            ) {
-              setFocusZone('tasks')
-            }
+          const t = e.target as HTMLElement
+          // ignore clicks in modals and in the detail panel
+          if (
+            t.closest('[role="dialog"]') ||
+            t.closest('[data-detail-zone]')
+          )
+            return
+          if (focusZone !== 'tasks') setFocusZone('tasks')
+          // Clicking empty space (not a task row) seeds the selection on
+          // the first task so arrow keys work immediately — no need to
+          // press Down first. An existing valid selection is kept.
+          if (!t.closest('[data-task-uid]')) {
+            setSelectedTaskUid((cur) =>
+              cur && findNodeByUid(visibleTree, cur)
+                ? cur
+                : (visibleTree[0]?.todo.uid ?? cur),
+            )
           }
         }}
       >
