@@ -49,6 +49,7 @@ import {
   type ContextMenuState,
 } from './ContextMenu'
 import { SettingsPopover } from './SettingsPopover'
+import { SidebarSettingsPopover } from './SidebarSettingsPopover'
 import {
   DEFAULT_FILTER,
   FilterPopover,
@@ -508,8 +509,7 @@ export function MainView({ onLoggedOut }: Props) {
     setSidebarSortState(next)
     writeSidebarSort(next)
   }, [])
-  const [sidebarSortOpen, setSidebarSortOpen] = useState(false)
-  const [sidebarSortFocusKey, setSidebarSortFocusKey] = useState(0)
+  const [sidebarSettingsOpen, setSidebarSettingsOpen] = useState(false)
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false)
   const [customColor, setCustomColor] = useState('#5e8fd9')
   const colorPopoverRef = useRef<HTMLDivElement>(null)
@@ -2489,82 +2489,6 @@ export function MainView({ onLoggedOut }: Props) {
                           <path d="M8 3v10M3 8h10" />
                         </svg>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const col = sortedCollections?.find(
-                            (c) => c.uid === activeUid,
-                          )
-                          if (col && !col.isDeleted) {
-                            setListError(null)
-                            setDeletingList(col)
-                          }
-                        }}
-                        disabled={
-                          !sortedCollections?.some(
-                            (c) => c.uid === activeUid && !c.isDeleted,
-                          )
-                        }
-                        title="Delete this list (Del)"
-                        aria-label="Delete this list"
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[10px] text-text-faint transition-colors hover:border-danger/50 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-text-faint"
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          className="h-3 w-3"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden
-                        >
-                          <path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8.4a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9L11 4.5" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFocusZone('sidebar')
-                          setColorPopoverOpen((open) => {
-                            if (!open) {
-                              const cur = sortedCollections?.find(
-                                (c) => c.uid === activeUid,
-                              )?.color
-                              if (cur && /^#[0-9a-fA-F]{6}$/.test(cur)) {
-                                setCustomColor(cur)
-                              }
-                            }
-                            return !open
-                          })
-                        }}
-                        disabled={
-                          !sortedCollections?.some(
-                            (c) => c.uid === activeUid && !c.isDeleted,
-                          )
-                        }
-                        aria-expanded={colorPopoverOpen}
-                        title="Recolour this list"
-                        aria-label="Recolour this list"
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted disabled:cursor-not-allowed disabled:opacity-30"
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          className="h-3 w-3"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden
-                        >
-                          <circle cx="8" cy="8" r="5.5" />
-                          <circle cx="8" cy="5" r="0.6" fill="currentColor" />
-                          <circle cx="5.2" cy="7.2" r="0.6" fill="currentColor" />
-                          <circle cx="6.4" cy="10.4" r="0.6" fill="currentColor" />
-                          <circle cx="10" cy="9.6" r="0.6" fill="currentColor" />
-                        </svg>
-                      </button>
                       {colorPopoverOpen && (
                         <div
                           ref={colorPopoverRef}
@@ -2641,30 +2565,13 @@ export function MainView({ onLoggedOut }: Props) {
                       )}
                       <button
                         type="button"
-                        onClick={() => {
-                          setFocusZone('sidebar')
-                          setSidebarSortOpen((open) => !open)
-                          setSidebarSortFocusKey((k) => k + 1)
-                        }}
-                        aria-expanded={sidebarSortOpen}
-                        aria-pressed={
-                          sidebarSort.sort !== DEFAULT_SIDEBAR_SORT.sort ||
-                          sidebarSort.reverse
+                        onClick={() =>
+                          setSidebarSettingsOpen((o) => !o)
                         }
-                        title={`Sort lists — current: ${
-                          sidebarSort.sort === 'name'
-                            ? 'Name'
-                            : sidebarSort.sort === 'open'
-                              ? 'Open count'
-                              : 'Total count'
-                        }${sidebarSort.reverse ? ' (reversed)' : ''}`}
-                        aria-label="Open sidebar sort"
-                        className={`flex h-5 shrink-0 items-center justify-center rounded-md border px-1 text-[10px] transition-colors ${
-                          sidebarSort.sort !== DEFAULT_SIDEBAR_SORT.sort ||
-                          sidebarSort.reverse
-                            ? 'border-accent/40 bg-accent-soft text-text'
-                            : 'border-border text-text-faint hover:border-border-strong hover:text-text-muted'
-                        }`}
+                        aria-expanded={sidebarSettingsOpen}
+                        aria-label="List settings"
+                        title="List settings (sort, show deleted)"
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted"
                       >
                         <svg
                           viewBox="0 0 16 16"
@@ -2676,55 +2583,30 @@ export function MainView({ onLoggedOut }: Props) {
                           strokeLinejoin="round"
                           aria-hidden
                         >
-                          <path d="M4 3v10M4 13l-2-2M4 13l2-2" />
-                          <path d="M9 4h6M9 8h4M9 12h2" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={toggleShowDeletedLists}
-                        aria-pressed={showDeletedLists}
-                        title={
-                          showDeletedLists
-                            ? 'Hide deleted lists'
-                            : 'Show deleted lists (tombstones from other clients)'
-                        }
-                        aria-label="Toggle deleted lists"
-                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] transition-colors ${
-                          showDeletedLists
-                            ? 'border-accent/40 bg-accent-soft text-text'
-                            : 'border-border text-text-faint hover:border-border-strong hover:text-text-muted'
-                        }`}
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          className="h-3 w-3"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden
-                        >
-                          <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
                           <circle cx="8" cy="8" r="2" />
-                          {!showDeletedLists && <path d="M3 13L13 3" />}
+                          <path d="M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1" />
                         </svg>
                       </button>
-                      {sidebarSortOpen && (
-                        <SortPopover
-                          title="Sort lists"
-                          options={SIDEBAR_SORT_OPTIONS}
-                          spec={sidebarSort}
-                          onChange={setSidebarSort}
-                          onClose={() => setSidebarSortOpen(false)}
-                          onConfirm={() => {
-                            setSidebarSortOpen(false)
-                            setFocusZone('sidebar')
-                          }}
-                          focusKey={sidebarSortFocusKey}
-                          footer="Global. Saved automatically."
-                          positionClass="right-0 top-6"
+                      {sidebarSettingsOpen && (
+                        <SidebarSettingsPopover
+                          sortOptions={SIDEBAR_SORT_OPTIONS}
+                          sortValue={sidebarSort.sort}
+                          reverse={sidebarSort.reverse}
+                          onSort={(v) =>
+                            setSidebarSort({
+                              sort: v as SidebarSort,
+                              reverse: sidebarSort.reverse,
+                            })
+                          }
+                          onToggleReverse={() =>
+                            setSidebarSort({
+                              sort: sidebarSort.sort,
+                              reverse: !sidebarSort.reverse,
+                            })
+                          }
+                          showDeleted={showDeletedLists}
+                          onToggleShowDeleted={toggleShowDeletedLists}
+                          onClose={() => setSidebarSettingsOpen(false)}
                         />
                       )}
                     </div>

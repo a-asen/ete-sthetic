@@ -121,6 +121,15 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       priority, dark/light theme, accent colour (presets+hex+default),
       task card size — removed from the crowded task header. (Also a
       natural home for the deferred #14 zoom-% readout — now shown.)
+- [x] Offline collection-list cache: persist the list; on a failed
+      listCollections fall back to it (no snapshot prune offline) so the
+      sidebar still renders, with a prominent persistent "Offline …
+      changes won't sync" top banner + Retry.
+- [x] Click anywhere in the list pane focuses it (not just the title).
+- [x] Sidebar settings menu (gear) for the list view: sort lists +
+      reverse + show-deleted, decluttered out of the sidebar header.
+      Per-list delete/recolour buttons removed (already in the row
+      right-click menu); sync-all + new-list stay inline.
 
 ## Polish & fixes (queued 2026-05-18)
 
