@@ -43,6 +43,39 @@ export function SidebarSettingsPopover({
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
+        return
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return
+      const ch = e.key.toLowerCase()
+      // n = Name; c = cycle the count sorts (Open ⇄ Total); r = reverse;
+      // t = toggle "show deleted lists".
+      if (ch === 'r') {
+        e.preventDefault()
+        onToggleReverse()
+        return
+      }
+      if (ch === 't') {
+        e.preventDefault()
+        onToggleShowDeleted()
+        return
+      }
+      const nameOpt = sortOptions.find(
+        (o) => o.label[0]?.toLowerCase() === 'n',
+      )
+      if (ch === 'n' && nameOpt) {
+        e.preventDefault()
+        onSort(nameOpt.value)
+        return
+      }
+      if (ch === 'c') {
+        const countOpts = sortOptions.filter(
+          (o) => o.value !== nameOpt?.value,
+        )
+        if (countOpts.length === 0) return
+        e.preventDefault()
+        const cur = countOpts.findIndex((o) => o.value === sortValue)
+        const next = countOpts[(cur + 1) % countOpts.length]
+        onSort(next.value)
       }
     }
     document.addEventListener('mousedown', onDown)
@@ -51,7 +84,14 @@ export function SidebarSettingsPopover({
       document.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [
+    onClose,
+    sortOptions,
+    sortValue,
+    onSort,
+    onToggleReverse,
+    onToggleShowDeleted,
+  ])
 
   return (
     <div
