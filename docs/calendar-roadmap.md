@@ -68,6 +68,19 @@ conflict merge.
    task code.
 4. **Tier 2 editing depth + R2 timezones.** Once the data model is solid.
 
+## Status (2026-05-19)
+
+Done on `worktree-calendar` (not yet merged to main): **Tier 1 P1–P5**,
+**R1**, **Tier 2 E1/E2/E3/E4**, **R2**, **U1**.
+
+- **U2 (VALARM reminders)** and **U3 (ICS import/export)** are
+  **deferred until after the merge**. Both need Tauri native config
+  (`plugin-notification` / `plugin-dialog`/`plugin-fs`) — `package.json`
+  + `src-tauri/` capabilities/permissions, which is the task worker's
+  territory. Doing them post-merge keeps native-config changes
+  coordinated in one place and preserves the zero-merge-risk discipline
+  everything else has held to.
+
 ## Notes / constraints
 
 - Keep shared-file edits (`etebase.ts`, `types.ts`, `vtodo.ts`)
