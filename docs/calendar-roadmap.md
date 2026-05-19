@@ -70,16 +70,25 @@ conflict merge.
 
 ## Status (2026-05-19)
 
-Done on `worktree-calendar` (not yet merged to main): **Tier 1 P1–P5**,
-**R1**, **Tier 2 E1/E2/E3/E4**, **R2**, **U1**.
+`worktree-calendar` **merged into `main`** (commit 350b4ca, zero
+conflicts). Done: **Tier 1 P1–P5**, **R1**, **Tier 2 E1/E2/E3/E4**,
+**R2**, **U1**, **U2**, **U3**. The roadmap is now fully delivered.
 
-- **U2 (VALARM reminders)** and **U3 (ICS import/export)** are
-  **deferred until after the merge**. Both need Tauri native config
-  (`plugin-notification` / `plugin-dialog`/`plugin-fs`) — `package.json`
-  + `src-tauri/` capabilities/permissions, which is the task worker's
-  territory. Doing them post-merge keeps native-config changes
-  coordinated in one place and preserves the zero-merge-risk discipline
-  everything else has held to.
+- **U2 (VALARM reminders → OS notifications)** — `tauri-plugin-notification`
+  registered; `parseVEvent` extracts VALARM triggers (relative incl.
+  `RELATED=END`, or absolute) into `VEvent.alarms`; `services/alarms.ts`
+  polls every 30s, expands the visible events over a day-aligned forward
+  window and fires an OS notification for any trigger that just came due.
+  Reads `calstore` so reminders keep firing outside the calendar module;
+  a 90s grace band prevents replaying a backlog after an app restart;
+  torn down on logout.
+- **U3 (ICS import / export)** — `tauri-plugin-dialog` + `tauri-plugin-fs`
+  registered (capability scope: `$HOME`/`$DOCUMENT`/`$DESKTOP`/`$DOWNLOAD`).
+  `services/ics.ts` merges a calendar's events into one RFC 5545 file
+  (export) and splits a picked file back into per-VEVENT VCALENDARs
+  carrying their VTIMEZONEs (import → `createEventRaw` → targeted resync).
+  Per-calendar hover ↥/↧ buttons in `CalendarSidebar`; transient bottom
+  toast for feedback.
 
 ## Notes / constraints
 

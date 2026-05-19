@@ -52,6 +52,9 @@ import {
 } from './calendar/RecurrenceScopeModal'
 import { expandEvents } from '../services/recurrence'
 import { startAlarmScheduler } from '../services/alarms'
+import { buildIcs, splitIcs } from '../services/ics'
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -71,6 +74,10 @@ export function CalendarView() {
     () => m0.calendars,
   )
   const [error, setError] = useState<string | null>(null)
+  // Transient bottom toast for ICS import/export feedback — kept separate
+  // from `error` (which is a full-screen takeover).
+  const [notice, setNotice] = useState<string | null>(null)
+  const ioBusy = useRef(false)
   const [eventsByCal, setEventsByCal] = useState<Map<string, EventItem[]>>(
     () => new Map(m0.eventsByCal),
   )
@@ -254,6 +261,97 @@ export function CalendarView() {
   useEffect(() => {
     startAlarmScheduler()
   }, [])
+
+  // ICS export (roadmap U3): merge a calendar's events into one .ics and
+  // write it wherever the user picks.
+  const handleExportCalendar = useCallback(
+    async (uid: string) => {
+      if (ioBusy.current) return
+      const cal = calendars?.find((c) => c.uid === uid)
+      const events = eventsByCal.get(uid) ?? []
+      try {
+        ioBusy.current = true
+        const safeName =
+          (cal?.name ?? 'calendar').replace(/[^\w.-]+/g, '_') || 'calendar'
+        const path = await saveDialog({
+          defaultPath: `${safeName}.ics`,
+          filters: [{ name: 'iCalendar', extensions: ['ics'] }],
+        })
+        if (!path) return
+        await writeTextFile(path, buildIcs(events))
+        setNotice(
+          `Exported ${events.length} event${events.length === 1 ? '' : 's'}`,
+        )
+      } catch (e) {
+        setNotice(
+          `Export failed: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      } finally {
+        ioBusy.current = false
+      }
+    },
+    [calendars, eventsByCal],
+  )
+
+  // ICS import (roadmap U3): split a picked .ics into per-event VCALENDARs
+  // and upload each into the target calendar, then resync so they appear.
+  const handleImportCalendar = useCallback(
+    async (uid: string) => {
+      if (ioBusy.current) return
+      try {
+        ioBusy.current = true
+        const picked = await openDialog({
+          multiple: false,
+          directory: false,
+          filters: [{ name: 'iCalendar', extensions: ['ics', 'ical', 'ifb'] }],
+        })
+        const path = Array.isArray(picked) ? picked[0] : picked
+        if (!path) return
+        const parts = splitIcs(await readTextFile(path))
+        if (parts.length === 0) {
+          setNotice('No events found in that file')
+          return
+        }
+        let ok = 0
+        let failed = 0
+        for (const part of parts) {
+          try {
+            await createEventRaw(uid, part)
+            ok++
+          } catch {
+            failed++
+          }
+        }
+        try {
+          await syncCalendar(
+            uid,
+            new AbortController().signal,
+            eventsByCal.get(uid) ?? [],
+          )
+        } catch {
+          // A failed resync only delays visibility until the next sync.
+        }
+        setNotice(
+          failed === 0
+            ? `Imported ${ok} event${ok === 1 ? '' : 's'}`
+            : `Imported ${ok}, ${failed} failed`,
+        )
+      } catch (e) {
+        setNotice(
+          `Import failed: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      } finally {
+        ioBusy.current = false
+      }
+    },
+    [eventsByCal, syncCalendar],
+  )
+
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 4000)
+    return () => clearTimeout(t)
+  }, [notice])
 
   // Mirror render state into the process-lifetime cache so an unmount
   // (module switch) doesn't lose it. Not a setState — safe in an effect.
@@ -820,6 +918,8 @@ export function CalendarView() {
         onPickDay={(d) => setAnchor(startOfDay(d))}
         showTasks={showTasks}
         onToggleTasks={() => setShowTasks((s) => !s)}
+        onExportCalendar={handleExportCalendar}
+        onImportCalendar={handleImportCalendar}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1083,6 +1183,15 @@ export function CalendarView() {
           onToggleTask={toggleTask}
           onClose={() => setDayPopover(null)}
         />
+      )}
+
+      {notice && (
+        <div
+          role="status"
+          className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text shadow-lg"
+        >
+          {notice}
+        </div>
       )}
     </div>
   )

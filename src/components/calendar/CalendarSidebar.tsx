@@ -22,6 +22,8 @@ export function CalendarSidebar({
   onPickDay,
   showTasks,
   onToggleTasks,
+  onExportCalendar,
+  onImportCalendar,
 }: {
   anchor: Date
   today: Date
@@ -33,6 +35,8 @@ export function CalendarSidebar({
   onPickDay: (d: Date) => void
   showTasks: boolean
   onToggleTasks: () => void
+  onExportCalendar: (uid: string) => void
+  onImportCalendar: (uid: string) => void
 }) {
   // The mini-month can be paged independently of the main view. The parent
   // remounts this component (via a year-month key) when the main anchor's
@@ -122,44 +126,64 @@ export function CalendarSidebar({
         {calendars?.map((c) => {
           const on = !hidden.has(c.uid)
           return (
-            <label
+            <div
               key={c.uid}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-surface-2"
+              className="group flex items-center gap-1 rounded-md px-1.5 py-1 text-sm hover:bg-surface-2"
             >
-              <input
-                type="checkbox"
-                checked={on}
-                onChange={() => onToggle(c.uid)}
-                className="sr-only"
-              />
-              <span
-                className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
-                  on ? 'border-transparent' : 'border-border-strong'
-                }`}
-                style={{
-                  backgroundColor: on
-                    ? (c.color ?? 'var(--color-accent)')
-                    : 'transparent',
-                }}
+              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => onToggle(c.uid)}
+                  className="sr-only"
+                />
+                <span
+                  className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
+                    on ? 'border-transparent' : 'border-border-strong'
+                  }`}
+                  style={{
+                    backgroundColor: on
+                      ? (c.color ?? 'var(--color-accent)')
+                      : 'transparent',
+                  }}
+                >
+                  {on && (
+                    <svg
+                      viewBox="0 0 12 12"
+                      className="h-2.5 w-2.5"
+                      fill="none"
+                      stroke="var(--color-bg)"
+                      strokeWidth="2.5"
+                    >
+                      <path d="M2.5 6.5l2.5 2.5 4.5-5" />
+                    </svg>
+                  )}
+                </span>
+                <span
+                  className={`truncate ${on ? 'text-text' : 'text-text-faint'}`}
+                >
+                  {c.name}
+                </span>
+              </label>
+              <button
+                type="button"
+                onClick={() => onImportCalendar(c.uid)}
+                title="Import .ics into this calendar"
+                aria-label={`Import into ${c.name}`}
+                className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
               >
-                {on && (
-                  <svg
-                    viewBox="0 0 12 12"
-                    className="h-2.5 w-2.5"
-                    fill="none"
-                    stroke="var(--color-bg)"
-                    strokeWidth="2.5"
-                  >
-                    <path d="M2.5 6.5l2.5 2.5 4.5-5" />
-                  </svg>
-                )}
-              </span>
-              <span
-                className={`truncate ${on ? 'text-text' : 'text-text-faint'}`}
+                ↧
+              </button>
+              <button
+                type="button"
+                onClick={() => onExportCalendar(c.uid)}
+                title="Export this calendar to .ics"
+                aria-label={`Export ${c.name}`}
+                className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
               >
-                {c.name}
-              </span>
-            </label>
+                ↥
+              </button>
+            </div>
           )
         })}
 
