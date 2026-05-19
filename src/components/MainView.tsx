@@ -1095,9 +1095,18 @@ export function MainView({ onLoggedOut }: Props) {
     })
   }
 
+  // If a create is already in progress, blur its input first so it
+  // auto-commits (same as clicking away) before we replace it — the
+  // half-typed task is saved, never silently dropped on unmount.
+  const flushActiveCreate = useCallback(() => {
+    const ae = document.activeElement
+    if (creating && ae instanceof HTMLInputElement) ae.blur()
+  }, [creating])
+
   const handleStartCreateRoot = useCallback(() => {
+    flushActiveCreate()
     setCreating({ parentUid: null })
-  }, [])
+  }, [flushActiveCreate])
 
   // Logseq-style status cycle: NEEDS-ACTION → IN-PROCESS → COMPLETED →
   // NEEDS-ACTION. CANCELLED rejoins the cycle at the top (it's set
@@ -1167,9 +1176,13 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid, markRecentlyCompleted, clearRecentlyCompleted],
   )
 
-  const handleStartCreateChild = useCallback((parent: TaskNode) => {
-    setCreating({ parentUid: parent.todo.uid })
-  }, [])
+  const handleStartCreateChild = useCallback(
+    (parent: TaskNode) => {
+      flushActiveCreate()
+      setCreating({ parentUid: parent.todo.uid })
+    },
+    [flushActiveCreate],
+  )
 
   const handleCancelCreate = useCallback(() => setCreating(null), [])
 

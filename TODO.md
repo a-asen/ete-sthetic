@@ -61,6 +61,10 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       while working in tasks); sidebar/tasks fades unchanged.
 - [x] `Ctrl+←/→` in any text field is native word-jump (rename / inline
       create / detail inputs); zone meta-nav only fires outside fields.
+- [x] Starting another create while one is in progress now auto-commits
+      the in-progress one (blur=save path) instead of silently dropping
+      it on unmount. (User chose auto-commit over a confirm modal, since
+      the modal's focus-grab conflicts with blur=save.)
 
 ## Polish & fixes (queued 2026-05-18)
 
