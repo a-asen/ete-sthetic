@@ -99,6 +99,12 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       confirmed); reconciles on success, rolls back + errors on failure.
       Placeholders aren't selectable/renamable and don't affect keyboard
       nav/typeahead.
+- [x] #10 Native-style right-click menus (ContextMenu component:
+      keyboard-navigable, esc/click-away/scroll/blur close, viewport
+      clamp). Wired on task rows (new subtask / move / priority /
+      delete), sidebar list rows (new / rename / recolour / delete) and
+      the sidebar blank area (new list); browser menu suppressed on
+      those surfaces only (inputs keep native copy/paste).
 
 ## Polish & fixes (queued 2026-05-18)
 
@@ -209,7 +215,7 @@ custom hex), persisted, applied app-wide.
 - UI: a small swatch row + custom hex input near the theme / phone-priority
   toggles. A few curated presets so it stays "aesthetic".
 
-### 10. Native-style context menus (replace browser menu)
+### 10. Native-style context menus (replace browser menu) — ✅ done
 **Task.** Right-click should show app-relevant menus, not the webview default.
 Sidebar empty area → "New list"; on a list → Rename / Delete. Task pane → the
 task actions (new, rename, delete, move, priority).

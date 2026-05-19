@@ -42,6 +42,11 @@ import { ConfirmModal } from './ConfirmModal'
 import { DetailPanel } from './DetailPanel'
 import { EditModeIndicator } from './EditModeIndicator'
 import {
+  ContextMenu,
+  type ContextMenuItem,
+  type ContextMenuState,
+} from './ContextMenu'
+import {
   DEFAULT_FILTER,
   FilterPopover,
   isFilterActive,
@@ -352,6 +357,7 @@ export function MainView({ onLoggedOut }: Props) {
   const [listSyncUids, setListSyncUids] = useState<Set<string>>(
     () => new Set(),
   )
+  const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const newListRef = useRef<HTMLInputElement>(null)
   const renameListRef = useRef<HTMLInputElement>(null)
   // Guards against the create-list input firing twice (Enter then the
@@ -1968,6 +1974,109 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid],
   )
 
+  const requestMoveNode = useCallback(
+    (node: TaskNode) => {
+      if (!activeUid) return
+      const itemUids = collectDescendantItemUids(node)
+      setMoving({
+        itemUids,
+        rootVtodoUid: node.todo.uid,
+        summary: node.todo.summary,
+        descendantCount: itemUids.length - 1,
+      })
+    },
+    [activeUid],
+  )
+
+  // ---- Right-click context menus ----
+  const openTaskMenu = useCallback(
+    (node: TaskNode, x: number, y: number) => {
+      const prio = (p: Priority): ContextMenuItem => ({
+        label: `Priority: ${
+          p === 0 ? 'None' : p === 1 ? 'High' : p === 5 ? 'Medium' : 'Low'
+        }`,
+        onSelect: () => void handleChangePriority(node, p),
+        disabled: node.todo.priority === p,
+      })
+      setMenu({
+        x,
+        y,
+        items: [
+          {
+            label: 'New subtask',
+            onSelect: () => handleStartCreateChild(node),
+          },
+          {
+            label: 'Move to another list…',
+            onSelect: () => requestMoveNode(node),
+          },
+          prio(1),
+          prio(5),
+          prio(9),
+          prio(0),
+          {
+            label: 'Delete',
+            danger: true,
+            onSelect: () => handleDeleteRequest(node),
+          },
+        ],
+      })
+    },
+    [
+      handleChangePriority,
+      handleStartCreateChild,
+      requestMoveNode,
+      handleDeleteRequest,
+    ],
+  )
+
+  const openListMenu = useCallback(
+    (c: CollectionInfo, x: number, y: number) => {
+      const locked = c.uid.startsWith('pending-') || c.isDeleted === true
+      setMenu({
+        x,
+        y,
+        items: [
+          { label: 'New list', onSelect: startCreateList },
+          {
+            label: 'Rename',
+            disabled: locked,
+            onSelect: () => startRenameList(c),
+          },
+          {
+            label: 'Recolour…',
+            disabled: locked,
+            onSelect: () => {
+              setActiveUid(c.uid)
+              setColorPopoverOpen(true)
+            },
+          },
+          {
+            label: 'Delete',
+            danger: true,
+            disabled: locked,
+            onSelect: () => {
+              setListError(null)
+              setDeletingList(c)
+            },
+          },
+        ],
+      })
+    },
+    [startCreateList, startRenameList],
+  )
+
+  const openSidebarBlankMenu = useCallback(
+    (x: number, y: number) => {
+      setMenu({
+        x,
+        y,
+        items: [{ label: 'New list', onSelect: startCreateList }],
+      })
+    },
+    [startCreateList],
+  )
+
   const handleRenameTask = useCallback(
     async (node: TaskNode, newSummary: string) => {
       if (!activeUid) return
@@ -2573,7 +2682,13 @@ export function MainView({ onLoggedOut }: Props) {
                   </span>
                 )}
               </div>
-              <div className="flex-1 overflow-y-auto px-1">
+              <div
+                className="flex-1 overflow-y-auto px-1"
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  openSidebarBlankMenu(e.clientX, e.clientY)
+                }}
+              >
                 {sortedCollections === null && !collectionsError && (
                   <p className="px-2 py-3 text-xs text-text-faint">
                     {showFull ? 'Loading…' : '…'}
@@ -2685,6 +2800,11 @@ export function MainView({ onLoggedOut }: Props) {
                         if (isPlaceholder) return
                         setActiveUid(c.uid)
                         setFocusZone('sidebar')
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        openListMenu(c, e.clientX, e.clientY)
                       }}
                       onDoubleClick={() => {
                         if (!deleted && !isPlaceholder) startRenameList(c)
@@ -3354,6 +3474,7 @@ export function MainView({ onLoggedOut }: Props) {
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
               onChangePriority={handleChangePriority}
+              onRowContextMenu={openTaskMenu}
               onLeaveLeft={() => setFocusZone('sidebar')}
               fadingExpires={fadingExpires}
               phonePriority={phonePriority}
@@ -3398,6 +3519,9 @@ export function MainView({ onLoggedOut }: Props) {
         }
       />
       <EditModeIndicator />
+      {menu && (
+        <ContextMenu menu={menu} onClose={() => setMenu(null)} />
+      )}
     </div>
   )
 }

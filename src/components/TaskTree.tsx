@@ -52,6 +52,8 @@ interface Props {
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
   onChangePriority?: (node: TaskNode, priority: Priority) => void
+  // Right-click on a task row → caller opens a context menu at x,y.
+  onRowContextMenu?: (node: TaskNode, x: number, y: number) => void
   // Called when ArrowLeft is pressed on a top-level row that's already
   // collapsed (or a leaf with no parent). Lets the caller decide what
   // "leaving the tree to the left" means — typically focus the sidebar.
@@ -223,6 +225,7 @@ export function TaskTree({
   onRenameTask,
   onDeleteRequest,
   onChangePriority,
+  onRowContextMenu,
   onLeaveLeft,
   fadingExpires,
   phonePriority = false,
@@ -563,6 +566,15 @@ export function TaskTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
             onClick={() => setSelected(node.todo.uid)}
+            onContextMenu={
+              onRowContextMenu
+                ? (e) => {
+                    e.preventDefault()
+                    setSelected(node.todo.uid)
+                    onRowContextMenu(node, e.clientX, e.clientY)
+                  }
+                : undefined
+            }
             onMouseEnter={() => setHoveredUid(node.todo.uid)}
             onMouseLeave={() =>
               setHoveredUid((cur) =>
