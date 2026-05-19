@@ -1,8 +1,31 @@
-import type { TaskItem } from '../types'
+import type { CollectionInfo, TaskItem } from '../types'
 import { store } from './store'
 
 const KEY_PREFIX = 'collection.'
 const SNAPSHOT_VERSION = 1
+const COLLECTIONS_LIST_KEY = 'collectionsList.v1'
+
+// The list of collections itself isn't covered by per-collection
+// snapshots; cache it so a failed listCollections (offline / network
+// error) can still render the sidebar from the last known list.
+interface CollectionsListCache {
+  list: CollectionInfo[]
+  savedAt: number
+}
+
+export async function saveCollectionsList(
+  list: CollectionInfo[],
+): Promise<void> {
+  await store.set(COLLECTIONS_LIST_KEY, {
+    list,
+    savedAt: Date.now(),
+  } satisfies CollectionsListCache)
+}
+
+export async function loadCollectionsList(): Promise<CollectionInfo[] | null> {
+  const data = await store.get<CollectionsListCache>(COLLECTIONS_LIST_KEY)
+  return data?.list ?? null
+}
 
 export interface CollectionSnapshot {
   version: number

@@ -26,7 +26,9 @@ import {
   type CollectionSnapshot,
   deleteSnapshot,
   listSnapshotUids,
+  loadCollectionsList,
   loadSnapshot,
+  saveCollectionsList,
   saveSnapshot,
 } from '../services/snapshots'
 import {
@@ -349,6 +351,10 @@ function writeZoom(zone: ZoomZone, value: number) {
 export function MainView({ onLoggedOut }: Props) {
   const [collections, setCollections] = useState<CollectionInfo[] | null>(null)
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
+  // True while the last collections load failed and we're rendering the
+  // on-disk cached list — i.e. we're offline / the server is unreachable
+  // and no sync can happen until it recovers.
+  const [offline, setOffline] = useState(false)
   const [activeUid, setActiveUid] = useState<string | null>(null)
 
   // Bumped to force the collections-load effect to re-run after a
@@ -881,6 +887,8 @@ export function MainView({ onLoggedOut }: Props) {
         if (cancelledRef.current) return
         setCollections(cs)
         setCollectionsError(null)
+        setOffline(false)
+        void saveCollectionsList(cs)
         if (cs.length > 0) {
           // Keep a still-valid selection (so toggling "show deleted"
           // doesn't jump it); otherwise default to the list shown first
@@ -949,6 +957,25 @@ export function MainView({ onLoggedOut }: Props) {
         setCollectionsError(
           err instanceof Error ? err.message : 'Failed to load collections',
         )
+        // Network/server failure: fall back to the cached list so the
+        // app is still usable offline. Do NOT prune snapshots here — we
+        // have no authoritative server list to prune against.
+        void loadCollectionsList().then((cached) => {
+          if (cancelledRef.current) return
+          setOffline(true)
+          if (cached && cached.length > 0) {
+            setCollections((cur) => cur ?? cached)
+            setActiveUid((curr) =>
+              curr && cached.some((c) => c.uid === curr)
+                ? curr
+                : sortCollections(
+                    cached,
+                    sidebarSortRef.current,
+                    itemsByUidRef.current,
+                  )[0]?.uid,
+            )
+          }
+        })
       })
   }, [showDeletedLists, collectionsRefreshKey])
 
@@ -3373,6 +3400,37 @@ export function MainView({ onLoggedOut }: Props) {
       <EditModeIndicator />
       {menu && (
         <ContextMenu menu={menu} onClose={() => setMenu(null)} />
+      )}
+      {offline && (
+        <div
+          role="alert"
+          className="fixed left-1/2 top-0 z-50 flex -translate-x-1/2 items-center gap-3 rounded-b-md border border-t-0 border-danger/50 bg-danger px-4 py-1.5 text-xs font-medium text-bg shadow-lg"
+        >
+          <svg
+            viewBox="0 0 16 16"
+            className="h-3.5 w-3.5 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M1.5 5.5a9 9 0 0 1 13 0M4 8.5a5.5 5.5 0 0 1 8 0M8 11.5h.01" />
+            <path d="M2 14L14 2" />
+          </svg>
+          <span>
+            Offline — can't reach the server. Showing cached data;
+            changes won't sync until reconnected.
+          </span>
+          <button
+            type="button"
+            onClick={() => setCollectionsRefreshKey((k) => k + 1)}
+            className="shrink-0 rounded border border-bg/40 px-1.5 py-0.5 text-[11px] transition-opacity hover:opacity-80"
+          >
+            Retry
+          </button>
+        </div>
       )}
     </div>
   )
