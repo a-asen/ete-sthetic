@@ -1407,8 +1407,13 @@ export function MainView({ onLoggedOut }: Props) {
       // it never expands/collapses the hierarchy.
       //   →  sidebar ⇒ enter the list; tasks ⇒ open details (if a task
       //      is selected). In details the panel handles its own keys.
+      // While typing in a field (renaming, inline-create, detail
+      // inputs), Ctrl/Cmd+←/→ is native word-jump, not meta-nav.
+      const inTextField =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight') {
-        if (focusZone === 'details') return
+        if (inTextField || focusZone === 'details') return
         e.preventDefault()
         if (focusZone === 'sidebar') {
           focusTasks()
@@ -1421,7 +1426,7 @@ export function MainView({ onLoggedOut }: Props) {
       //      details the panel owns Ctrl+← (save-aware exit), so don't
       //      intercept it here.
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowLeft') {
-        if (focusZone === 'details') return
+        if (inTextField || focusZone === 'details') return
         if (focusZone === 'tasks') {
           e.preventDefault()
           setFocusZone('sidebar')

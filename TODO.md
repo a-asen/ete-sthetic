@@ -51,6 +51,16 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
 - [x] Confirmed: COMPLETED timestamp is already written on completion and
       cleared when cycled off (`updateVTodo`). Not yet shown in the UI —
       see queued #16.
+- [x] Moving a parent carries its children: `buildTree` also resolves
+      `RELATED-TO;RELTYPE=CHILD` (some clients write the hierarchy that
+      way), so subtrees nest → `m`-move takes the whole subtree and
+      priority sort stays hierarchical. Tree recursion is now cycle-safe.
+      (Likely the real cause behind queued #4 & the "children don't move"
+      report — a link-resolution gap, not a sort/move-logic bug.)
+- [x] Detail panel is one notch less faded when unfocused (more visible
+      while working in tasks); sidebar/tasks fades unchanged.
+- [x] `Ctrl+←/→` in any text field is native word-jump (rename / inline
+      create / detail inputs); zone meta-nav only fires outside fields.
 
 ## Polish & fixes (queued 2026-05-18)
 

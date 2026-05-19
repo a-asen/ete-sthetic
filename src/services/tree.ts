@@ -8,14 +8,23 @@ interface MutableNode extends TaskNode {
 function sortRecursive(
   node: MutableNode,
   cmp: (a: MutableNode, b: MutableNode) => number,
+  seen: Set<MutableNode> = new Set(),
 ) {
+  if (seen.has(node)) return // cycle guard — never recurse into a loop
+  seen.add(node)
   node.children.sort(cmp)
-  for (const child of node.children) sortRecursive(child, cmp)
+  for (const child of node.children) sortRecursive(child, cmp, seen)
 }
 
-function assignDepth(node: MutableNode, depth: number) {
+function assignDepth(
+  node: MutableNode,
+  depth: number,
+  seen: Set<MutableNode> = new Set(),
+) {
+  if (seen.has(node)) return
+  seen.add(node)
   node.depth = depth
-  for (const child of node.children) assignDepth(child, depth + 1)
+  for (const child of node.children) assignDepth(child, depth + 1, seen)
 }
 
 export function buildTree(
@@ -36,13 +45,59 @@ export function buildTree(
     })
   }
 
+  // Some clients express the hierarchy the other way round:
+  // RELATED-TO;RELTYPE=CHILD on the *parent* listing its children,
+  // instead of RELTYPE=PARENT on the child. Derive a child→parent map
+  // from those so subtrees still nest (so moving a parent takes its
+  // children, and priority sort stays hierarchical).
+  const derivedParent = new Map<string, string>()
+  for (const node of byUid.values()) {
+    for (const link of node.todo.relatedTo ?? []) {
+      if (
+        link.reltype === 'CHILD' &&
+        byUid.has(link.uid) &&
+        link.uid !== node.todo.uid &&
+        !derivedParent.has(link.uid)
+      ) {
+        derivedParent.set(link.uid, node.todo.uid)
+      }
+    }
+  }
+
+  // Effective parent: an explicit, resolvable PARENT link wins; else a
+  // CHILD-derived one.
+  const effectiveParent = (n: MutableNode): string | undefined => {
+    const p = n.todo.parentUid
+    if (p && byUid.has(p) && p !== n.todo.uid) return p
+    const d = derivedParent.get(n.todo.uid)
+    if (d && byUid.has(d) && d !== n.todo.uid) return d
+    return undefined
+  }
+
+  // Break cycles (A→B→A, or PARENT/CHILD disagreeing): a node whose
+  // ancestor chain loops back to itself is treated as a root instead.
+  const parentOf = new Map<string, string | undefined>()
+  for (const node of byUid.values()) {
+    parentOf.set(node.todo.uid, effectiveParent(node))
+  }
+  const safeParent = (uid: string): string | undefined => {
+    let cur = parentOf.get(uid)
+    const seen = new Set<string>([uid])
+    while (cur) {
+      if (seen.has(cur)) return undefined // cycle → detach to root
+      seen.add(cur)
+      cur = parentOf.get(cur)
+    }
+    return parentOf.get(uid)
+  }
+
   const roots: MutableNode[] = []
   for (const node of byUid.values()) {
-    const parentUid = node.todo.parentUid
-    if (parentUid && byUid.has(parentUid) && parentUid !== node.todo.uid) {
+    const parentUid = safeParent(node.todo.uid)
+    if (parentUid && byUid.has(parentUid)) {
       byUid.get(parentUid)!.children.push(node)
     } else {
-      // Orphaned children (parent unknown or self-referential) bubble to root.
+      // Parent unknown / self-referential / cyclic → bubble to root.
       roots.push(node)
     }
   }
