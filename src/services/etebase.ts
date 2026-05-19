@@ -1,11 +1,21 @@
 import * as Etebase from 'etebase'
-import type { CollectionInfo, TaskItem } from '../types'
+import type { ColType, CollectionInfo, EventItem, TaskItem } from '../types'
 import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
+import {
+  buildVEvent,
+  parseVEvent,
+  updateVEvent,
+  type NewVEventArgs,
+  type VEventPatch,
+} from './vevent'
 import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
+import { clearAllCalSnapshots } from './calsnapshot'
+import { resetCalMemory } from './calstore'
 
 export const DEFAULT_SERVER = 'https://api.etebase.com'
-const TASK_COLLECTION_TYPE = 'etebase.vtodo'
+const TASK_COLLECTION_TYPE: ColType = 'etebase.vtodo'
+const CALENDAR_COLLECTION_TYPE: ColType = 'etebase.vevent'
 
 let account: Etebase.Account | null = null
 
@@ -86,8 +96,10 @@ export async function logout(): Promise<void> {
   }
   account = null
   clearHandles()
+  resetCalMemory()
   await clearSession()
   await clearAllSnapshots()
+  await clearAllCalSnapshots()
 }
 
 export function isAuthenticated(): boolean {
@@ -154,10 +166,11 @@ export interface ListCollectionsOptions {
 
 export async function listCollections(
   options: ListCollectionsOptions = {},
+  type: ColType = TASK_COLLECTION_TYPE,
 ): Promise<CollectionInfo[]> {
   const acc = await ensureAccount()
   const cm = acc.getCollectionManager()
-  const result = await cm.list(TASK_COLLECTION_TYPE)
+  const result = await cm.list(type)
   return result.data
     .filter((c) => options.includeDeleted || !c.isDeleted)
     .map((c) => {
@@ -534,4 +547,263 @@ export async function deleteCollection(uid: string): Promise<void> {
   collection.delete()
   await cm.upload(collection)
   collectionHandles.delete(uid)
+}
+
+// ---- Calendar (VEVENT), read-only for v1 ----
+// Appended as a separate block (not woven into the task functions) to keep
+// the merge surface with concurrent task work minimal. Reuses the same
+// type-agnostic collection/item plumbing above.
+
+export interface EventSyncResult {
+  items: EventItem[]
+  removed: string[]
+  stoken: string
+}
+
+export interface ListEventItemsOptions {
+  signal?: AbortSignal
+  onBatch?: (batch: EventItem[]) => void
+  fromStoken?: string
+}
+
+// Calendars are just collections of a different type.
+export function listCalendars(
+  options: ListCollectionsOptions = {},
+): Promise<CollectionInfo[]> {
+  return listCollections(options, CALENDAR_COLLECTION_TYPE)
+}
+
+// Mirror of listTaskItems for VEVENT. Same incremental-sync / batching /
+// abort shape; only the parser differs.
+export async function listEventItems(
+  collectionUid: string,
+  options: ListEventItemsOptions = {},
+): Promise<EventSyncResult> {
+  const { signal, onBatch, fromStoken } = options
+  checkAborted(signal)
+
+  const im = await getItemManager(collectionUid)
+  const accumulated: EventItem[] = []
+  const removed: string[] = []
+  let pendingBatch: EventItem[] = []
+
+  const flush = () => {
+    if (pendingBatch.length === 0) return
+    const batch = pendingBatch
+    pendingBatch = []
+    accumulated.push(...batch)
+    onBatch?.(batch)
+  }
+
+  let stoken: string | undefined = fromStoken
+  while (true) {
+    checkAborted(signal)
+    const page = await im.list({ stoken })
+    checkAborted(signal)
+
+    for (const item of page.data) {
+      checkAborted(signal)
+      if (item.isDeleted) {
+        removed.push(item.uid)
+        itemHandles.delete(itemKey(collectionUid, item.uid))
+        continue
+      }
+      const raw = await item.getContent(Etebase.OutputFormat.String)
+      const event = parseVEvent(raw)
+      if (!event) continue
+      itemHandles.set(itemKey(collectionUid, item.uid), item)
+      pendingBatch.push({ itemUid: item.uid, event })
+      if (pendingBatch.length >= BATCH_SIZE) {
+        flush()
+        await yieldToEventLoop()
+        checkAborted(signal)
+      }
+    }
+    stoken = page.stoken
+    if (page.done) break
+  }
+
+  flush()
+  return { items: accumulated, removed, stoken: stoken ?? '' }
+}
+
+export async function createEvent(
+  collectionUid: string,
+  args: NewVEventArgs,
+): Promise<EventItem> {
+  const im = await getItemManager(collectionUid)
+  const { raw } = buildVEvent(args)
+  const item = await im.create({ name: args.summary, mtime: Date.now() }, raw)
+  await im.transaction([item])
+  itemHandles.set(itemKey(collectionUid, item.uid), item)
+  const event = parseVEvent(raw)
+  if (!event) throw new Error('Built VEVENT failed to parse')
+  return { itemUid: item.uid, event }
+}
+
+// Raised when a transaction is rejected because the item changed on the
+// server since we last fetched it. Carries both sides so the UI can ask
+// the user how to resolve.
+export class EventConflictError extends Error {
+  readonly collectionUid: string
+  readonly itemUid: string
+  readonly localRaw: string
+  readonly serverRaw: string
+  constructor(
+    collectionUid: string,
+    itemUid: string,
+    localRaw: string,
+    serverRaw: string,
+  ) {
+    super('Event changed on the server')
+    this.name = 'EventConflictError'
+    this.collectionUid = collectionUid
+    this.itemUid = itemUid
+    this.localRaw = localRaw
+    this.serverRaw = serverRaw
+  }
+}
+
+export function updateEvent(
+  collectionUid: string,
+  itemUid: string,
+  patch: VEventPatch,
+): Promise<EventItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    const item = await getItem(collectionUid, itemUid)
+    const oldRaw = await item.getContent(Etebase.OutputFormat.String)
+    const newRaw = updateVEvent(oldRaw, patch)
+    await item.setContent(newRaw)
+    if (patch.summary !== undefined) setItemMeta(item, patch.summary)
+
+    const im = await getItemManager(collectionUid)
+    try {
+      await im.transaction([item])
+    } catch {
+      // Stale etag → server has a newer version. Refetch it so the
+      // caller can present local vs cloud.
+      itemHandles.delete(itemKey(collectionUid, itemUid))
+      const fresh = await im.fetch(itemUid)
+      itemHandles.set(itemKey(collectionUid, itemUid), fresh)
+      const serverRaw = await fresh.getContent(Etebase.OutputFormat.String)
+      throw new EventConflictError(
+        collectionUid,
+        itemUid,
+        newRaw,
+        serverRaw,
+      )
+    }
+    const event = parseVEvent(newRaw)
+    if (!event) throw new Error('Updated VEVENT failed to parse')
+    return { itemUid: item.uid, event }
+  })
+}
+
+// Resolve a conflict by forcing the local version onto the server. Fetches
+// a fresh handle (current etag) first so the transaction is accepted.
+export function forceUpdateEvent(
+  collectionUid: string,
+  itemUid: string,
+  localRaw: string,
+): Promise<EventItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    itemHandles.delete(itemKey(collectionUid, itemUid))
+    const im = await getItemManager(collectionUid)
+    const item = await im.fetch(itemUid)
+    await item.setContent(localRaw)
+    const event = parseVEvent(localRaw)
+    setItemMeta(item, event?.summary ?? '')
+    await im.transaction([item])
+    itemHandles.set(itemKey(collectionUid, itemUid), item)
+    if (!event) throw new Error('Local VEVENT failed to parse')
+    return { itemUid: item.uid, event }
+  })
+}
+
+// Replace an event's whole content (used by recurrence edits that rewrite
+// RRULE/EXDATE). Conflict-aware like updateEvent.
+export function replaceEventRaw(
+  collectionUid: string,
+  itemUid: string,
+  raw: string,
+): Promise<EventItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    const item = await getItem(collectionUid, itemUid)
+    await item.setContent(raw)
+    const parsed = parseVEvent(raw)
+    setItemMeta(item, parsed?.summary ?? '')
+    const im = await getItemManager(collectionUid)
+    try {
+      await im.transaction([item])
+    } catch {
+      itemHandles.delete(itemKey(collectionUid, itemUid))
+      const fresh = await im.fetch(itemUid)
+      itemHandles.set(itemKey(collectionUid, itemUid), fresh)
+      const serverRaw = await fresh.getContent(Etebase.OutputFormat.String)
+      throw new EventConflictError(collectionUid, itemUid, raw, serverRaw)
+    }
+    if (!parsed) throw new Error('VEVENT failed to parse')
+    return { itemUid: item.uid, event: parsed }
+  })
+}
+
+// Create an event from a ready-made VCALENDAR string (recurrence split /
+// detach produce their own ICS).
+export async function createEventRaw(
+  collectionUid: string,
+  raw: string,
+): Promise<EventItem> {
+  const event = parseVEvent(raw)
+  if (!event) throw new Error('VEVENT failed to parse')
+  const im = await getItemManager(collectionUid)
+  const item = await im.create(
+    { name: event.summary, mtime: Date.now() },
+    raw,
+  )
+  await im.transaction([item])
+  itemHandles.set(itemKey(collectionUid, item.uid), item)
+  return { itemUid: item.uid, event }
+}
+
+export async function deleteEvent(
+  collectionUid: string,
+  itemUid: string,
+): Promise<void> {
+  const item = await getItem(collectionUid, itemUid)
+  item.delete()
+  const im = await getItemManager(collectionUid)
+  await im.transaction([item])
+  itemHandles.delete(itemKey(collectionUid, itemUid))
+}
+
+// Move one event to another calendar. Same copy-then-delete strategy as
+// moveTasksToCollection (Etebase has no native move); destination commits
+// first so a failure can't lose data. Returns the new EventItem.
+export async function moveEventToCollection(
+  sourceCollectionUid: string,
+  destCollectionUid: string,
+  itemUid: string,
+): Promise<EventItem> {
+  if (sourceCollectionUid === destCollectionUid) {
+    throw new Error('Source and destination collections are the same')
+  }
+  const source = await getItem(sourceCollectionUid, itemUid)
+  const content = await source.getContent(Etebase.OutputFormat.String)
+  const meta = source.getMeta<Record<string, unknown>>()
+
+  const acc = await ensureAccount()
+  const destCollection = await getCollection(destCollectionUid)
+  const destIm = acc.getCollectionManager().getItemManager(destCollection)
+  const created = await destIm.create({ ...meta, mtime: Date.now() }, content)
+  await destIm.transaction([created])
+  itemHandles.set(itemKey(destCollectionUid, created.uid), created)
+
+  source.delete()
+  const sourceIm = await getItemManager(sourceCollectionUid)
+  await sourceIm.transaction([source])
+  itemHandles.delete(itemKey(sourceCollectionUid, itemUid))
+
+  const event = parseVEvent(content)
+  if (!event) throw new Error('Moved VEVENT failed to parse')
+  return { itemUid: created.uid, event }
 }
