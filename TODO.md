@@ -116,6 +116,11 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       creates stay inline at their indent.
 - [x] Clicking the sidebar "Lists" header (or the collapsed chevron)
       focuses the list selection (focusZone='sidebar').
+- [x] Settings menu: new SettingsPopover (gear button) consolidates the
+      low-frequency view controls — hide completed, phone-friendly
+      priority, dark/light theme, accent colour (presets+hex+default),
+      task card size — removed from the crowded task header. (Also a
+      natural home for the deferred #14 zoom-% readout — now shown.)
 
 ## Polish & fixes (queued 2026-05-18)
 

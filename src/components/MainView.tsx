@@ -46,6 +46,7 @@ import {
   type ContextMenuItem,
   type ContextMenuState,
 } from './ContextMenu'
+import { SettingsPopover } from './SettingsPopover'
 import {
   DEFAULT_FILTER,
   FilterPopover,
@@ -470,29 +471,7 @@ export function MainView({ onLoggedOut }: Props) {
     writeStoredAccent(hex)
     applyAccent(hex)
   }, [])
-  const [accentOpen, setAccentOpen] = useState(false)
-  const [accentHex, setAccentHex] = useState('#2f8a6c')
-  const accentRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!accentOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setAccentOpen(false)
-      }
-    }
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement
-      if (t.closest('[aria-label="Accent colour"]')) return
-      if (!accentRef.current?.contains(t)) setAccentOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    document.addEventListener('mousedown', onDown)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.removeEventListener('mousedown', onDown)
-    }
-  }, [accentOpen])
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [showDeletedLists, setShowDeletedListsState] = useState<boolean>(() =>
     readShowDeletedLists(),
   )
@@ -3086,36 +3065,6 @@ export function MainView({ onLoggedOut }: Props) {
                   : 'Syncing…'}
               </span>
             )}
-            <div
-              className="flex shrink-0 items-center rounded-md border border-border text-text-muted"
-              title="Task card size (Ctrl/Cmd + / - / 0)"
-            >
-              <button
-                type="button"
-                onClick={() => adjustZoom('tasks', -ZOOM_STEP)}
-                aria-label="Smaller task cards"
-                className="flex h-7 w-6 items-center justify-center rounded-l-md text-xs transition-colors hover:bg-surface-2 hover:text-text"
-              >
-                A−
-              </button>
-              <button
-                type="button"
-                onClick={() => adjustZoom('tasks', 'reset')}
-                aria-label="Reset task card size"
-                title="Reset (Ctrl/Cmd+0)"
-                className="h-7 min-w-[2.75rem] border-x border-border px-1 text-[11px] tabular-nums transition-colors hover:bg-surface-2 hover:text-text"
-              >
-                {Math.round(zoom.tasks * 100)}%
-              </button>
-              <button
-                type="button"
-                onClick={() => adjustZoom('tasks', ZOOM_STEP)}
-                aria-label="Larger task cards"
-                className="flex h-7 w-6 items-center justify-center rounded-r-md text-sm transition-colors hover:bg-surface-2 hover:text-text"
-              >
-                A+
-              </button>
-            </div>
             <button
               type="button"
               onClick={refreshActive}
@@ -3162,48 +3111,6 @@ export function MainView({ onLoggedOut }: Props) {
                 <path d="M8 3.5v9M3.5 8h9" />
               </svg>
               <span>Add task</span>
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setFilter({ ...filter, hideCompleted: !filter.hideCompleted })
-              }
-              aria-pressed={filter.hideCompleted}
-              title={
-                filter.hideCompleted
-                  ? 'Showing only open tasks — click to show completed'
-                  : 'Hide completed tasks'
-              }
-              aria-label="Toggle hide completed"
-              className={`flex h-7 w-7 items-center justify-center rounded-md border text-xs transition-colors ${
-                filter.hideCompleted
-                  ? 'border-accent/40 bg-accent-soft text-text'
-                  : 'border-border text-text-muted hover:border-border-strong hover:text-text'
-              }`}
-            >
-              <svg
-                viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                {filter.hideCompleted ? (
-                  <>
-                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
-                    <circle cx="8" cy="8" r="2" />
-                    <path d="M2.5 13.5l11-11" />
-                  </>
-                ) : (
-                  <>
-                    <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
-                    <circle cx="8" cy="8" r="2" />
-                  </>
-                )}
-              </svg>
             </button>
             <div className="relative">
               <button
@@ -3302,89 +3209,13 @@ export function MainView({ onLoggedOut }: Props) {
                 />
               )}
             </div>
-            <button
-              type="button"
-              onClick={togglePhonePriority}
-              aria-pressed={phonePriority}
-              title={
-                phonePriority
-                  ? 'Phone-friendly priority on — dropdown shows 4 buckets (None/High/Medium/Low). Click for full 9 levels.'
-                  : 'Phone-friendly priority off — dropdown shows all 9 levels. Click for 4-bucket UI that survives phone round-trips.'
-              }
-              aria-label="Toggle phone-friendly priority"
-              className={`flex h-7 w-7 items-center justify-center rounded-md border text-xs transition-colors ${
-                phonePriority
-                  ? 'border-accent/40 bg-accent-soft text-text'
-                  : 'border-border text-text-muted hover:border-border-strong hover:text-text'
-              }`}
-            >
-              <svg
-                viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <rect x="4.5" y="1.5" width="7" height="13" rx="1.5" />
-                <path d="M7 12.5h2" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={toggleTheme}
-              title={
-                theme === 'dark'
-                  ? 'Switch to light theme'
-                  : 'Switch to dark theme'
-              }
-              aria-label="Toggle theme"
-              aria-pressed={theme === 'light'}
-              className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
-            >
-              {theme === 'dark' ? (
-                /* Sun — clicking goes to light. */
-                <svg
-                  viewBox="0 0 16 16"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <circle cx="8" cy="8" r="3" />
-                  <path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.3 3.3l1 1M11.7 11.7l1 1M3.3 12.7l1-1M11.7 4.3l1-1" />
-                </svg>
-              ) : (
-                /* Moon — clicking goes to dark. */
-                <svg
-                  viewBox="0 0 16 16"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <path d="M13.5 9.5A6 6 0 1 1 6.5 2.5a5 5 0 0 0 7 7z" />
-                </svg>
-              )}
-            </button>
             <div className="relative">
               <button
                 type="button"
-                onClick={() => {
-                  setAccentHex(accent ?? '#2f8a6c')
-                  setAccentOpen((o) => !o)
-                }}
-                aria-expanded={accentOpen}
-                aria-label="Accent colour"
-                title="Accent colour"
+                onClick={() => setSettingsOpen((o) => !o)}
+                aria-expanded={settingsOpen}
+                aria-label="Settings"
+                title="Settings"
                 className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
               >
                 <svg
@@ -3397,97 +3228,30 @@ export function MainView({ onLoggedOut }: Props) {
                   strokeLinejoin="round"
                   aria-hidden
                 >
-                  <path d="M8 1.5c3.6 0 6.5 2.7 6.5 6 0 2-1.6 3-3 3h-1.6c-.8 0-1.4.6-1.4 1.4 0 .4.2.7.2 1 0 .8-.7 1.1-1.2 1.1A6.5 6.5 0 0 1 8 1.5z" />
-                  <circle cx="5.5" cy="6" r="0.6" fill="currentColor" />
-                  <circle cx="8" cy="4.5" r="0.6" fill="currentColor" />
-                  <circle cx="10.5" cy="6" r="0.6" fill="currentColor" />
+                  <circle cx="8" cy="8" r="2.25" />
+                  <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
                 </svg>
               </button>
-              {accentOpen && (
-                <div
-                  ref={accentRef}
-                  role="dialog"
-                  aria-label="Accent colour picker"
-                  className="absolute right-0 top-9 z-30 w-48 rounded-md border border-border bg-surface p-2 shadow-xl"
-                >
-                  <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                    Accent colour
-                  </p>
-                  <div className="flex flex-wrap gap-1.5 px-1">
-                    {ACCENT_PRESETS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => {
-                          setAccent(c)
-                          setAccentOpen(false)
-                        }}
-                        title={c}
-                        aria-label={`Accent ${c}`}
-                        className={`h-5 w-5 rounded-full border transition-transform hover:scale-110 ${
-                          accent === c
-                            ? 'border-text'
-                            : 'border-border'
-                        }`}
-                        style={{ background: c }}
-                      />
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAccent(null)
-                        setAccentOpen(false)
-                      }}
-                      title="Theme default"
-                      aria-label="Default accent"
-                      className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] transition-colors ${
-                        accent === null
-                          ? 'border-text text-text'
-                          : 'border-border text-text-faint hover:border-border-strong hover:text-text-muted'
-                      }`}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="mt-2 flex items-center gap-1.5 border-t border-border px-1 pt-2">
-                    <input
-                      type="color"
-                      value={accentHex}
-                      onChange={(e) => setAccentHex(e.target.value)}
-                      aria-label="Custom accent picker"
-                      className="h-6 w-7 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0"
-                    />
-                    <input
-                      type="text"
-                      value={accentHex}
-                      spellCheck={false}
-                      onChange={(e) => setAccentHex(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (
-                          e.key === 'Enter' &&
-                          /^#[0-9a-fA-F]{6}$/.test(accentHex)
-                        ) {
-                          e.preventDefault()
-                          setAccent(accentHex.toLowerCase())
-                          setAccentOpen(false)
-                        }
-                      }}
-                      aria-label="Custom accent hex"
-                      className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-1.5 py-1 font-mono text-xs text-text outline-none focus:border-border-strong"
-                    />
-                    <button
-                      type="button"
-                      disabled={!/^#[0-9a-fA-F]{6}$/.test(accentHex)}
-                      onClick={() => {
-                        setAccent(accentHex.toLowerCase())
-                        setAccentOpen(false)
-                      }}
-                      className="shrink-0 rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Set
-                    </button>
-                  </div>
-                </div>
+              {settingsOpen && (
+                <SettingsPopover
+                  hideCompleted={filter.hideCompleted}
+                  onToggleHideCompleted={() =>
+                    setFilter({
+                      ...filter,
+                      hideCompleted: !filter.hideCompleted,
+                    })
+                  }
+                  phonePriority={phonePriority}
+                  onTogglePhonePriority={togglePhonePriority}
+                  theme={theme}
+                  onToggleTheme={toggleTheme}
+                  accent={accent}
+                  accentPresets={ACCENT_PRESETS}
+                  onSetAccent={setAccent}
+                  taskZoomPct={Math.round(zoom.tasks * 100)}
+                  onZoom={(d) => adjustZoom('tasks', d)}
+                  onClose={() => setSettingsOpen(false)}
+                />
               )}
             </div>
             <button
