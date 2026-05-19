@@ -656,6 +656,51 @@ export function forceUpdateEvent(
   })
 }
 
+// Replace an event's whole content (used by recurrence edits that rewrite
+// RRULE/EXDATE). Conflict-aware like updateEvent.
+export function replaceEventRaw(
+  collectionUid: string,
+  itemUid: string,
+  raw: string,
+): Promise<EventItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    const item = await getItem(collectionUid, itemUid)
+    await item.setContent(raw)
+    const parsed = parseVEvent(raw)
+    setItemMeta(item, parsed?.summary ?? '')
+    const im = await getItemManager(collectionUid)
+    try {
+      await im.transaction([item])
+    } catch {
+      itemHandles.delete(itemKey(collectionUid, itemUid))
+      const fresh = await im.fetch(itemUid)
+      itemHandles.set(itemKey(collectionUid, itemUid), fresh)
+      const serverRaw = await fresh.getContent(Etebase.OutputFormat.String)
+      throw new EventConflictError(collectionUid, itemUid, raw, serverRaw)
+    }
+    if (!parsed) throw new Error('VEVENT failed to parse')
+    return { itemUid: item.uid, event: parsed }
+  })
+}
+
+// Create an event from a ready-made VCALENDAR string (recurrence split /
+// detach produce their own ICS).
+export async function createEventRaw(
+  collectionUid: string,
+  raw: string,
+): Promise<EventItem> {
+  const event = parseVEvent(raw)
+  if (!event) throw new Error('VEVENT failed to parse')
+  const im = await getItemManager(collectionUid)
+  const item = await im.create(
+    { name: event.summary, mtime: Date.now() },
+    raw,
+  )
+  await im.transaction([item])
+  itemHandles.set(itemKey(collectionUid, item.uid), item)
+  return { itemUid: item.uid, event }
+}
+
 export async function deleteEvent(
   collectionUid: string,
   itemUid: string,

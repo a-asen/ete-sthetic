@@ -2,13 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   EventConflictError,
   createEvent,
+  createEventRaw,
   deleteEvent,
   forceUpdateEvent,
   listCalendars,
   listEventItems,
   moveEventToCollection,
+  replaceEventRaw,
   updateEvent,
 } from '../services/etebase'
+import {
+  addExdate,
+  detachedEvent,
+  newSeriesFrom,
+  truncateUntil,
+} from '../services/recurrence-edit'
 import type { CollectionInfo, EventItem } from '../types'
 import {
   parseVEvent,
@@ -36,6 +44,10 @@ import { EventComposer } from './calendar/EventComposer'
 import { ConflictModal } from './calendar/ConflictModal'
 import { EventPopover } from './calendar/EventPopover'
 import { DayPopover } from './calendar/DayPopover'
+import {
+  RecurrenceScopeModal,
+  type RecurScope,
+} from './calendar/RecurrenceScopeModal'
 import { expandEvents } from '../services/recurrence'
 
 const VIEWS: { id: CalView; label: string }[] = [
@@ -106,6 +118,27 @@ export function CalendarView() {
   // so a background sync can warn if it changed underneath the user.
   const editBaseRef = useRef<{ itemUid: string; raw: string } | null>(null)
   const [serverChanged, setServerChanged] = useState(false)
+  // Pending edit/delete of a recurring event, awaiting a scope choice.
+  const [recurOp, setRecurOp] = useState<
+    | {
+        action: 'edit'
+        calUid: string
+        itemUid: string
+        baseRaw: string
+        occStart: Date
+        allDay: boolean
+        patch: VEventPatch
+      }
+    | {
+        action: 'delete'
+        calUid: string
+        itemUid: string
+        baseRaw: string
+        occStart: Date
+        allDay: boolean
+      }
+    | null
+  >(null)
 
   // Sync one calendar: start from whatever we already have for it
   // (memory/snapshot), then apply a stoken delta from the server.
@@ -576,6 +609,107 @@ export function CalendarView() {
     [calByItem, handleUpdate],
   )
 
+  const addToCal = useCallback((calUid: string, item: EventItem) => {
+    setEventsByCal((prev) =>
+      new Map(prev).set(calUid, [...(prev.get(calUid) ?? []), item]),
+    )
+  }, [])
+
+  // Apply a recurring edit/delete at the chosen scope.
+  const runRecurScope = useCallback(
+    async (scope: RecurScope) => {
+      const op = recurOp
+      if (!op) return
+      setCreating(true)
+      setCreateErr(null)
+      try {
+        if (op.action === 'delete') {
+          if (scope === 'all') {
+            await deleteEvent(op.calUid, op.itemUid)
+            spliceEvent(op.calUid, op.itemUid, null)
+          } else {
+            const raw =
+              scope === 'this'
+                ? addExdate(op.baseRaw, op.occStart, op.allDay)
+                : truncateUntil(op.baseRaw, op.occStart, op.allDay)
+            const updated = await replaceEventRaw(
+              op.calUid,
+              op.itemUid,
+              raw,
+            )
+            spliceEvent(op.calUid, op.itemUid, updated)
+          }
+        } else {
+          const { patch } = op
+          if (scope === 'all') {
+            // Shift the whole series by the time delta the user applied
+            // to this occurrence; non-time fields set directly.
+            const base = parseVEvent(op.baseRaw)
+            const bStart = base?.start ?? patch.start ?? op.occStart
+            const bEnd =
+              base?.end ?? patch.end ?? new Date(op.occStart.getTime())
+            const delta =
+              (patch.start?.getTime() ?? op.occStart.getTime()) -
+              op.occStart.getTime()
+            const updated = await updateEvent(op.calUid, op.itemUid, {
+              summary: patch.summary,
+              location: patch.location,
+              description: patch.description,
+              allDay: patch.allDay,
+              start: new Date(bStart.getTime() + delta),
+              end: new Date(bEnd.getTime() + delta),
+            })
+            spliceEvent(op.calUid, op.itemUid, updated)
+          } else if (scope === 'this') {
+            const updatedBase = await replaceEventRaw(
+              op.calUid,
+              op.itemUid,
+              addExdate(op.baseRaw, op.occStart, op.allDay),
+            )
+            spliceEvent(op.calUid, op.itemUid, updatedBase)
+            addToCal(
+              op.calUid,
+              await createEventRaw(
+                op.calUid,
+                detachedEvent(op.baseRaw, patch),
+              ),
+            )
+          } else {
+            const updatedBase = await replaceEventRaw(
+              op.calUid,
+              op.itemUid,
+              truncateUntil(op.baseRaw, op.occStart, op.allDay),
+            )
+            spliceEvent(op.calUid, op.itemUid, updatedBase)
+            addToCal(
+              op.calUid,
+              await createEventRaw(
+                op.calUid,
+                newSeriesFrom(op.baseRaw, patch),
+              ),
+            )
+          }
+        }
+        setCreating(false)
+        setRecurOp(null)
+      } catch (e) {
+        setCreating(false)
+        setRecurOp(null)
+        if (e instanceof EventConflictError) {
+          setConflict({
+            calUid: op.calUid,
+            itemUid: op.itemUid,
+            localRaw: e.localRaw,
+            serverRaw: e.serverRaw,
+          })
+          return
+        }
+        setCreateErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [recurOp, spliceEvent, addToCal],
+  )
+
   const resolveConflict = useCallback(
     async (keep: 'local' | 'cloud') => {
       if (!conflict) return
@@ -772,19 +906,52 @@ export function CalendarView() {
           onCreate={handleCreate}
           onUpdate={
             composer.mode === 'edit'
-              ? (patch, newCalUid) =>
-                  handleEditSave(
-                    composer.calUid,
-                    composer.item.itemUid,
-                    patch,
-                    newCalUid,
-                  )
+              ? (patch, newCalUid) => {
+                  const it =
+                    composer.mode === 'edit' ? composer.item : null
+                  if (it?.event.recurring && it.event.start) {
+                    editBaseRef.current = null
+                    setServerChanged(false)
+                    setComposer(null)
+                    setRecurOp({
+                      action: 'edit',
+                      calUid: composer.calUid,
+                      itemUid: it.itemUid,
+                      baseRaw: it.event.raw,
+                      occStart: it.event.start,
+                      allDay: patch.allDay ?? it.event.allDay,
+                      patch,
+                    })
+                  } else {
+                    handleEditSave(
+                      composer.calUid,
+                      composer.item.itemUid,
+                      patch,
+                      newCalUid,
+                    )
+                  }
+                }
               : undefined
           }
           onDelete={
             composer.mode === 'edit'
-              ? () =>
-                  handleDelete(composer.calUid, composer.item.itemUid)
+              ? () => {
+                  const it =
+                    composer.mode === 'edit' ? composer.item : null
+                  if (it?.event.recurring && it.event.start) {
+                    setComposer(null)
+                    setRecurOp({
+                      action: 'delete',
+                      calUid: composer.calUid,
+                      itemUid: it.itemUid,
+                      baseRaw: it.event.raw,
+                      occStart: it.event.start,
+                      allDay: it.event.allDay,
+                    })
+                  } else {
+                    handleDelete(composer.calUid, composer.item.itemUid)
+                  }
+                }
               : undefined
           }
           serverChanged={composer.mode === 'edit' && serverChanged}
@@ -804,6 +971,15 @@ export function CalendarView() {
         />
       )}
 
+      {recurOp && (
+        <RecurrenceScopeModal
+          action={recurOp.action}
+          busy={creating}
+          onPick={runRecurScope}
+          onClose={() => setRecurOp(null)}
+        />
+      )}
+
       {popover && (
         <EventPopover
           item={popover.item}
@@ -815,7 +991,19 @@ export function CalendarView() {
           busy={creating}
           onEdit={editFromPopover}
           onDelete={() => {
-            handleDelete(popover.calUid, popover.item.itemUid)
+            const it = popover.item
+            if (it.event.recurring && it.event.start) {
+              setRecurOp({
+                action: 'delete',
+                calUid: popover.calUid,
+                itemUid: it.itemUid,
+                baseRaw: it.event.raw,
+                occStart: it.event.start,
+                allDay: it.event.allDay,
+              })
+            } else {
+              handleDelete(popover.calUid, it.itemUid)
+            }
             setPopover(null)
           }}
           onClose={() => setPopover(null)}
