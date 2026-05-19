@@ -1,4 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { Priority, TaskNode } from '../types'
 import { flattenVisible } from '../services/tree'
 
@@ -49,6 +57,10 @@ interface Props {
   onConfirmCreate?: (summary: string) => void
   onConfirmCreateAndOpen?: (summary: string) => void
   onCancelCreate?: () => void
+  // Persistent quick-add row at the top of the list (root tasks).
+  onQuickAdd?: (summary: string) => void
+  onQuickAddAndOpen?: (summary: string) => void
+  quickAddRef?: React.Ref<HTMLInputElement>
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
   onChangePriority?: (node: TaskNode, priority: Priority) => void
@@ -197,6 +209,67 @@ function InlineCreate({
   )
 }
 
+// Permanent compact "add task" row pinned at the top of the list. Unlike
+// InlineCreate it doesn't auto-focus or cancel on blur — it's always
+// present; Enter adds the task and clears the field so several can be
+// entered in a row. Exposes its input via ref so `n` can focus it.
+const QuickAdd = forwardRef<
+  HTMLInputElement,
+  {
+    onConfirm: (summary: string) => void
+    onConfirmAndOpen?: (summary: string) => void
+  }
+>(function QuickAdd({ onConfirm, onConfirmAndOpen }, ref) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  useImperativeHandle(ref, () => inputRef.current as HTMLInputElement, [])
+
+  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const value = inputRef.current?.value.trim() ?? ''
+      if (value) {
+        onConfirm(value)
+        if (inputRef.current) inputRef.current.value = ''
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      if (inputRef.current) inputRef.current.value = ''
+      inputRef.current?.blur()
+    } else if (
+      (e.ctrlKey || e.metaKey) &&
+      e.key === 'ArrowRight' &&
+      onConfirmAndOpen
+    ) {
+      // Commit and follow into details; stop the global Ctrl+→ handler.
+      e.preventDefault()
+      e.stopPropagation()
+      const value = inputRef.current?.value.trim() ?? ''
+      if (value) {
+        onConfirmAndOpen(value)
+        if (inputRef.current) inputRef.current.value = ''
+      }
+    }
+  }
+
+  return (
+    <li className="sticky top-0 z-10 bg-bg px-3 pb-1.5 pt-1">
+      <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2/50 px-2 py-1 transition-colors focus-within:border-accent/50">
+        <span aria-hidden className="shrink-0 text-text-faint">
+          +
+        </span>
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder="Add task — Enter to add"
+          aria-label="Add task"
+          className="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-faint"
+          onKeyDown={handleKey}
+        />
+      </div>
+    </li>
+  )
+})
+
 const INDENT_PX = 20
 
 function formatDue(due: string | undefined): string | null {
@@ -246,6 +319,9 @@ export function TaskTree({
   onConfirmCreate,
   onConfirmCreateAndOpen,
   onCancelCreate,
+  onQuickAdd,
+  onQuickAddAndOpen,
+  quickAddRef,
   onRenameTask,
   onDeleteRequest,
   onChangePriority,
@@ -570,27 +646,16 @@ export function TaskTree({
     })
   }
 
-  const isCreatingRoot = creatingParent === null
   const isCreatingUnder = (uid: string) => creatingParent === uid
   const canCreate = !!onConfirmCreate && !!onCancelCreate
 
-  if (roots.length === 0 && !isCreatingRoot) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-text-faint">
-        No tasks in this list.
-      </div>
-    )
-  }
-
   return (
     <ul className="select-none py-2" role="tree">
-      {isCreatingRoot && canCreate && (
-        <InlineCreate
-          depth={0}
-          centered
-          onConfirm={onConfirmCreate!}
-          onCancel={onCancelCreate!}
-          onConfirmAndOpen={onConfirmCreateAndOpen}
+      {onQuickAdd && (
+        <QuickAdd
+          ref={quickAddRef}
+          onConfirm={onQuickAdd}
+          onConfirmAndOpen={onQuickAddAndOpen}
         />
       )}
       {visible.map((node) => {

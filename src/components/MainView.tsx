@@ -414,6 +414,7 @@ export function MainView({ onLoggedOut }: Props) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const newListRef = useRef<HTMLInputElement>(null)
   const renameListRef = useRef<HTMLInputElement>(null)
+  const quickAddRef = useRef<HTMLInputElement>(null)
   // Guards against the create-list input firing twice (Enter then the
   // unmount blur), which was creating duplicate lists.
   const creatingListBusyRef = useRef(false)
@@ -1324,10 +1325,48 @@ export function MainView({ onLoggedOut }: Props) {
     if (creating && ae instanceof HTMLInputElement) ae.blur()
   }, [creating])
 
+  // Root tasks are added via the always-present quick-add row; `n` (and
+  // the old "start create root" entry point) just focuses it.
   const handleStartCreateRoot = useCallback(() => {
     flushActiveCreate()
-    setCreating({ parentUid: null })
+    setFocusZone('tasks')
+    requestAnimationFrame(() => quickAddRef.current?.focus())
   }, [flushActiveCreate])
+
+  const handleQuickAddRoot = useCallback(
+    async (summary: string) => {
+      if (!activeUid) return
+      const trimmed = summary.trim()
+      if (!trimmed) return
+      const colUid = activeUid
+      try {
+        const newItem = await createTask(colUid, trimmed, undefined)
+        if (cancelledRef.current) return
+        setItemsByUid((prev) => {
+          const items = prev.get(colUid) ?? []
+          const next = new Map(prev)
+          next.set(colUid, [...items, newItem])
+          return next
+        })
+        setSelectedTaskUid(newItem.todo.uid)
+      } catch (err) {
+        if (cancelledRef.current) return
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to create task',
+        )
+      }
+    },
+    [activeUid],
+  )
+
+  const handleQuickAddRootAndOpen = useCallback(
+    async (summary: string) => {
+      await handleQuickAddRoot(summary)
+      if (cancelledRef.current) return
+      setFocusZone('details')
+    },
+    [handleQuickAddRoot],
+  )
 
   // Logseq-style status cycle: NEEDS-ACTION → IN-PROCESS → COMPLETED →
   // NEEDS-ACTION. CANCELLED rejoins the cycle at the top (it's set
@@ -3174,27 +3213,6 @@ export function MainView({ onLoggedOut }: Props) {
                 <path d="M13.5 2.5v3h-3" />
               </svg>
             </button>
-            <button
-              type="button"
-              onClick={handleStartCreateRoot}
-              disabled={!activeUid || !activeItems}
-              title="Add task (at top of list)"
-              aria-label="Add task"
-              className="flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <svg
-                viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                aria-hidden
-              >
-                <path d="M8 3.5v9M3.5 8h9" />
-              </svg>
-              <span>Add task</span>
-            </button>
             <div className="relative">
               <button
                 type="button"
@@ -3397,7 +3415,7 @@ export function MainView({ onLoggedOut }: Props) {
             !activeLoading && (
               <p className="px-5 py-4 text-sm text-text-faint">Loading tasks…</p>
             )}
-          {activeItems && (visibleTree.length > 0 || creating) && (
+          {activeItems && (
             <TaskTree
               roots={visibleTree}
               onToggleComplete={handleToggleComplete}
@@ -3408,6 +3426,9 @@ export function MainView({ onLoggedOut }: Props) {
               onConfirmCreate={handleConfirmCreate}
               onConfirmCreateAndOpen={handleConfirmCreateAndOpen}
               onCancelCreate={handleCancelCreate}
+              onQuickAdd={handleQuickAddRoot}
+              onQuickAddAndOpen={handleQuickAddRootAndOpen}
+              quickAddRef={quickAddRef}
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
               onChangePriority={handleChangePriority}
