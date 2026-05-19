@@ -99,11 +99,15 @@ const INPUT_PLACEHOLDER = 'New task — Enter to add, Esc to cancel'
 
 function InlineCreate({
   depth,
+  centered = false,
   onConfirm,
   onCancel,
   onConfirmAndOpen,
 }: {
   depth: number
+  // Root creates render as a centred "compose" box in the task pane;
+  // subtask creates stay inline at their indent.
+  centered?: boolean
   onConfirm: (summary: string) => void
   onCancel: () => void
   // Ctrl/Cmd+→ while typing: commit this (sub)task and follow it into
@@ -152,6 +156,23 @@ function InlineCreate({
     const value = e.target.value.trim()
     if (value) onConfirm(value)
     else onCancel()
+  }
+
+  if (centered) {
+    return (
+      <li className="px-3 py-6">
+        <div className="mx-auto w-full max-w-md rounded-lg border border-accent/40 bg-surface-2 px-3 py-2 shadow-sm">
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder={INPUT_PLACEHOLDER}
+            className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-faint"
+            onKeyDown={handleKey}
+            onBlur={handleBlur}
+          />
+        </div>
+      </li>
+    )
   }
 
   return (
@@ -540,6 +561,7 @@ export function TaskTree({
       {isCreatingRoot && canCreate && (
         <InlineCreate
           depth={0}
+          centered
           onConfirm={onConfirmCreate!}
           onCancel={onCancelCreate!}
           onConfirmAndOpen={onConfirmCreateAndOpen}

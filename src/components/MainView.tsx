@@ -2417,9 +2417,14 @@ export function MainView({ onLoggedOut }: Props) {
               <div className="flex items-center justify-between gap-1 px-3 py-3">
                 {showFull ? (
                   <>
-                    <span className="text-xs font-semibold uppercase tracking-wider text-text-faint">
+                    <button
+                      type="button"
+                      onClick={() => setFocusZone('sidebar')}
+                      title="Focus the list selection (l)"
+                      className="text-xs font-semibold uppercase tracking-wider text-text-faint transition-colors hover:text-text-muted"
+                    >
                       Lists
-                    </span>
+                    </button>
                     <div className="relative flex items-center gap-1">
                       <button
                         type="button"
@@ -2713,13 +2718,15 @@ export function MainView({ onLoggedOut }: Props) {
                     </div>
                   </>
                 ) : (
-                  <span
-                    aria-hidden
-                    className="text-xs font-semibold text-text-faint"
-                    title="Expand lists (l)"
+                  <button
+                    type="button"
+                    onClick={() => setFocusZone('sidebar')}
+                    title="Focus the list selection (l)"
+                    aria-label="Focus list selection"
+                    className="mx-auto text-xs font-semibold text-text-faint transition-colors hover:text-text-muted"
                   >
                     ›
-                  </span>
+                  </button>
                 )}
               </div>
               <div

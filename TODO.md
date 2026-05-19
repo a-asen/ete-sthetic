@@ -111,10 +111,15 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       hardened/verified move path (no picker modal). handleMovePick was
       refactored to share `performMove` with the drag drop. Invalid
       targets (same list / placeholder / tombstone) reject the drop.
+- [x] #1 Root new-task input renders as a centred compose box
+      (max-width, mx-auto, bordered surface) in the task pane; subtask
+      creates stay inline at their indent.
+- [x] Clicking the sidebar "Lists" header (or the collapsed chevron)
+      focuses the list selection (focusZone='sidebar').
 
 ## Polish & fixes (queued 2026-05-18)
 
-### 1. Centre the "add task" affordance
+### 1. Centre the "add task" affordance — ✅ done
 **Task.** The inline new-task input currently renders flush at the top-left
 of the task pane; make it visually centred in the task view so it reads as a
 deliberate "compose" surface, not a list row.
