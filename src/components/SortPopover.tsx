@@ -59,9 +59,27 @@ export function SortPopover<T extends string>({
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
-      } else if (e.key === 'Enter') {
+        return
+      }
+      if (e.key === 'Enter') {
         e.preventDefault()
         ;(onConfirm ?? onClose)()
+        return
+      }
+      // Single-letter mnemonics: 'r' reverses; any other letter selects
+      // the option whose label starts with it (Priority→p, Due→d,
+      // Created→c, Title→t). Ignored while a modifier is held.
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return
+      const ch = e.key.toLowerCase()
+      if (ch === 'r') {
+        e.preventDefault()
+        onChange({ sort: spec.sort, reverse: !spec.reverse })
+        return
+      }
+      const opt = options.find((o) => o.label[0]?.toLowerCase() === ch)
+      if (opt) {
+        e.preventDefault()
+        onChange({ sort: opt.value, reverse: spec.reverse })
       }
     }
     document.addEventListener('mousedown', onDocClick)
@@ -70,7 +88,7 @@ export function SortPopover<T extends string>({
       document.removeEventListener('mousedown', onDocClick)
       document.removeEventListener('keydown', onKey)
     }
-  }, [onClose, onConfirm])
+  }, [onClose, onConfirm, onChange, options, spec])
 
   return (
     <div
