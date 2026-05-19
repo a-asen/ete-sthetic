@@ -1742,6 +1742,21 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
+      // Ctrl/Cmd+S → jump to the sorting menu (overrides browser Save).
+      // In the list view that's the sidebar list-settings popover (sort
+      // lists / show deleted); elsewhere it's the task sort popover.
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault()
+        if (focusZone === 'sidebar') {
+          setSidebarSettingsOpen(true)
+        } else if (activeUid) {
+          setFocusZone('tasks')
+          setSortOpen(true)
+          setSortFocusKey((k) => k + 1)
+        }
+        return
+      }
+
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
