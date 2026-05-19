@@ -40,6 +40,7 @@ import {
 } from '../types'
 import { ConfirmModal } from './ConfirmModal'
 import { DetailPanel } from './DetailPanel'
+import { EditModeIndicator } from './EditModeIndicator'
 import {
   DEFAULT_FILTER,
   FilterPopover,
@@ -52,8 +53,11 @@ import { SortPopover, type SortOption } from './SortPopover'
 import { TaskTree } from './TaskTree'
 import { readTaskSort, writeTaskSort } from '../services/sort'
 import {
+  applyAccent,
   applyTheme,
+  readStoredAccent,
   readStoredTheme,
+  writeStoredAccent,
   writeStoredTheme,
   type Theme,
 } from '../services/theme'
@@ -88,6 +92,18 @@ const LIST_COLORS = [
   '#9a7fd9',
   '#c97fb8',
   '#8a8f99',
+]
+
+// Curated accent presets (the default mint first).
+const ACCENT_PRESETS = [
+  '#2f8a6c',
+  '#3b82f6',
+  '#8b5cf6',
+  '#e0699f',
+  '#e07a3f',
+  '#d9b23a',
+  '#10b981',
+  '#ef4444',
 ]
 
 // Single source of truth for sidebar ordering — used both for rendering
@@ -426,6 +442,37 @@ export function MainView({ onLoggedOut }: Props) {
       return next
     })
   }, [])
+  const [accent, setAccentState] = useState<string | null>(() =>
+    readStoredAccent(),
+  )
+  const setAccent = useCallback((hex: string | null) => {
+    setAccentState(hex)
+    writeStoredAccent(hex)
+    applyAccent(hex)
+  }, [])
+  const [accentOpen, setAccentOpen] = useState(false)
+  const [accentHex, setAccentHex] = useState('#2f8a6c')
+  const accentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!accentOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setAccentOpen(false)
+      }
+    }
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (t.closest('[aria-label="Accent colour"]')) return
+      if (!accentRef.current?.contains(t)) setAccentOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [accentOpen])
   const [showDeletedLists, setShowDeletedListsState] = useState<boolean>(() =>
     readShowDeletedLists(),
   )
@@ -2986,6 +3033,121 @@ export function MainView({ onLoggedOut }: Props) {
                 </svg>
               )}
             </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setAccentHex(accent ?? '#2f8a6c')
+                  setAccentOpen((o) => !o)
+                }}
+                aria-expanded={accentOpen}
+                aria-label="Accent colour"
+                title="Accent colour"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M8 1.5c3.6 0 6.5 2.7 6.5 6 0 2-1.6 3-3 3h-1.6c-.8 0-1.4.6-1.4 1.4 0 .4.2.7.2 1 0 .8-.7 1.1-1.2 1.1A6.5 6.5 0 0 1 8 1.5z" />
+                  <circle cx="5.5" cy="6" r="0.6" fill="currentColor" />
+                  <circle cx="8" cy="4.5" r="0.6" fill="currentColor" />
+                  <circle cx="10.5" cy="6" r="0.6" fill="currentColor" />
+                </svg>
+              </button>
+              {accentOpen && (
+                <div
+                  ref={accentRef}
+                  role="dialog"
+                  aria-label="Accent colour picker"
+                  className="absolute right-0 top-9 z-30 w-48 rounded-md border border-border bg-surface p-2 shadow-xl"
+                >
+                  <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+                    Accent colour
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 px-1">
+                    {ACCENT_PRESETS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => {
+                          setAccent(c)
+                          setAccentOpen(false)
+                        }}
+                        title={c}
+                        aria-label={`Accent ${c}`}
+                        className={`h-5 w-5 rounded-full border transition-transform hover:scale-110 ${
+                          accent === c
+                            ? 'border-text'
+                            : 'border-border'
+                        }`}
+                        style={{ background: c }}
+                      />
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccent(null)
+                        setAccentOpen(false)
+                      }}
+                      title="Theme default"
+                      aria-label="Default accent"
+                      className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] transition-colors ${
+                        accent === null
+                          ? 'border-text text-text'
+                          : 'border-border text-text-faint hover:border-border-strong hover:text-text-muted'
+                      }`}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-1.5 border-t border-border px-1 pt-2">
+                    <input
+                      type="color"
+                      value={accentHex}
+                      onChange={(e) => setAccentHex(e.target.value)}
+                      aria-label="Custom accent picker"
+                      className="h-6 w-7 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0"
+                    />
+                    <input
+                      type="text"
+                      value={accentHex}
+                      spellCheck={false}
+                      onChange={(e) => setAccentHex(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === 'Enter' &&
+                          /^#[0-9a-fA-F]{6}$/.test(accentHex)
+                        ) {
+                          e.preventDefault()
+                          setAccent(accentHex.toLowerCase())
+                          setAccentOpen(false)
+                        }
+                      }}
+                      aria-label="Custom accent hex"
+                      className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-1.5 py-1 font-mono text-xs text-text outline-none focus:border-border-strong"
+                    />
+                    <button
+                      type="button"
+                      disabled={!/^#[0-9a-fA-F]{6}$/.test(accentHex)}
+                      onClick={() => {
+                        setAccent(accentHex.toLowerCase())
+                        setAccentOpen(false)
+                      }}
+                      className="shrink-0 rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Set
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => setShowKeybindings(true)}
@@ -3094,6 +3256,7 @@ export function MainView({ onLoggedOut }: Props) {
             : false
         }
       />
+      <EditModeIndicator />
     </div>
   )
 }

@@ -65,6 +65,11 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       the in-progress one (blur=save path) instead of silently dropping
       it on unmount. (User chose auto-commit over a confirm modal, since
       the modal's focus-grab conflicts with blur=save.)
+- [x] #9 Custom accent colour: toolbar popover (presets + RGB/hex +
+      theme-default), persisted, applied pre-mount via inline
+      `--color-accent` / derived `--color-accent-soft` (no flash).
+- [x] #6 Writing-mode indicator: a fixed "✎ Editing — Esc/Enter to exit"
+      pill appears whenever a text field is focused (EditModeIndicator).
 
 ## Polish & fixes (queued 2026-05-18)
 
@@ -133,7 +138,7 @@ always starts on Cancel. Keep Tab, add `←/→` to move between buttons.
   `ArrowLeft`/`ArrowRight` to focus Cancel / Confirm respectively (clamp, no
   wrap). Keep initial focus on the safe action (Cancel) for destructive.
 
-### 6. Clear "writing mode" vs "navigation mode" indicator
+### 6. Clear "writing mode" vs "navigation mode" indicator — ✅ done
 **Task.** When an input is capturing keys (new task, rename, sidebar
 create/rename, detail fields) it isn't obvious the keyboard is "locked" into
 text entry vs tree navigation.
@@ -164,7 +169,7 @@ selected task.
   `DetailPanel` (collapsed/unfocused states) — try ~`opacity-40` for the
   task/detail panes and ~`opacity-50/60` for the sidebar; keep transitions.
 
-### 9. Custom accent colour option
+### 9. Custom accent colour option — ✅ done
 **Task.** Let the user pick their preferred contrast/accent colour (presets +
 custom hex), persisted, applied app-wide.
 **Plan.**
