@@ -658,10 +658,15 @@ export function TaskTree({
           onConfirmAndOpen={onQuickAddAndOpen}
         />
       )}
-      {visible.map((node) => {
+      {visible.map((node, i) => {
         const hasChildren = node.children.length > 0
         const isExpanded = expanded.has(node.todo.uid)
         const isSelected = selected === node.todo.uid
+        // Roving tabindex: the selected row is the tree's single Tab stop
+        // (or the first row when nothing is selected) so the Tab focus
+        // ring and the selection highlight are always the same element,
+        // and Tab leaves the tree as a whole rather than walking rows.
+        const isTabStop = isSelected || (selected == null && i === 0)
         const isDone = node.todo.status === 'COMPLETED'
         const isInProgress = node.todo.status === 'IN-PROCESS'
         const due = formatDue(node.todo.due)
@@ -678,7 +683,7 @@ export function TaskTree({
             key={node.itemUid}
             data-task-uid={node.todo.uid}
             role="treeitem"
-            tabIndex={-1}
+            tabIndex={isTabStop ? 0 : -1}
             aria-level={node.depth + 1}
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
@@ -771,6 +776,7 @@ export function TaskTree({
             <button
               type="button"
               role="checkbox"
+              tabIndex={-1}
               aria-checked={isDone ? true : isInProgress ? 'mixed' : false}
               aria-label={
                 isDone
@@ -868,6 +874,7 @@ export function TaskTree({
             {onAddChild && (
               <button
                 type="button"
+                tabIndex={-1}
                 onClick={(e) => {
                   e.stopPropagation()
                   onAddChild(node)
