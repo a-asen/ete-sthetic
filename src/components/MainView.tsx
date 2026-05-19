@@ -577,6 +577,18 @@ export function MainView({ onLoggedOut }: Props) {
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false)
   const [customColor, setCustomColor] = useState('#5e8fd9')
   const colorPopoverRef = useRef<HTMLDivElement>(null)
+  // Clear the drop highlight if a drag ends anywhere (dropped outside a
+  // list, or cancelled with Esc) so it can never stay stuck on.
+  useEffect(() => {
+    const clear = () => setDragOverListUid(null)
+    window.addEventListener('dragend', clear)
+    window.addEventListener('drop', clear)
+    return () => {
+      window.removeEventListener('dragend', clear)
+      window.removeEventListener('drop', clear)
+    }
+  }, [])
+
   useEffect(() => {
     if (!colorPopoverOpen) return
     const onKey = (e: KeyboardEvent) => {
@@ -2870,7 +2882,16 @@ export function MainView({ onLoggedOut }: Props) {
                         if (dragOverListUid !== c.uid)
                           setDragOverListUid(c.uid)
                       }}
-                      onDragLeave={() => {
+                      onDragLeave={(e) => {
+                        // dragleave also fires when the pointer crosses
+                        // onto a child element (the colour dot / label);
+                        // ignore those so the highlight doesn't flicker.
+                        if (
+                          e.currentTarget.contains(
+                            e.relatedTarget as Node | null,
+                          )
+                        )
+                          return
                         setDragOverListUid((u) =>
                           u === c.uid ? null : u,
                         )
@@ -2909,7 +2930,7 @@ export function MainView({ onLoggedOut }: Props) {
                           : 'text-text-muted hover:bg-surface-2 hover:text-text'
                       } ${deleted ? 'opacity-50' : ''} ${
                         dragOverListUid === c.uid
-                          ? 'ring-2 ring-accent ring-inset'
+                          ? 'bg-accent-soft text-text ring-2 ring-accent ring-inset'
                           : ''
                       }`}
                     >
