@@ -1,8 +1,16 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { LoginScreen } from './components/LoginScreen'
 import { MainView } from './components/MainView'
-import { CalendarView } from './components/CalendarView'
 import { restoreSession } from './services/etebase'
+
+// The whole calendar module (CalendarView + calendar components +
+// recurrence/ics services) is dead weight for a tasks-only session, so it
+// loads on demand the first time the user switches to it.
+const CalendarView = lazy(() =>
+  import('./components/CalendarView').then((m) => ({
+    default: m.CalendarView,
+  })),
+)
 
 type AuthState = 'checking' | 'unauthenticated' | 'authenticated'
 type Module = 'tasks' | 'calendar'
@@ -62,7 +70,15 @@ function App() {
       {module === 'tasks' ? (
         <MainView onLoggedOut={() => setAuth('unauthenticated')} />
       ) : (
-        <CalendarView />
+        <Suspense
+          fallback={
+            <div className="flex h-screen items-center justify-center bg-bg">
+              <p className="text-sm text-text-faint">Loading calendar…</p>
+            </div>
+          }
+        >
+          <CalendarView />
+        </Suspense>
       )}
       <ModuleSwitch module={module} onChange={setModule} />
     </>
