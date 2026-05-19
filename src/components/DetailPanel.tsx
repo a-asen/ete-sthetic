@@ -492,6 +492,7 @@ export function DetailPanel({
           body="Save returns you to the list (it syncs in the background). Esc exits without saving (your edits stay in the draft). Cancel keeps you in the editor."
           confirmLabel="Save"
           cancelLabel="Cancel"
+          zoom={zoom}
           onCancel={() => setConfirming(false)}
           onDismiss={() => {
             setConfirming(false)

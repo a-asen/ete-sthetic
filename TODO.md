@@ -91,6 +91,14 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       shows count while syncing) and a per-list syncing spinner in the
       sidebar that lights up whenever a list is being pulled — from any
       trigger (active refresh, prefetch, sync-all, post-move re-sync).
+- [x] #14 ConfirmModal renders at the zoom of the zone it came from
+      (task delete→tasks, list delete→sidebar, save-changes→details).
+      (zoom-% readout still deferred until a settings panel exists.)
+- [x] #13 Optimistic list create (placeholder row + "syncing" badge
+      until the server confirms) and delete (row badged "syncing" until
+      confirmed); reconciles on success, rolls back + errors on failure.
+      Placeholders aren't selectable/renamable and don't affect keyboard
+      nav/typeahead.
 
 ## Polish & fixes (queued 2026-05-18)
 
@@ -245,7 +253,7 @@ case for a task deadline).
   in the `worktree-calendar` branch — check whether a shared month-grid
   primitive should come from there before duplicating.
 
-### 13. Optimistic list create/delete with a "syncing" badge
+### 13. Optimistic list create/delete with a "syncing" badge — ✅ done
 **Task.** Creating a list should show it in the sidebar immediately with a
 "syncing…" indicator until the server confirms; deleting one should likewise
 show "syncing…" on that row until the server confirms.
@@ -260,7 +268,7 @@ show "syncing…" on that row until the server confirms.
   rows. Watch the load effect's orphan-prune so it doesn't nuke the
   optimistic placeholder mid-flight.
 
-### 14. Modal zoom parity + zoom % in settings
+### 14. Modal zoom parity + zoom % in settings — ◑ modal-zoom done; % deferred (no settings panel)
 **Task.** The confirm/delete modal should render at the same zoom as the zone
 it was triggered from. Also expose the current zoom level as a % (a future
 settings menu).

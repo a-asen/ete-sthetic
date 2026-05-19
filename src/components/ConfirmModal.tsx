@@ -14,6 +14,9 @@ interface Props {
   // saving" while clicking Cancel just dismisses the prompt and keeps
   // the user editing).
   onDismiss?: () => void
+  // CSS zoom of the zone this modal was triggered from, so it visually
+  // matches (e.g. a task-delete confirm matches the task pane's zoom).
+  zoom?: number
 }
 
 export function ConfirmModal({
@@ -25,6 +28,7 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
   onDismiss,
+  zoom = 1,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
@@ -90,6 +94,7 @@ export function ConfirmModal({
       onClick={onCancel}
     >
       <div
+        style={{ zoom }}
         className="w-full max-w-sm rounded-lg border border-border bg-surface p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >

@@ -345,6 +345,13 @@ export function MainView({ onLoggedOut }: Props) {
   const [deletingList, setDeletingList] = useState<CollectionInfo | null>(null)
   const [listBusy, setListBusy] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
+  // Optimistic placeholders for lists being created (temp uid) and the
+  // set of list uids in a create/delete round-trip — both drive a
+  // "syncing" badge in the sidebar until the server confirms.
+  const [pendingLists, setPendingLists] = useState<CollectionInfo[]>([])
+  const [listSyncUids, setListSyncUids] = useState<Set<string>>(
+    () => new Set(),
+  )
   const newListRef = useRef<HTMLInputElement>(null)
   const renameListRef = useRef<HTMLInputElement>(null)
   // Guards against the create-list input firing twice (Enter then the
@@ -1047,6 +1054,17 @@ export function MainView({ onLoggedOut }: Props) {
     return sortCollections(collections, sidebarSort, itemsByUid)
   }, [collections, sidebarSort, itemsByUid])
 
+  // What the sidebar actually renders: real lists + optimistic
+  // placeholders for lists still being created. Keyboard nav, typeahead
+  // and default-selection deliberately keep using sortedCollections so
+  // they never land on a not-yet-real placeholder.
+  const displayCollections = useMemo(() => {
+    if (!sortedCollections) return sortedCollections
+    return pendingLists.length > 0
+      ? [...sortedCollections, ...pendingLists]
+      : sortedCollections
+  }, [sortedCollections, pendingLists])
+
 
   const recentlyCompletedKeys = useMemo(
     () => new Set(recentlyCompleted.keys()),
@@ -1335,23 +1353,36 @@ export function MainView({ onLoggedOut }: Props) {
     setNewListName('')
     if (!name) return
     creatingListBusyRef.current = true
-    setListBusy(true)
     setListError(null)
+    // Optimistic: show the new list immediately with a "syncing" badge.
+    const tempUid = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    setPendingLists((p) => [...p, { uid: tempUid, name }])
+    setListSyncUids((s) => new Set(s).add(tempUid))
+    const dropTemp = () => {
+      setPendingLists((p) => p.filter((c) => c.uid !== tempUid))
+      setListSyncUids((s) => {
+        if (!s.has(tempUid)) return s
+        const n = new Set(s)
+        n.delete(tempUid)
+        return n
+      })
+    }
     try {
       const info = await createCollection(name)
       if (cancelledRef.current) return
-      // Select the new list; the load effect keeps it selected since it's
-      // present in the refreshed server list.
+      dropTemp()
+      // Select the real list; the load effect keeps it selected since
+      // it's present in the refreshed server list.
       setActiveUid(info.uid)
       refreshCollections()
     } catch (err) {
       if (cancelledRef.current) return
+      dropTemp()
       setListError(
         err instanceof Error ? err.message : 'Failed to create list',
       )
     } finally {
       creatingListBusyRef.current = false
-      if (!cancelledRef.current) setListBusy(false)
     }
   }, [newListName, refreshCollections])
 
@@ -1398,22 +1429,32 @@ export function MainView({ onLoggedOut }: Props) {
   const handleDeleteList = useCallback(async () => {
     const target = deletingList
     if (!target) return
-    setListBusy(true)
     setListError(null)
+    // Close the modal immediately and badge the row as "syncing" until
+    // the server confirms the deletion (then refresh removes it).
+    setDeletingList(null)
+    const uid = target.uid
+    setListSyncUids((s) => new Set(s).add(uid))
+    const clearSync = () =>
+      setListSyncUids((s) => {
+        if (!s.has(uid)) return s
+        const n = new Set(s)
+        n.delete(uid)
+        return n
+      })
     try {
-      await deleteCollection(target.uid)
+      await deleteCollection(uid)
       if (cancelledRef.current) return
-      setDeletingList(null)
+      clearSync()
       // The load effect auto-selects another list when the active one
       // disappears from the refreshed server response.
       refreshCollections()
     } catch (err) {
       if (cancelledRef.current) return
+      clearSync()
       setListError(
         err instanceof Error ? err.message : 'Failed to delete list',
       )
-    } finally {
-      if (!cancelledRef.current) setListBusy(false)
     }
   }, [deletingList, refreshCollections])
 
@@ -2159,6 +2200,7 @@ export function MainView({ onLoggedOut }: Props) {
           }
           confirmLabel="Delete"
           destructive
+          zoom={zoom.tasks}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={handleConfirmDelete}
         />
@@ -2175,6 +2217,7 @@ export function MainView({ onLoggedOut }: Props) {
           }
           confirmLabel={listBusy ? 'Deleting…' : 'Delete'}
           destructive
+          zoom={zoom.sidebar}
           onCancel={() => {
             if (!listBusy) {
               setDeletingList(null)
@@ -2543,6 +2586,7 @@ export function MainView({ onLoggedOut }: Props) {
                 )}
                 {sortedCollections &&
                   sortedCollections.length === 0 &&
+                  pendingLists.length === 0 &&
                   showFull &&
                   !creatingList && (
                     <p className="px-2 py-3 text-xs text-text-faint">
@@ -2582,10 +2626,15 @@ export function MainView({ onLoggedOut }: Props) {
                     {listError}
                   </p>
                 )}
-                {sortedCollections?.map((c) => {
+                {displayCollections?.map((c) => {
                   const isActive = c.uid === activeUid
                   const items = itemsByUid.get(c.uid)
                   const counts = items ? countTasks(items) : null
+                  const listSyncing =
+                    loadingUids.has(c.uid) || listSyncUids.has(c.uid)
+                  // Optimistic create placeholders aren't real server
+                  // collections yet — not selectable / renamable.
+                  const isPlaceholder = c.uid.startsWith('pending-')
                   const failed = errorByUid.get(c.uid)
                   const sidebarHot = isActive && focusZone === 'sidebar'
                   const deleted = c.isDeleted === true
@@ -2633,11 +2682,12 @@ export function MainView({ onLoggedOut }: Props) {
                       data-collection-uid={c.uid}
                       type="button"
                       onClick={() => {
+                        if (isPlaceholder) return
                         setActiveUid(c.uid)
                         setFocusZone('sidebar')
                       }}
                       onDoubleClick={() => {
-                        if (!deleted) startRenameList(c)
+                        if (!deleted && !isPlaceholder) startRenameList(c)
                       }}
                       title={
                         showFull
@@ -2677,7 +2727,7 @@ export function MainView({ onLoggedOut }: Props) {
                           {c.name}
                         </span>
                       )}
-                      {loadingUids.has(c.uid) && (
+                      {listSyncing && (
                         <svg
                           viewBox="0 0 16 16"
                           className="h-3 w-3 shrink-0 animate-spin text-text-faint"
@@ -2698,7 +2748,7 @@ export function MainView({ onLoggedOut }: Props) {
                         }`}
                         title={
                           showFull
-                            ? loadingUids.has(c.uid)
+                            ? listSyncing
                               ? 'Syncing…'
                               : counts
                                 ? `${counts.open} open of ${counts.total}`
