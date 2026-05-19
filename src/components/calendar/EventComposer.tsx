@@ -21,6 +21,8 @@ function fromInputs(date: string, time: string): Date {
 export function EventComposer({
   date,
   defaultHour,
+  initialStart,
+  initialEnd,
   editing,
   calendars,
   defaultCalUid,
@@ -33,6 +35,9 @@ export function EventComposer({
 }: {
   date: Date
   defaultHour?: number
+  // Precise prefill for drag-create (overrides date/defaultHour).
+  initialStart?: Date
+  initialEnd?: Date
   // When set, the composer is in edit mode for this event.
   editing?: EventItem
   calendars: CollectionInfo[]
@@ -45,14 +50,20 @@ export function EventComposer({
   onClose: () => void
 }) {
   const ev = editing?.event
-  const start0 = ev?.start ? new Date(ev.start) : new Date(date)
-  if (!ev?.start) start0.setHours(defaultHour ?? 9, 0, 0, 0)
+  const start0 = ev?.start
+    ? new Date(ev.start)
+    : initialStart
+      ? new Date(initialStart)
+      : new Date(date)
+  if (!ev?.start && !initialStart) start0.setHours(defaultHour ?? 9, 0, 0, 0)
   // Stored all-day DTEND is exclusive; show the inclusive last day.
   const end0 = ev?.end
     ? new Date(
         ev.allDay ? ev.end.getTime() - 24 * 60 * 60 * 1000 : ev.end.getTime(),
       )
-    : new Date(start0.getTime() + 60 * 60 * 1000)
+    : initialEnd
+      ? new Date(initialEnd)
+      : new Date(start0.getTime() + 60 * 60 * 1000)
 
   const [calUid, setCalUid] = useState(defaultCalUid)
   const [summary, setSummary] = useState(ev?.summary ?? '')

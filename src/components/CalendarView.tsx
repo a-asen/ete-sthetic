@@ -69,7 +69,13 @@ export function CalendarView() {
   )
   // Composer is either creating (date/hour prefill) or editing an event.
   const [composer, setComposer] = useState<
-    | { mode: 'new'; date: Date; hour?: number }
+    | {
+        mode: 'new'
+        date: Date
+        hour?: number
+        start?: Date
+        end?: Date
+      }
     | { mode: 'edit'; item: EventItem; calUid: string }
     | null
   >(null)
@@ -516,6 +522,16 @@ export function CalendarView() {
     [spliceEvent],
   )
 
+  // Drag move/resize → patch start+end on the series base.
+  const handleMoveResize = useCallback(
+    async (item: EventItem, start: Date, end: Date) => {
+      const calUid = calByItem.get(item.itemUid)
+      if (!calUid) return
+      await handleUpdate(calUid, item.itemUid, { start, end })
+    },
+    [calByItem, handleUpdate],
+  )
+
   const resolveConflict = useCallback(
     async (keep: 'local' | 'cloud') => {
       if (!conflict) return
@@ -684,6 +700,10 @@ export function CalendarView() {
               setComposer({ mode: 'new', date: d, hour })
             }
             onOpenEvent={openEvent}
+            onCreateRange={(start, end) =>
+              setComposer({ mode: 'new', date: start, start, end })
+            }
+            onMoveResize={handleMoveResize}
           />
         )}
       </div>
@@ -696,6 +716,8 @@ export function CalendarView() {
               : (composer.item.event.start ?? new Date())
           }
           defaultHour={composer.mode === 'new' ? composer.hour : undefined}
+          initialStart={composer.mode === 'new' ? composer.start : undefined}
+          initialEnd={composer.mode === 'new' ? composer.end : undefined}
           editing={composer.mode === 'edit' ? composer.item : undefined}
           calendars={calendars}
           defaultCalUid={
