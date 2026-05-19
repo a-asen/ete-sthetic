@@ -8,7 +8,12 @@ import { registerTimezones } from './vevent'
 // (so edit/delete still act on the series base — per-occurrence editing
 // is deferred, see docs/calendar-roadmap.md E3).
 
+// Cap on occurrences *emitted* into the visible window.
 const MAX_OCC = 1500
+// Hard cap on total iterator steps (incl. pre-window occurrences we skip),
+// so a long-running daily rule viewed years after its DTSTART still
+// reaches the window instead of being truncated before it.
+const MAX_STEPS = 200_000
 const cache = new Map<string, { raw: string; occ: EventItem[] }>()
 
 function expandOne(
@@ -40,22 +45,21 @@ function expandOne(
   const endMs = rangeEnd.getTime()
   const out: EventItem[] = []
 
-  // Resume iteration near the window when possible — a far-future view of
-  // a long-running daily rule would otherwise iterate from DTSTART.
+  // Must iterate from the event's real DTSTART: ICAL.Event.iterator(t)
+  // *overrides* dtstart with t (it does not fast-forward), which would
+  // re-anchor the RRULE to the window and collapse every occurrence onto
+  // rangeStart. We skip pre-window occurrences in the loop instead; the
+  // MAX_OCC guard bounds a far-future long-running rule.
   let iter: ICAL.RecurExpansion
   try {
-    iter = ev.iterator(ICAL.Time.fromJSDate(rangeStart, false))
+    iter = ev.iterator()
   } catch {
-    try {
-      iter = ev.iterator()
-    } catch {
-      return [item]
-    }
+    return [item]
   }
 
   let next: ICAL.Time | null
-  let n = 0
-  while ((next = iter.next()) && n++ < MAX_OCC) {
+  let steps = 0
+  while ((next = iter.next()) && steps++ < MAX_STEPS && out.length < MAX_OCC) {
     if (next.toJSDate().getTime() >= endMs) break
     let details
     try {
