@@ -22,6 +22,12 @@ function snap(min: number): number {
 function minutesOf(d: Date): number {
   return d.getHours() * 60 + d.getMinutes()
 }
+// minutes-from-midnight → "HH:MM" (24h handled as 24:00 for an end edge).
+function hhmm(min: number): string {
+  const h = Math.floor(min / 60)
+  const m = Math.round(min % 60)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
 
 const HOUR_PX = 44
 const DAY_START_HOUR = 0
@@ -463,6 +469,11 @@ export function TimeGrid({
                 )}
                 {placed.map(({ item, topPx, heightPx, col, cols }) => {
                   const ev = item.event
+                  const isMoveSource =
+                    drag?.mode === 'move' &&
+                    drag.moved &&
+                    (drag.item.occId ?? drag.item.itemUid) ===
+                      (item.occId ?? item.itemUid)
                   return (
                     <div
                       key={item.occId ?? item.itemUid}
@@ -513,7 +524,11 @@ export function TimeGrid({
                         ev.summary +
                         (ev.location ? ` · ${ev.location}` : '')
                       }
-                      className="absolute cursor-grab overflow-hidden rounded-sm border-l-2 px-1 py-0.5 text-xs hover:brightness-125"
+                      className={`absolute overflow-hidden rounded-sm border-l-2 px-1 py-0.5 text-xs hover:brightness-125 ${
+                        isMoveSource
+                          ? 'cursor-grabbing opacity-30'
+                          : 'cursor-grab'
+                      }`}
                       style={{
                         top: `${topPx}px`,
                         height: `${heightPx}px`,
@@ -568,14 +583,23 @@ export function TimeGrid({
                   } else {
                     return null
                   }
+                  const label =
+                    drag.mode === 'create'
+                      ? 'New event'
+                      : drag.item.event.summary || '(no title)'
                   return (
                     <div
-                      className="pointer-events-none absolute inset-x-0.5 z-20 rounded-sm border border-accent bg-accent-soft"
+                      className="pointer-events-none absolute inset-x-0.5 z-20 flex flex-col overflow-hidden rounded-sm border-2 border-accent bg-accent/25 px-1 py-0.5 text-xs text-text shadow-lg ring-1 ring-accent"
                       style={{
                         top: `${(a / 60) * HOUR_PX}px`,
                         height: `${((b - a) / 60) * HOUR_PX}px`,
                       }}
-                    />
+                    >
+                      <span className="truncate font-medium">{label}</span>
+                      <span className="truncate tabular-nums text-text-muted">
+                        {hhmm(a)}–{hhmm(b)}
+                      </span>
+                    </div>
                   )
                 })()}
               </div>
