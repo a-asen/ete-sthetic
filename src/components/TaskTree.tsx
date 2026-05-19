@@ -345,6 +345,32 @@ export function TaskTree({
         }
         return
       }
+      // Ctrl/Cmd + ArrowUp/Down pages through the list (alias for
+      // PageUp/PageDown). Handled here, before the generic modifier
+      // bail-out below.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        (e.key === 'ArrowDown' || e.key === 'ArrowUp')
+      ) {
+        if (editingUid || document.querySelector('[role="dialog"]')) return
+        if (visible.length === 0) return
+        e.preventDefault()
+        const cur = selected
+          ? visible.findIndex((n) => n.todo.uid === selected)
+          : -1
+        const PAGE = 10
+        const next =
+          e.key === 'ArrowDown'
+            ? cur < 0
+              ? 0
+              : Math.min(visible.length - 1, cur + PAGE)
+            : cur <= 0
+              ? 0
+              : Math.max(0, cur - PAGE)
+        setSelected(visible[next].todo.uid)
+        return
+      }
       // Modifier-key chords are handled by MainView (Ctrl+Enter to enter
       // details, Ctrl+F for filter, etc.). The tree owns plain keys only,
       // so bail out before we treat Ctrl+Enter as "toggle done".
