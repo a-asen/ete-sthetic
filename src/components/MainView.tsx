@@ -1109,6 +1109,23 @@ export function MainView({ onLoggedOut }: Props) {
     void fetchCollection(activeUid)
   }, [activeUid, fetchCollection])
 
+  // Re-sync every list (incremental per-collection stoken). Bounded
+  // concurrency; fetchCollection already dedupes in-flight uids and
+  // drives loadingUids/syncProgress so the per-row indicators light up.
+  const syncAll = useCallback(() => {
+    const uids = (collections ?? [])
+      .map((c) => c.uid)
+      .filter((uid) => !inFlightRef.current.has(uid))
+    if (uids.length === 0) return
+    let i = 0
+    const workers = Array.from({ length: PREFETCH_CONCURRENCY }, async () => {
+      while (i < uids.length) {
+        await fetchCollection(uids[i++])
+      }
+    })
+    void Promise.all(workers)
+  }, [collections, fetchCollection])
+
   // 1 Hz ticker, only running while the active list has an in-flight sync,
   // so the "Syncing… Ns" label updates without re-rendering the whole app
   // every second the rest of the time. nowMs lives in state (not a render
@@ -2214,6 +2231,37 @@ export function MainView({ onLoggedOut }: Props) {
                     <div className="relative flex items-center gap-1">
                       <button
                         type="button"
+                        onClick={syncAll}
+                        disabled={loadingUids.size > 0}
+                        title={
+                          loadingUids.size > 0
+                            ? `Syncing ${loadingUids.size} list${loadingUids.size === 1 ? '' : 's'}…`
+                            : 'Sync all lists'
+                        }
+                        aria-label="Sync all lists"
+                        className="flex h-5 shrink-0 items-center justify-center gap-0.5 rounded-md border border-border px-1 text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted disabled:cursor-not-allowed"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className={`h-3 w-3 ${loadingUids.size > 0 ? 'animate-spin' : ''}`}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+                          <path d="M13.5 2.5v3h-3" />
+                        </svg>
+                        {loadingUids.size > 0 && (
+                          <span className="tabular-nums">
+                            {loadingUids.size}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
                         onClick={startCreateList}
                         title="New list (n)"
                         aria-label="New list"
@@ -2629,17 +2677,34 @@ export function MainView({ onLoggedOut }: Props) {
                           {c.name}
                         </span>
                       )}
+                      {loadingUids.has(c.uid) && (
+                        <svg
+                          viewBox="0 0 16 16"
+                          className="h-3 w-3 shrink-0 animate-spin text-text-faint"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-label="Syncing"
+                        >
+                          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+                          <path d="M13.5 2.5v3h-3" />
+                        </svg>
+                      )}
                       <span
                         className={`shrink-0 text-xs tabular-nums ${
                           isActive ? 'text-text-muted' : 'text-text-faint'
                         }`}
                         title={
                           showFull
-                            ? counts
-                              ? `${counts.open} open of ${counts.total}`
-                              : failed
-                                ? failed
-                                : 'Loading…'
+                            ? loadingUids.has(c.uid)
+                              ? 'Syncing…'
+                              : counts
+                                ? `${counts.open} open of ${counts.total}`
+                                : failed
+                                  ? failed
+                                  : 'Loading…'
                             : undefined
                         }
                       >

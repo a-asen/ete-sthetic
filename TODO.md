@@ -87,6 +87,10 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       surface; the source snapshot is ALWAYS invalidated in `finally`
       (fs op, unmount-safe) so the source re-syncs from the server and a
       half-completed move can never leave a silent ghost again.
+- [x] Sidebar "sync all lists" button (bounded concurrency, spins +
+      shows count while syncing) and a per-list syncing spinner in the
+      sidebar that lights up whenever a list is being pulled — from any
+      trigger (active refresh, prefetch, sync-all, post-move re-sync).
 
 ## Polish & fixes (queued 2026-05-18)
 
