@@ -77,6 +77,16 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       app never re-shows moved items from a stale cache. (Phone clients
       still apply the deletions on their own sync cadence — out of our
       control — but a real delete failure is now caught, not silent.)
+- [x] Root-caused the "moved here but still on phone" duplicates:
+      handleMovePick's `catch`/`finally` started with
+      `if (cancelledRef.current) return`, so if the source delete threw
+      while the component was cancelled (e.g. list switched) it swallowed
+      BOTH the rollback and the error — source items optimistically
+      removed from view forever, dest copies created, server source
+      never deleted → permanent cross-client ghost. Fixed: errors always
+      surface; the source snapshot is ALWAYS invalidated in `finally`
+      (fs op, unmount-safe) so the source re-syncs from the server and a
+      half-completed move can never leave a silent ghost again.
 
 ## Polish & fixes (queued 2026-05-18)
 

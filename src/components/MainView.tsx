@@ -1754,56 +1754,64 @@ export function MainView({ onLoggedOut }: Props) {
           destUid,
           cur.itemUids,
         )
-        if (cancelledRef.current) return
-        // Splice the freshly-created items into the destination's in-
-        // memory list so the user sees them the moment they switch over.
-        setItemsByUid((prev) => {
-          const existing = prev.get(destUid) ?? []
-          const byId = new Map(existing.map((t) => [t.itemUid, t]))
-          for (const t of created) byId.set(t.itemUid, t)
-          const next = new Map(prev)
-          next.set(destUid, Array.from(byId.values()))
-          return next
-        })
-        // Invalidate the SOURCE's cached snapshot + stoken so this app
-        // can never show the moved items again from a stale on-disk
-        // snapshot: next time the source list is opened it does a fresh
-        // sync and sees the server tombstones. (In-memory already had
-        // them optimistically removed above.)
-        void deleteSnapshot(srcUid)
-        setStokenByUid((prev) => {
-          if (!prev.has(srcUid)) return prev
-          const next = new Map(prev)
-          next.delete(srcUid)
-          return next
-        })
-        setLoadedUids((prev) => {
-          if (!prev.has(srcUid)) return prev
-          const next = new Set(prev)
-          next.delete(srcUid)
-          return next
-        })
-        // Follow the task: switch to the destination list and re-select
-        // it by its preserved VTODO uid.
-        setActiveUid(destUid)
-        setSelectedTaskUid(cur.rootVtodoUid)
+        if (!cancelledRef.current) {
+          // Splice the freshly-created items into the destination's
+          // in-memory list so the user sees them on switch.
+          setItemsByUid((prev) => {
+            const existing = prev.get(destUid) ?? []
+            const byId = new Map(existing.map((t) => [t.itemUid, t]))
+            for (const t of created) byId.set(t.itemUid, t)
+            const next = new Map(prev)
+            next.set(destUid, Array.from(byId.values()))
+            return next
+          })
+          // Follow the task: switch to the destination list and
+          // re-select it by its preserved VTODO uid.
+          setActiveUid(destUid)
+          setSelectedTaskUid(cur.rootVtodoUid)
+        }
       } catch (err) {
-        if (cancelledRef.current) return
-        // Roll back the optimistic removal so the user doesn't think
-        // their data vanished.
-        setItemsByUid((prev) => {
-          const existing = prev.get(srcUid) ?? []
-          const byId = new Map(existing.map((t) => [t.itemUid, t]))
-          for (const t of movedItems) byId.set(t.itemUid, t)
-          const next = new Map(prev)
-          next.set(srcUid, Array.from(byId.values()))
-          return next
-        })
+        // NEVER silent. A move that didn't fully complete must surface,
+        // and the source must be reconciled from the server (its items
+        // may still be there) — so do NOT bail on cancelledRef here.
+        if (!cancelledRef.current) {
+          // Roll back the optimistic removal so it doesn't look like the
+          // data vanished (the forced source re-sync below is the real
+          // safety net).
+          setItemsByUid((prev) => {
+            const existing = prev.get(srcUid) ?? []
+            const byId = new Map(existing.map((t) => [t.itemUid, t]))
+            for (const t of movedItems) byId.set(t.itemUid, t)
+            const next = new Map(prev)
+            next.set(srcUid, Array.from(byId.values()))
+            return next
+          })
+        }
         setMutationError(
           err instanceof Error ? err.message : 'Failed to move task',
         )
       } finally {
+        // ALWAYS force the SOURCE to re-sync from the server next time
+        // it's opened (this session and on next launch), regardless of
+        // success / failure / cancellation. deleteSnapshot is a
+        // filesystem op so it's safe even if the component unmounted —
+        // this is the guarantee that the app shows the server's truth
+        // and a half-completed move can't leave a silent ghost (item
+        // gone here but still on the server / other clients).
+        void deleteSnapshot(srcUid)
         if (!cancelledRef.current) {
+          setStokenByUid((prev) => {
+            if (!prev.has(srcUid)) return prev
+            const next = new Map(prev)
+            next.delete(srcUid)
+            return next
+          })
+          setLoadedUids((prev) => {
+            if (!prev.has(srcUid)) return prev
+            const next = new Set(prev)
+            next.delete(srcUid)
+            return next
+          })
           setPendingItemUids((prev) => {
             let mutated = false
             const next = new Set(prev)
