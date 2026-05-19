@@ -51,6 +51,7 @@ import {
   type RecurScope,
 } from './calendar/RecurrenceScopeModal'
 import { expandEvents } from '../services/recurrence'
+import { startAlarmScheduler } from '../services/alarms'
 
 const VIEWS: { id: CalView; label: string }[] = [
   { id: 'day', label: 'Day' },
@@ -247,6 +248,12 @@ export function CalendarView() {
     void loadAll()
     return () => loadAbort.current?.abort()
   }, [loadAll])
+
+  // VALARM reminders (roadmap U2). Idempotent + reads calstore, so it keeps
+  // firing after this view unmounts; it's torn down on logout instead.
+  useEffect(() => {
+    startAlarmScheduler()
+  }, [])
 
   // Mirror render state into the process-lifetime cache so an unmount
   // (module switch) doesn't lose it. Not a setState — safe in an effect.

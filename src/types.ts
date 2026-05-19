@@ -75,6 +75,21 @@ export interface CollectionInfo {
 // are the unified-client expansion (docs/calendar-contacts-plan.md).
 export type ColType = 'etebase.vtodo' | 'etebase.vevent' | 'etebase.vcard'
 
+// A VALARM trigger reduced to what the in-app reminder scheduler needs.
+// Either relative (offset in seconds from the event start or end) or
+// absolute (a fixed instant). EMAIL alarms are kept but never fire an OS
+// notification (no mail transport); DISPLAY/AUDIO do.
+export interface VAlarm {
+  action: string
+  // Relative trigger: signed seconds (negative = before). `relTo` says
+  // whether the offset is from DTSTART or DTEND.
+  relSeconds?: number
+  relTo?: 'start' | 'end'
+  // Absolute trigger instant (TRIGGER;VALUE=DATE-TIME).
+  at?: Date
+  description?: string
+}
+
 export interface VEvent {
   uid: string
   summary: string
@@ -96,6 +111,7 @@ export interface VEvent {
   // event and flag it so the grid can mark it.
   rrule?: string
   recurring: boolean
+  alarms: VAlarm[]
   created?: string
   lastModified?: string
   raw: string

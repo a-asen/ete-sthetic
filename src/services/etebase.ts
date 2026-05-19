@@ -12,6 +12,7 @@ import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
 import { clearAllCalSnapshots } from './calsnapshot'
 import { resetCalMemory } from './calstore'
+import { stopAlarmScheduler } from './alarms'
 
 export const DEFAULT_SERVER = 'https://api.etebase.com'
 const TASK_COLLECTION_TYPE: ColType = 'etebase.vtodo'
@@ -96,6 +97,7 @@ export async function logout(): Promise<void> {
   }
   account = null
   clearHandles()
+  stopAlarmScheduler()
   resetCalMemory()
   await clearSession()
   await clearAllSnapshots()

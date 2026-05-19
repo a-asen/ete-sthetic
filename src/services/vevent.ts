@@ -1,5 +1,5 @@
 import ICAL from 'ical.js'
-import type { VEvent } from '../types'
+import type { VAlarm, VEvent } from '../types'
 
 // Mirror of services/vtodo.ts:parseVTodo, for VEVENT. ical.js is already a
 // dependency and parses VEVENT with the same ICAL.Component shape, so this
@@ -44,6 +44,42 @@ export function registerTimezones(comp: ICAL.Component): void {
       // Malformed VTIMEZONE — skip; the time falls back to floating.
     }
   }
+}
+
+// Extract VALARM subcomponents into the scheduler-friendly VAlarm shape.
+// A TRIGGER is either a DURATION (relative to DTSTART, or DTEND when
+// RELATED=END) or an absolute DATE-TIME. Malformed alarms are skipped
+// rather than failing the whole event.
+function parseAlarms(vevent: ICAL.Component): VAlarm[] {
+  const out: VAlarm[] = []
+  for (const va of vevent.getAllSubcomponents('valarm')) {
+    const action =
+      asString(va.getFirstPropertyValue('action'))?.toUpperCase() ?? 'DISPLAY'
+    const description = asString(va.getFirstPropertyValue('description'))
+    const trig = va.getFirstProperty('trigger')
+    if (!trig) continue
+    try {
+      const val = trig.getFirstValue() as unknown
+      if (val instanceof ICAL.Duration) {
+        const relTo =
+          asString(trig.getParameter('related'))?.toUpperCase() === 'END'
+            ? 'end'
+            : 'start'
+        out.push({
+          action,
+          description,
+          relSeconds: val.toSeconds(),
+          relTo,
+        })
+      } else {
+        const at = timeToDate(val)
+        if (at) out.push({ action, description, at })
+      }
+    } catch {
+      // Unparseable trigger — ignore this alarm.
+    }
+  }
+  return out
 }
 
 export function parseVEvent(raw: string): VEvent | null {
@@ -117,6 +153,7 @@ export function parseVEvent(raw: string): VEvent | null {
     categories,
     rrule,
     recurring: !!rrule,
+    alarms: parseAlarms(vevent),
     created: asString(vevent.getFirstPropertyValue('created')),
     lastModified: asString(vevent.getFirstPropertyValue('last-modified')),
     raw,
