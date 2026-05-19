@@ -81,26 +81,36 @@ const SHOW_DELETED_LISTS_KEY = 'ete-stethic.showDeletedLists'
 const SIDEBAR_SORT_KEY = 'ete-stethic.sidebarSort'
 const PHONE_PRIORITY_KEY = 'ete-stethic.phoneFriendlyPriority'
 
-// Auto-sync staleness threshold (minutes). 0 = manual only — switching
-// lists never re-syncs; only the Refresh button / Sync-all do.
-const SYNC_INTERVAL_KEY = 'ete-stethic.syncIntervalMin'
-const SYNC_INTERVAL_OPTIONS = [0, 1, 5, 15, 30] as const
-const DEFAULT_SYNC_INTERVAL_MIN = 5
+// Adaptive sync settings (all in minutes; 0 = off/manual). The active
+// list refreshes frequently; other lists much less often; switching to
+// a list kicks a background sync only if it's older than the freshness
+// window.
+const ACTIVE_SYNC_KEY = 'ete-stethic.activeSyncMin'
+const BG_SYNC_KEY = 'ete-stethic.bgSyncMin'
+const SWITCH_FRESH_KEY = 'ete-stethic.switchFreshMin'
+const ACTIVE_SYNC_OPTIONS = [0, 1, 5, 15, 30, 60] as const
+const BG_SYNC_OPTIONS = [0, 30, 60, 240, 720, 1440] as const
+const SWITCH_FRESH_OPTIONS = [0, 15, 30, 60, 240] as const
+const DEFAULT_ACTIVE_SYNC_MIN = 5
+const DEFAULT_BG_SYNC_MIN = 240
+const DEFAULT_SWITCH_FRESH_MIN = 60
 
-function readSyncIntervalMin(): number {
+function readIntPref(
+  key: string,
+  options: readonly number[],
+  fallback: number,
+): number {
   try {
-    const v = Number(localStorage.getItem(SYNC_INTERVAL_KEY))
-    return (SYNC_INTERVAL_OPTIONS as readonly number[]).includes(v)
-      ? v
-      : DEFAULT_SYNC_INTERVAL_MIN
+    const v = Number(localStorage.getItem(key))
+    return options.includes(v) ? v : fallback
   } catch {
-    return DEFAULT_SYNC_INTERVAL_MIN
+    return fallback
   }
 }
 
-function writeSyncIntervalMin(n: number) {
+function writeIntPref(key: string, n: number) {
   try {
-    localStorage.setItem(SYNC_INTERVAL_KEY, String(n))
+    localStorage.setItem(key, String(n))
   } catch {
     // not fatal
   }
@@ -438,12 +448,30 @@ export function MainView({ onLoggedOut }: Props) {
     () => new Map(),
   )
   const [hydrated, setHydrated] = useState(false)
-  const [syncIntervalMin, setSyncIntervalMinState] = useState(() =>
-    readSyncIntervalMin(),
+  const [activeSyncMin, setActiveSyncMinState] = useState(() =>
+    readIntPref(ACTIVE_SYNC_KEY, ACTIVE_SYNC_OPTIONS, DEFAULT_ACTIVE_SYNC_MIN),
   )
-  const setSyncIntervalMin = useCallback((n: number) => {
-    setSyncIntervalMinState(n)
-    writeSyncIntervalMin(n)
+  const [bgSyncMin, setBgSyncMinState] = useState(() =>
+    readIntPref(BG_SYNC_KEY, BG_SYNC_OPTIONS, DEFAULT_BG_SYNC_MIN),
+  )
+  const [switchFreshMin, setSwitchFreshMinState] = useState(() =>
+    readIntPref(
+      SWITCH_FRESH_KEY,
+      SWITCH_FRESH_OPTIONS,
+      DEFAULT_SWITCH_FRESH_MIN,
+    ),
+  )
+  const setActiveSyncMin = useCallback((n: number) => {
+    setActiveSyncMinState(n)
+    writeIntPref(ACTIVE_SYNC_KEY, n)
+  }, [])
+  const setBgSyncMin = useCallback((n: number) => {
+    setBgSyncMinState(n)
+    writeIntPref(BG_SYNC_KEY, n)
+  }, [])
+  const setSwitchFreshMin = useCallback((n: number) => {
+    setSwitchFreshMinState(n)
+    writeIntPref(SWITCH_FRESH_KEY, n)
   }, [])
   // uid → last successful sync time (ms). Seeded from disk snapshots at
   // hydration so a recent cache doesn't trigger a re-sync just from
@@ -1027,43 +1055,58 @@ export function MainView({ onLoggedOut }: Props) {
     })
   }, [])
 
-  // When the active collection changes: only sync if we have nothing
-  // cached for it (initial load) or it's gone stale past the configured
-  // interval. Otherwise show the cache and wait for an explicit Refresh
-  // / Sync-all. Crucially, NO AbortController: an in-flight sync keeps
-  // running in the background when you switch away (it aborts only on
-  // unmount, via cancelledRef), and fetchCollection's inFlightRef dedupe
-  // means switching back never restarts it.
+  // Switching to a list kicks a BACKGROUND sync only if we have nothing
+  // cached (initial load) or it hasn't been synced within the freshness
+  // window. Otherwise show the cache and wait for Refresh / Sync-all.
+  // No AbortController: an in-flight sync keeps running when you switch
+  // away (aborts only on unmount via cancelledRef); fetchCollection's
+  // inFlightRef dedupe means switching back never restarts it.
   useEffect(() => {
     if (!hydrated || !activeUid) return
     const last = syncedAtRef.current.get(activeUid)
-    const intervalMs = syncIntervalMin * 60_000
+    const freshMs = switchFreshMin * 60_000
     const needInitial = !loadedUids.has(activeUid)
-    const stale =
-      last === undefined ||
-      (intervalMs > 0 && Date.now() - last >= intervalMs)
-    if (needInitial || (intervalMs > 0 && stale)) {
+    const stale = last === undefined || Date.now() - last >= freshMs
+    if (needInitial || stale) {
       void fetchCollection(activeUid)
     }
-    // loadedUids intentionally omitted from deps: we only want this to
-    // run on an actual list switch, not when a background sync flips it.
+    // loadedUids intentionally omitted: only react to a real list
+    // switch, not to a background sync flipping it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeUid, hydrated, fetchCollection, syncIntervalMin])
+  }, [activeUid, hydrated, fetchCollection, switchFreshMin])
 
-  // Periodic background refresh of the active list while it's open, so a
-  // long-lived list stays fresh without manual refresh. Disabled when
-  // the interval is "manual only" (0).
+  // Periodic background refresh of the ACTIVE list while it's open
+  // (fast cadence). Disabled when 0 ("manual").
   useEffect(() => {
-    if (!hydrated || !activeUid || syncIntervalMin <= 0) return
-    const intervalMs = syncIntervalMin * 60_000
+    if (!hydrated || !activeUid || activeSyncMin <= 0) return
+    const ms = activeSyncMin * 60_000
     const id = setInterval(() => {
       const last = syncedAtRef.current.get(activeUid)
-      if (last === undefined || Date.now() - last >= intervalMs) {
+      if (last === undefined || Date.now() - last >= ms) {
         void fetchCollection(activeUid)
       }
-    }, intervalMs)
+    }, ms)
     return () => clearInterval(id)
-  }, [activeUid, hydrated, fetchCollection, syncIntervalMin])
+  }, [activeUid, hydrated, fetchCollection, activeSyncMin])
+
+  // Periodic background refresh of OTHER lists (slow cadence) so they
+  // don't drift far. Skips the active list (it has its own faster
+  // timer) and anything synced within the window. Disabled when 0.
+  useEffect(() => {
+    if (!hydrated || bgSyncMin <= 0 || !collections) return
+    const ms = bgSyncMin * 60_000
+    const tick = () => {
+      for (const c of collections) {
+        if (c.uid === activeUid) continue
+        const last = syncedAtRef.current.get(c.uid)
+        if (last === undefined || Date.now() - last >= ms) {
+          void fetchCollection(c.uid)
+        }
+      }
+    }
+    const id = setInterval(tick, ms)
+    return () => clearInterval(id)
+  }, [hydrated, bgSyncMin, collections, activeUid, fetchCollection])
 
   // After the active collection is FULLY loaded, prefetch the rest in
   // parallel with bounded concurrency so sidebar counts can fill in.
@@ -2856,7 +2899,7 @@ export function MainView({ onLoggedOut }: Props) {
                               ? `${baseTitle} — ${failed}`
                               : baseTitle
                       }
-                      className={`flex w-full items-center gap-2 rounded-md py-1.5 text-left text-sm transition-colors ${
+                      className={`group flex w-full items-center gap-2 rounded-md py-1.5 text-left text-sm transition-colors ${
                         showFull ? 'px-2 justify-start' : 'px-1 justify-center'
                       } ${
                         isActive
@@ -2887,7 +2930,7 @@ export function MainView({ onLoggedOut }: Props) {
                           {c.name}
                         </span>
                       )}
-                      {listSyncing && (
+                      {listSyncing ? (
                         <svg
                           viewBox="0 0 16 16"
                           className="h-3 w-3 shrink-0 animate-spin text-text-faint"
@@ -2901,6 +2944,37 @@ export function MainView({ onLoggedOut }: Props) {
                           <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
                           <path d="M13.5 2.5v3h-3" />
                         </svg>
+                      ) : (
+                        showFull &&
+                        !isPlaceholder &&
+                        !deleted && (
+                          <span
+                            role="button"
+                            tabIndex={-1}
+                            aria-label={`Sync ${c.name}`}
+                            title="Sync this list"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void fetchCollection(c.uid)
+                            }}
+                            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-faint opacity-0 transition-opacity hover:text-text group-hover:opacity-100"
+                          >
+                            <svg
+                              viewBox="0 0 16 16"
+                              className="h-3 w-3"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden
+                            >
+                              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+                              <path d="M13.5 2.5v3h-3" />
+                            </svg>
+                          </span>
+                        )
                       )}
                       <span
                         className={`shrink-0 text-xs tabular-nums ${
@@ -3230,9 +3304,15 @@ export function MainView({ onLoggedOut }: Props) {
                   onSetAccent={setAccent}
                   taskZoomPct={Math.round(zoom.tasks * 100)}
                   onZoom={(d) => adjustZoom('tasks', d)}
-                  syncIntervalMin={syncIntervalMin}
-                  syncIntervalOptions={SYNC_INTERVAL_OPTIONS}
-                  onSetSyncInterval={setSyncIntervalMin}
+                  activeSyncMin={activeSyncMin}
+                  activeSyncOptions={ACTIVE_SYNC_OPTIONS}
+                  onSetActiveSync={setActiveSyncMin}
+                  bgSyncMin={bgSyncMin}
+                  bgSyncOptions={BG_SYNC_OPTIONS}
+                  onSetBgSync={setBgSyncMin}
+                  switchFreshMin={switchFreshMin}
+                  switchFreshOptions={SWITCH_FRESH_OPTIONS}
+                  onSetSwitchFresh={setSwitchFreshMin}
                   onClose={() => setSettingsOpen(false)}
                 />
               )}

@@ -13,15 +13,59 @@ interface Props {
   onSetAccent: (hex: string | null) => void
   taskZoomPct: number
   onZoom: (delta: number | 'reset') => void
-  syncIntervalMin: number
-  syncIntervalOptions: readonly number[]
-  onSetSyncInterval: (min: number) => void
+  activeSyncMin: number
+  activeSyncOptions: readonly number[]
+  onSetActiveSync: (min: number) => void
+  bgSyncMin: number
+  bgSyncOptions: readonly number[]
+  onSetBgSync: (min: number) => void
+  switchFreshMin: number
+  switchFreshOptions: readonly number[]
+  onSetSwitchFresh: (min: number) => void
   onClose: () => void
 }
 
-function syncLabel(min: number): string {
-  if (min <= 0) return 'Manual only'
-  return `${min} min`
+function durLabel(min: number): string {
+  if (min <= 0) return 'Off'
+  if (min < 60) return `${min} min`
+  const h = min / 60
+  return `${h} h`
+}
+
+function freshLabel(min: number): string {
+  if (min <= 0) return 'Always'
+  return durLabel(min)
+}
+
+function SyncRow({
+  label,
+  value,
+  options,
+  onChange,
+  labelFn,
+}: {
+  label: string
+  value: number
+  options: readonly number[]
+  onChange: (n: number) => void
+  labelFn: (n: number) => string
+}) {
+  return (
+    <Row label={label}>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={label}
+        className="rounded-md border border-border bg-surface-2 px-1.5 py-1 text-xs text-text outline-none focus:border-border-strong"
+      >
+        {options.map((m) => (
+          <option key={m} value={m}>
+            {labelFn(m)}
+          </option>
+        ))}
+      </select>
+    </Row>
+  )
 }
 
 function Row({
@@ -85,9 +129,15 @@ export function SettingsPopover({
   onSetAccent,
   taskZoomPct,
   onZoom,
-  syncIntervalMin,
-  syncIntervalOptions,
-  onSetSyncInterval,
+  activeSyncMin,
+  activeSyncOptions,
+  onSetActiveSync,
+  bgSyncMin,
+  bgSyncOptions,
+  onSetBgSync,
+  switchFreshMin,
+  switchFreshOptions,
+  onSetSwitchFresh,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -177,20 +227,30 @@ export function SettingsPopover({
           </button>
         </span>
       </Row>
-      <Row label="Auto-sync">
-        <select
-          value={syncIntervalMin}
-          onChange={(e) => onSetSyncInterval(Number(e.target.value))}
-          aria-label="Auto-sync interval"
-          className="rounded-md border border-border bg-surface-2 px-1.5 py-1 text-xs text-text outline-none focus:border-border-strong"
-        >
-          {syncIntervalOptions.map((m) => (
-            <option key={m} value={m}>
-              {syncLabel(m)}
-            </option>
-          ))}
-        </select>
-      </Row>
+      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+        Sync
+      </p>
+      <SyncRow
+        label="Active list every"
+        value={activeSyncMin}
+        options={activeSyncOptions}
+        onChange={onSetActiveSync}
+        labelFn={durLabel}
+      />
+      <SyncRow
+        label="Other lists every"
+        value={bgSyncMin}
+        options={bgSyncOptions}
+        onChange={onSetBgSync}
+        labelFn={durLabel}
+      />
+      <SyncRow
+        label="On open if older than"
+        value={switchFreshMin}
+        options={switchFreshOptions}
+        onChange={onSetSwitchFresh}
+        labelFn={freshLabel}
+      />
 
       <div className="mt-1 border-t border-border px-3 py-2">
         <p className="mb-1.5 text-xs text-text-muted">Accent colour</p>
