@@ -126,6 +126,13 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       sidebar still renders, with a prominent persistent "Offline …
       changes won't sync" top banner + Retry.
 - [x] Click anywhere in the list pane focuses it (not just the title).
+- [x] Sync is staleness-gated: switching lists no longer restarts a
+      sync — it only syncs on initial load or when the cache is older
+      than the configurable interval; otherwise wait for Refresh /
+      Sync-all. In-flight syncs are no longer aborted on switch (they
+      continue in the background; only unmount aborts). Added a periodic
+      background refresh of the active list and an "Auto-sync" interval
+      setting (Manual / 1 / 5 / 15 / 30 min) in the settings menu.
 - [x] Sidebar settings menu (gear) for the list view: sort lists +
       reverse + show-deleted, decluttered out of the sidebar header.
       Per-list delete/recolour buttons removed (already in the row

@@ -13,7 +13,15 @@ interface Props {
   onSetAccent: (hex: string | null) => void
   taskZoomPct: number
   onZoom: (delta: number | 'reset') => void
+  syncIntervalMin: number
+  syncIntervalOptions: readonly number[]
+  onSetSyncInterval: (min: number) => void
   onClose: () => void
+}
+
+function syncLabel(min: number): string {
+  if (min <= 0) return 'Manual only'
+  return `${min} min`
 }
 
 function Row({
@@ -77,6 +85,9 @@ export function SettingsPopover({
   onSetAccent,
   taskZoomPct,
   onZoom,
+  syncIntervalMin,
+  syncIntervalOptions,
+  onSetSyncInterval,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -165,6 +176,20 @@ export function SettingsPopover({
             A+
           </button>
         </span>
+      </Row>
+      <Row label="Auto-sync">
+        <select
+          value={syncIntervalMin}
+          onChange={(e) => onSetSyncInterval(Number(e.target.value))}
+          aria-label="Auto-sync interval"
+          className="rounded-md border border-border bg-surface-2 px-1.5 py-1 text-xs text-text outline-none focus:border-border-strong"
+        >
+          {syncIntervalOptions.map((m) => (
+            <option key={m} value={m}>
+              {syncLabel(m)}
+            </option>
+          ))}
+        </select>
       </Row>
 
       <div className="mt-1 border-t border-border px-3 py-2">

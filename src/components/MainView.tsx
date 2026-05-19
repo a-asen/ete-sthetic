@@ -81,6 +81,31 @@ const SHOW_DELETED_LISTS_KEY = 'ete-stethic.showDeletedLists'
 const SIDEBAR_SORT_KEY = 'ete-stethic.sidebarSort'
 const PHONE_PRIORITY_KEY = 'ete-stethic.phoneFriendlyPriority'
 
+// Auto-sync staleness threshold (minutes). 0 = manual only — switching
+// lists never re-syncs; only the Refresh button / Sync-all do.
+const SYNC_INTERVAL_KEY = 'ete-stethic.syncIntervalMin'
+const SYNC_INTERVAL_OPTIONS = [0, 1, 5, 15, 30] as const
+const DEFAULT_SYNC_INTERVAL_MIN = 5
+
+function readSyncIntervalMin(): number {
+  try {
+    const v = Number(localStorage.getItem(SYNC_INTERVAL_KEY))
+    return (SYNC_INTERVAL_OPTIONS as readonly number[]).includes(v)
+      ? v
+      : DEFAULT_SYNC_INTERVAL_MIN
+  } catch {
+    return DEFAULT_SYNC_INTERVAL_MIN
+  }
+}
+
+function writeSyncIntervalMin(n: number) {
+  try {
+    localStorage.setItem(SYNC_INTERVAL_KEY, String(n))
+  } catch {
+    // not fatal
+  }
+}
+
 type SidebarSort = 'name' | 'open' | 'total'
 
 interface SidebarSortSpec {
@@ -413,6 +438,17 @@ export function MainView({ onLoggedOut }: Props) {
     () => new Map(),
   )
   const [hydrated, setHydrated] = useState(false)
+  const [syncIntervalMin, setSyncIntervalMinState] = useState(() =>
+    readSyncIntervalMin(),
+  )
+  const setSyncIntervalMin = useCallback((n: number) => {
+    setSyncIntervalMinState(n)
+    writeSyncIntervalMin(n)
+  }, [])
+  // uid → last successful sync time (ms). Seeded from disk snapshots at
+  // hydration so a recent cache doesn't trigger a re-sync just from
+  // switching to the list. A ref (not state) — it only gates effects.
+  const syncedAtRef = useRef<Map<string, number>>(new Map())
 
   const [filter, setFilterState] = useState<FilterSpec>(() => ({
     ...DEFAULT_FILTER,
@@ -644,6 +680,9 @@ export function MainView({ onLoggedOut }: Props) {
           nextItems.set(snap.uid, snap.items)
           if (snap.stoken) nextStokens.set(snap.uid, snap.stoken)
           nextLoaded.add(snap.uid)
+          if (snap.lastSyncedAt) {
+            syncedAtRef.current.set(snap.uid, snap.lastSyncedAt)
+          }
         }
         if (nextItems.size > 0) {
           setItemsByUid((prev) => {
@@ -817,6 +856,7 @@ export function MainView({ onLoggedOut }: Props) {
           next.add(uid)
           return next
         })
+        syncedAtRef.current.set(uid, Date.now())
         // Persist the freshly-synced snapshot. We read the latest items via
         // a no-op state update so the saved snapshot reflects all batches +
         // removals applied above.
@@ -987,18 +1027,43 @@ export function MainView({ onLoggedOut }: Props) {
     })
   }, [])
 
-  // Eagerly sync the active collection whenever it changes. With a cached
-  // stoken the sync is just a delta; without, it's a full load. We don't
-  // skip when the cache already has items — that's how hydrated lists pick
-  // up server-side changes — but the UI keeps showing the cached tree
-  // throughout. Aborts on cleanup so list-switching mid-sync is cheap.
+  // When the active collection changes: only sync if we have nothing
+  // cached for it (initial load) or it's gone stale past the configured
+  // interval. Otherwise show the cache and wait for an explicit Refresh
+  // / Sync-all. Crucially, NO AbortController: an in-flight sync keeps
+  // running in the background when you switch away (it aborts only on
+  // unmount, via cancelledRef), and fetchCollection's inFlightRef dedupe
+  // means switching back never restarts it.
   useEffect(() => {
-    if (!hydrated) return
-    if (!activeUid) return
-    const controller = new AbortController()
-    void fetchCollection(activeUid, controller.signal)
-    return () => controller.abort()
-  }, [activeUid, hydrated, fetchCollection])
+    if (!hydrated || !activeUid) return
+    const last = syncedAtRef.current.get(activeUid)
+    const intervalMs = syncIntervalMin * 60_000
+    const needInitial = !loadedUids.has(activeUid)
+    const stale =
+      last === undefined ||
+      (intervalMs > 0 && Date.now() - last >= intervalMs)
+    if (needInitial || (intervalMs > 0 && stale)) {
+      void fetchCollection(activeUid)
+    }
+    // loadedUids intentionally omitted from deps: we only want this to
+    // run on an actual list switch, not when a background sync flips it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUid, hydrated, fetchCollection, syncIntervalMin])
+
+  // Periodic background refresh of the active list while it's open, so a
+  // long-lived list stays fresh without manual refresh. Disabled when
+  // the interval is "manual only" (0).
+  useEffect(() => {
+    if (!hydrated || !activeUid || syncIntervalMin <= 0) return
+    const intervalMs = syncIntervalMin * 60_000
+    const id = setInterval(() => {
+      const last = syncedAtRef.current.get(activeUid)
+      if (last === undefined || Date.now() - last >= intervalMs) {
+        void fetchCollection(activeUid)
+      }
+    }, intervalMs)
+    return () => clearInterval(id)
+  }, [activeUid, hydrated, fetchCollection, syncIntervalMin])
 
   // After the active collection is FULLY loaded, prefetch the rest in
   // parallel with bounded concurrency so sidebar counts can fill in.
@@ -3165,6 +3230,9 @@ export function MainView({ onLoggedOut }: Props) {
                   onSetAccent={setAccent}
                   taskZoomPct={Math.round(zoom.tasks * 100)}
                   onZoom={(d) => adjustZoom('tasks', d)}
+                  syncIntervalMin={syncIntervalMin}
+                  syncIntervalOptions={SYNC_INTERVAL_OPTIONS}
+                  onSetSyncInterval={setSyncIntervalMin}
                   onClose={() => setSettingsOpen(false)}
                 />
               )}
