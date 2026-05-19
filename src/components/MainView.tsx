@@ -213,6 +213,17 @@ const SIDEBAR_FULL_THRESHOLD = 120
 const PREFETCH_CONCURRENCY = 4
 const HIDE_GRACE_MS = 5000
 
+// Drag-and-drop: a task row carries its VTODO uid under this mime so a
+// sidebar list row can accept the drop and move the subtree.
+const TASK_DND_MIME = 'application/x-ete-task-uid'
+
+interface MovePayload {
+  itemUids: string[]
+  rootVtodoUid: string
+  summary: string
+  descendantCount: number
+}
+
 function readHideCompleted(): boolean {
   try {
     return localStorage.getItem(HIDE_COMPLETED_KEY) === 'true'
@@ -419,12 +430,8 @@ export function MainView({ onLoggedOut }: Props) {
   } | null>(null)
   // Move-task picker state. itemUids covers the selected node + its
   // whole subtree (parent moves take their children with them).
-  const [moving, setMoving] = useState<{
-    itemUids: string[]
-    rootVtodoUid: string
-    summary: string
-    descendantCount: number
-  } | null>(null)
+  const [moving, setMoving] = useState<MovePayload | null>(null)
+  const [dragOverListUid, setDragOverListUid] = useState<string | null>(null)
   const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(null)
   const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar' | 'details'>(
     'tasks',
@@ -1780,12 +1787,10 @@ export function MainView({ onLoggedOut }: Props) {
     focusTasks,
   ])
 
-  const handleMovePick = useCallback(
-    async (destUid: string) => {
-      const cur = moving
-      const srcUid = activeUid
-      setMoving(null)
-      if (!cur || !srcUid || destUid === srcUid) return
+  // The hardened move itself (used by the picker and by drag-to-list).
+  const performMove = useCallback(
+    async (cur: MovePayload, srcUid: string, destUid: string) => {
+      if (destUid === srcUid) return
 
       // Optimistic: remove from source in-memory, then await server. On
       // failure we re-fetch the source (cheap delta) so any half-done
@@ -1887,7 +1892,42 @@ export function MainView({ onLoggedOut }: Props) {
         }
       }
     },
-    [moving, activeUid, activeItems],
+    [activeItems],
+  )
+
+  // Move-picker pick → move the selected payload.
+  const handleMovePick = useCallback(
+    async (destUid: string) => {
+      const cur = moving
+      const srcUid = activeUid
+      setMoving(null)
+      if (!cur || !srcUid) return
+      await performMove(cur, srcUid, destUid)
+    },
+    [moving, activeUid, performMove],
+  )
+
+  // Drop a dragged task (by VTODO uid) onto a sidebar list → move its
+  // whole subtree there, reusing the verified move path (no picker).
+  const handleDropTaskOnList = useCallback(
+    (destUid: string, draggedUid: string) => {
+      const srcUid = activeUid
+      if (!srcUid || destUid === srcUid) return
+      const node = findNodeByUid(fullTree, draggedUid)
+      if (!node) return
+      const itemUids = collectDescendantItemUids(node)
+      void performMove(
+        {
+          itemUids,
+          rootVtodoUid: node.todo.uid,
+          summary: node.todo.summary,
+          descendantCount: itemUids.length - 1,
+        },
+        srcUid,
+        destUid,
+      )
+    },
+    [activeUid, fullTree, performMove],
   )
 
   const handleConfirmDelete = useCallback(async () => {
@@ -2809,6 +2849,36 @@ export function MainView({ onLoggedOut }: Props) {
                       onDoubleClick={() => {
                         if (!deleted && !isPlaceholder) startRenameList(c)
                       }}
+                      onDragOver={(e) => {
+                        const ok =
+                          !isPlaceholder &&
+                          !deleted &&
+                          c.uid !== activeUid &&
+                          e.dataTransfer.types.includes(TASK_DND_MIME)
+                        if (!ok) return
+                        e.preventDefault()
+                        e.dataTransfer.dropEffect = 'move'
+                        if (dragOverListUid !== c.uid)
+                          setDragOverListUid(c.uid)
+                      }}
+                      onDragLeave={() => {
+                        setDragOverListUid((u) =>
+                          u === c.uid ? null : u,
+                        )
+                      }}
+                      onDrop={(e) => {
+                        const uid = e.dataTransfer.getData(TASK_DND_MIME)
+                        setDragOverListUid(null)
+                        if (
+                          !uid ||
+                          isPlaceholder ||
+                          deleted ||
+                          c.uid === activeUid
+                        )
+                          return
+                        e.preventDefault()
+                        handleDropTaskOnList(c.uid, uid)
+                      }}
                       title={
                         showFull
                           ? deleted
@@ -2828,7 +2898,11 @@ export function MainView({ onLoggedOut }: Props) {
                             ? 'bg-accent-soft text-text ring-1 ring-accent/40'
                             : 'bg-accent-soft text-text'
                           : 'text-text-muted hover:bg-surface-2 hover:text-text'
-                      } ${deleted ? 'opacity-50' : ''}`}
+                      } ${deleted ? 'opacity-50' : ''} ${
+                        dragOverListUid === c.uid
+                          ? 'ring-2 ring-accent ring-inset'
+                          : ''
+                      }`}
                     >
                       <span
                         aria-hidden
@@ -3475,6 +3549,7 @@ export function MainView({ onLoggedOut }: Props) {
               onDeleteRequest={handleDeleteRequest}
               onChangePriority={handleChangePriority}
               onRowContextMenu={openTaskMenu}
+              taskDndMime={TASK_DND_MIME}
               onLeaveLeft={() => setFocusZone('sidebar')}
               fadingExpires={fadingExpires}
               phonePriority={phonePriority}

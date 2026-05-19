@@ -54,6 +54,9 @@ interface Props {
   onChangePriority?: (node: TaskNode, priority: Priority) => void
   // Right-click on a task row → caller opens a context menu at x,y.
   onRowContextMenu?: (node: TaskNode, x: number, y: number) => void
+  // When set, task rows are draggable and carry their VTODO uid under
+  // this mime type (a sidebar list can accept the drop to move it).
+  taskDndMime?: string
   // Called when ArrowLeft is pressed on a top-level row that's already
   // collapsed (or a leaf with no parent). Lets the caller decide what
   // "leaving the tree to the left" means — typically focus the sidebar.
@@ -226,6 +229,7 @@ export function TaskTree({
   onDeleteRequest,
   onChangePriority,
   onRowContextMenu,
+  taskDndMime,
   onLeaveLeft,
   fadingExpires,
   phonePriority = false,
@@ -566,6 +570,15 @@ export function TaskTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
             aria-selected={isSelected}
             onClick={() => setSelected(node.todo.uid)}
+            draggable={!!taskDndMime && editingUid !== node.todo.uid}
+            onDragStart={
+              taskDndMime
+                ? (e) => {
+                    e.dataTransfer.setData(taskDndMime, node.todo.uid)
+                    e.dataTransfer.effectAllowed = 'move'
+                  }
+                : undefined
+            }
             onContextMenu={
               onRowContextMenu
                 ? (e) => {

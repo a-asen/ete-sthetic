@@ -105,6 +105,12 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
       delete), sidebar list rows (new / rename / recolour / delete) and
       the sidebar blank area (new list); browser menu suppressed on
       those surfaces only (inputs keep native copy/paste).
+- [x] #11 Drag a task row onto a sidebar list to move its whole subtree
+      there. Task rows are draggable (carry the VTODO uid via a custom
+      mime); valid list rows highlight on drag-over; drop reuses the
+      hardened/verified move path (no picker modal). handleMovePick was
+      refactored to share `performMove` with the drag drop. Invalid
+      targets (same list / placeholder / tombstone) reject the drop.
 
 ## Polish & fixes (queued 2026-05-18)
 
@@ -228,7 +234,7 @@ task actions (new, rename, delete, move, priority).
   `handleDeleteRequest`, `setMoving`, `handleChangePriority`).
 - Medium effort; do the menu primitive once, reuse per surface.
 
-### 11. Drag a task onto a list to move it there
+### 11. Drag a task onto a list to move it there — ✅ done
 **Task.** Drag a task (and its subtree) from the task pane onto a sidebar
 list to move it to that collection.
 **Plan.**
