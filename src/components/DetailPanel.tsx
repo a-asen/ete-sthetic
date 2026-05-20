@@ -34,6 +34,10 @@ interface Props {
   // Raw-iCal passthrough save, used for `broken` items the normal patch
   // editor can't represent.
   onSaveRaw: (raw: string) => Promise<void>
+  // Move to the previous/next task in the visible list while staying in
+  // the detail view. Up = -1, Down = +1. If omitted, in-panel arrow
+  // navigation is disabled.
+  onNavigateTask?: (delta: -1 | 1) => void
   pending?: boolean
 }
 
@@ -285,6 +289,7 @@ export function DetailPanel({
   onExit,
   onSave,
   onSaveRaw,
+  onNavigateTask,
   pending = false,
 }: Props) {
   // Draft is seeded once per mount. MainView re-keys this component on
@@ -387,6 +392,32 @@ export function DetailPanel({
     }
   }, [isDirty, onExit, blurInsidePanel])
 
+  // Move to the prev/next task while staying in the detail view. Fires
+  // any pending save in the background (mirrors commitSave's save calls
+  // but doesn't exit) so navigation stays fluid — no confirm prompt.
+  const requestNavigate = useCallback(
+    (delta: -1 | 1) => {
+      if (!onNavigateTask) return
+      if (isDirty && task && draft) {
+        if (broken) void onSaveRaw(rawDraft).catch(() => {})
+        else void onSave(buildPatch(task, draft))
+      }
+      blurInsidePanel()
+      onNavigateTask(delta)
+    },
+    [
+      onNavigateTask,
+      isDirty,
+      task,
+      draft,
+      broken,
+      rawDraft,
+      onSave,
+      onSaveRaw,
+      blurInsidePanel,
+    ],
+  )
+
   // Local Ctrl+Enter / Ctrl+ArrowLeft / Escape handler while the panel is
   // focused. All three keys go through the same "save/cancel" gate when
   // dirty so the user can't accidentally orphan unsaved edits by leaving.
@@ -414,11 +445,32 @@ export function DetailPanel({
         }
         e.preventDefault()
         requestExit()
+        return
+      }
+      // Prev/next task while staying in details. Ctrl/Cmd+Up/Down works
+      // from anywhere (handy from inside a text field too); plain
+      // Up/Down only when focus isn't in a text input/textarea so it
+      // doesn't fight the cursor.
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const delta: -1 | 1 = e.key === 'ArrowUp' ? -1 : 1
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          requestNavigate(delta)
+          return
+        }
+        const t = e.target
+        if (
+          !(t instanceof HTMLInputElement) &&
+          !(t instanceof HTMLTextAreaElement)
+        ) {
+          e.preventDefault()
+          requestNavigate(delta)
+        }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [focused, task, requestExit])
+  }, [focused, task, requestExit, requestNavigate])
 
   function commitSave() {
     if (!task || !draft) {

@@ -1333,6 +1333,27 @@ export function MainView({ onLoggedOut }: Props) {
     requestAnimationFrame(() => quickAddRef.current?.focus())
   }, [flushActiveCreate])
 
+  // Prev/next visible task — used by the detail panel to scroll through
+  // items without leaving the detail view. Reads the rendered tree rows
+  // so the order matches exactly what the user sees (including expanded
+  // subtasks and the current sort/filter), without lifting tree state.
+  const navigateTask = useCallback(
+    (delta: -1 | 1) => {
+      if (!selectedTaskUid) return
+      const uids = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-task-uid]'),
+      )
+        .map((n) => n.dataset.taskUid)
+        .filter((u): u is string => !!u)
+      const i = uids.indexOf(selectedTaskUid)
+      if (i < 0) return
+      const j = Math.max(0, Math.min(uids.length - 1, i + delta))
+      const next = uids[j]
+      if (next && next !== selectedTaskUid) setSelectedTaskUid(next)
+    },
+    [selectedTaskUid],
+  )
+
   const handleQuickAddRoot = useCallback(
     async (summary: string) => {
       if (!activeUid) return
@@ -3486,6 +3507,7 @@ export function MainView({ onLoggedOut }: Props) {
         onExit={() => setFocusZone('tasks')}
         onSave={handleSaveDetails}
         onSaveRaw={handleSaveRaw}
+        onNavigateTask={navigateTask}
         pending={
           selectedTaskItem
             ? pendingItemUids.has(selectedTaskItem.itemUid)
