@@ -110,6 +110,9 @@ export function TimeGrid({
   onMoveResize,
   showWeekNum,
   hourPx,
+  visibleStartH,
+  visibleEndH,
+  nightByDay,
 }: {
   days: Date[]
   byDay: Map<string, EventItem[]>
@@ -123,6 +126,16 @@ export function TimeGrid({
   onMoveResize: (item: EventItem, start: Date, end: Date) => void
   showWeekNum: boolean
   hourPx: number
+  // Visible vertical window in hours. When the night-hide feature
+  // collapses pre-dawn / late-evening hours, visibleStartH > 0 and/or
+  // visibleEndH < 24. The grid still positions everything in raw
+  // 24-hour coords, but an outer wrapper clips to this window.
+  visibleStartH: number
+  visibleEndH: number
+  // Per-day night range — drives a striped + zigzag overlay where this
+  // day's own night extends within the visible window. Empty array
+  // means no per-day overlay (night-hide is off).
+  nightByDay: { startH: number; endH: number }[]
 }) {
   const hours = useMemo(
     () => Array.from({ length: 24 }, (_, i) => i),
@@ -155,7 +168,10 @@ export function TimeGrid({
   useEffect(() => {
     const el = bodyRef.current
     if (!el) return
-    el.scrollTop = Math.max(0, nowTopPx - el.clientHeight / 2)
+    // The inner grid is shifted up by -visibleStartH*hourPx via margin,
+    // so the "now" line's visible-coord top is nowTopPx minus that.
+    const visibleNowTop = nowTopPx - visibleStartH * hourPx
+    el.scrollTop = Math.max(0, visibleNowTop - el.clientHeight / 2)
     // mount-only: intentionally not re-running on nowTopPx changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -415,14 +431,23 @@ export function TimeGrid({
         </div>
       </div>
 
-      {/* Scrollable time body */}
+      {/* Scrollable time body. The inner grid is always 24 h tall; an
+          inner clipping wrapper hides the night hours when active by
+          shifting the grid up via a negative margin. */}
       <div ref={bodyRef} className="flex-1 overflow-y-auto">
+        <div
+          style={{
+            height: `${(visibleEndH - visibleStartH) * hourPx}px`,
+            overflow: 'hidden',
+          }}
+        >
         <div
           ref={gridRef}
           className="grid select-none"
           style={{
             gridTemplateColumns: `3rem repeat(${days.length}, 1fr)`,
             height: `${24 * hourPx}px`,
+            marginTop: `-${visibleStartH * hourPx}px`,
           }}
         >
           {/* Hour gutter */}
@@ -458,6 +483,66 @@ export function TimeGrid({
                 title="Drag to add an event"
                 className="relative cursor-pointer border-l border-border"
               >
+                {(() => {
+                  // Per-day night bands: a striped overlay with a
+                  // zigzag at the inner boundary, showing where the
+                  // day's night extends inside the visible window.
+                  const n = nightByDay[dIdx]
+                  if (!n || n.startH <= n.endH) return null
+                  const bands: {
+                    key: string
+                    topPx: number
+                    heightPx: number
+                    zigAtTop: boolean
+                  }[] = []
+                  if (n.endH > visibleStartH) {
+                    bands.push({
+                      key: 'morning',
+                      topPx: visibleStartH * hourPx,
+                      heightPx: (n.endH - visibleStartH) * hourPx,
+                      zigAtTop: false,
+                    })
+                  }
+                  if (n.startH < visibleEndH) {
+                    bands.push({
+                      key: 'evening',
+                      topPx: n.startH * hourPx,
+                      heightPx: (visibleEndH - n.startH) * hourPx,
+                      zigAtTop: true,
+                    })
+                  }
+                  return bands.map((b) => (
+                    <div
+                      key={b.key}
+                      className="pointer-events-none absolute inset-x-0 z-[1]"
+                      style={{
+                        top: `${b.topPx}px`,
+                        height: `${b.heightPx}px`,
+                        backgroundImage:
+                          'repeating-linear-gradient(135deg, var(--color-text-faint) 0 1px, transparent 1px 7px)',
+                        opacity: 0.3,
+                      }}
+                    >
+                      <svg
+                        viewBox="0 0 100 6"
+                        preserveAspectRatio="none"
+                        className="pointer-events-none absolute inset-x-0"
+                        style={
+                          b.zigAtTop
+                            ? { top: 0, height: 6 }
+                            : { bottom: 0, height: 6 }
+                        }
+                      >
+                        <polyline
+                          points="0,3 8,0 16,6 24,0 32,6 40,0 48,6 56,0 64,6 72,0 80,6 88,0 100,3"
+                          fill="none"
+                          stroke="var(--color-text-faint)"
+                          strokeWidth="1"
+                        />
+                      </svg>
+                    </div>
+                  ))
+                })()}
                 {hours.map((h) => (
                   <div
                     key={h}
@@ -613,6 +698,7 @@ export function TimeGrid({
               </div>
             )
           })}
+        </div>
         </div>
       </div>
     </div>

@@ -2,6 +2,11 @@ import { useEffect, useRef } from 'react'
 
 type CalSort = 'original' | 'name'
 
+interface NightRange {
+  startH: number
+  endH: number
+}
+
 interface Props {
   showWeekNum: boolean
   onToggleWeekNum: () => void
@@ -20,6 +25,14 @@ interface Props {
   onSortBy: (v: CalSort) => void
   sortReverse: boolean
   onToggleSortReverse: () => void
+  // Night-time hide. Ranges cross midnight (startH > endH means the
+  // visible portion is [endH, startH]).
+  nightHide: boolean
+  onToggleNightHide: () => void
+  nightWeekday: NightRange
+  onSetNightWeekday: (v: NightRange) => void
+  nightWeekend: NightRange
+  onSetNightWeekend: (v: NightRange) => void
   onClose: () => void
 }
 
@@ -42,6 +55,12 @@ export function CalendarSettingsPopover({
   onSortBy,
   sortReverse,
   onToggleSortReverse,
+  nightHide,
+  onToggleNightHide,
+  nightWeekday,
+  onSetNightWeekday,
+  nightWeekend,
+  onSetNightWeekend,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -147,6 +166,77 @@ export function CalendarSettingsPopover({
           label="Reverse calendar sort"
         />
       </Row>
+
+      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+        Night hours
+      </p>
+      <Row label="Hide night in day/week view">
+        <Toggle
+          on={nightHide}
+          onClick={onToggleNightHide}
+          label="Hide night in day/week view"
+        />
+      </Row>
+      <NightRangeRow
+        label="Weekday (Mon–Fri)"
+        value={nightWeekday}
+        onChange={onSetNightWeekday}
+      />
+      <NightRangeRow
+        label="Weekend (Sat–Sun)"
+        value={nightWeekend}
+        onChange={onSetNightWeekend}
+      />
+      <p className="px-3 pb-2 pt-0.5 text-[11px] text-text-faint">
+        Per-day overrides come later. A range must cross midnight
+        (start later than end) to count.
+      </p>
+    </div>
+  )
+}
+
+function NightRangeRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: NightRange
+  onChange: (v: NightRange) => void
+}) {
+  const opts = Array.from({ length: 25 }, (_, i) => i)
+  return (
+    <div className="flex items-center justify-between gap-2 px-3 py-1.5">
+      <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
+        {label}
+      </span>
+      <select
+        value={value.startH}
+        onChange={(e) =>
+          onChange({ ...value, startH: Number(e.target.value) })
+        }
+        aria-label={`${label} start`}
+        className="rounded-md border border-border bg-surface-2 px-1 py-0.5 text-xs text-text outline-none focus:border-border-strong"
+      >
+        {opts.map((h) => (
+          <option key={h} value={h}>
+            {String(h).padStart(2, '0')}:00
+          </option>
+        ))}
+      </select>
+      <span className="text-text-faint">→</span>
+      <select
+        value={value.endH}
+        onChange={(e) => onChange({ ...value, endH: Number(e.target.value) })}
+        aria-label={`${label} end`}
+        className="rounded-md border border-border bg-surface-2 px-1 py-0.5 text-xs text-text outline-none focus:border-border-strong"
+      >
+        {opts.map((h) => (
+          <option key={h} value={h}>
+            {String(h).padStart(2, '0')}:00
+          </option>
+        ))}
+      </select>
     </div>
   )
 }

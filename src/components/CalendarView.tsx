@@ -68,6 +68,21 @@ const HOUR_PX_KEY = 'cal.hourPx'
 const SHOW_TASKS_KEY = 'cal.showTasks'
 const CAL_SORT_KEY = 'cal.sort'
 const CAL_SORT_REV_KEY = 'cal.sortReverse'
+const NIGHT_HIDE_KEY = 'cal.nightHide'
+const NIGHT_WEEKDAY_KEY = 'cal.nightWeekday'
+const NIGHT_WEEKEND_KEY = 'cal.nightWeekend'
+
+// "Night" is the contiguous late-evening → early-morning span that
+// crosses midnight, expressed as [startH, endH] with startH > endH
+// (eg {23, 7} means 23:00 → 07:00). startH may be 24 to mean "no night
+// in the evening side". A sentinel of {0, 0} disables night for that
+// row.
+interface NightRange {
+  startH: number
+  endH: number
+}
+const NIGHT_WEEKDAY_DEFAULT: NightRange = { startH: 23, endH: 7 }
+const NIGHT_WEEKEND_DEFAULT: NightRange = { startH: 1, endH: 9 }
 
 const SIDEBAR_MIN_WIDTH = 160
 const SIDEBAR_MAX_WIDTH = 420
@@ -122,6 +137,27 @@ function readNum(key: string, fallback: number, min: number, max: number): numbe
 function writeNum(key: string, v: number): void {
   try {
     localStorage.setItem(key, String(v))
+  } catch {
+    // not fatal
+  }
+}
+
+function readNight(key: string, fallback: NightRange): NightRange {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as Partial<NightRange>
+    const startH = Math.max(0, Math.min(24, Number(parsed.startH ?? 0)))
+    const endH = Math.max(0, Math.min(24, Number(parsed.endH ?? 0)))
+    if (!Number.isFinite(startH) || !Number.isFinite(endH)) return fallback
+    return { startH, endH }
+  } catch {
+    return fallback
+  }
+}
+function writeNight(key: string, v: NightRange): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(v))
   } catch {
     // not fatal
   }
@@ -246,6 +282,33 @@ export function CalendarView() {
   const [syncingUids, setSyncingUids] = useState<Set<string>>(
     () => new Set(),
   )
+
+  // Night-time hide: when on, hours inside the configured night range
+  // collapse into a zigzag overlay in the time grid. Weekday range
+  // (Mon–Fri) and weekend range (Sat–Sun) are configured separately.
+  const [nightHide, setNightHideState] = useState<boolean>(() =>
+    readBool(NIGHT_HIDE_KEY),
+  )
+  const [nightWeekday, setNightWeekdayState] = useState<NightRange>(() =>
+    readNight(NIGHT_WEEKDAY_KEY, NIGHT_WEEKDAY_DEFAULT),
+  )
+  const [nightWeekend, setNightWeekendState] = useState<NightRange>(() =>
+    readNight(NIGHT_WEEKEND_KEY, NIGHT_WEEKEND_DEFAULT),
+  )
+  const toggleNightHide = useCallback(() => {
+    setNightHideState((v) => {
+      writeBool(NIGHT_HIDE_KEY, !v)
+      return !v
+    })
+  }, [])
+  const setNightWeekday = useCallback((v: NightRange) => {
+    setNightWeekdayState(v)
+    writeNight(NIGHT_WEEKDAY_KEY, v)
+  }, [])
+  const setNightWeekend = useCallback((v: NightRange) => {
+    setNightWeekendState(v)
+    writeNight(NIGHT_WEEKEND_KEY, v)
+  }, [])
   // User-chosen calendar new events default into. '' = not set → fall back
   // to the first visible calendar (resolved below).
   const [defaultCalPref, setDefaultCalPref] = useState<string>(() =>
@@ -694,6 +757,39 @@ export function CalendarView() {
       monthDays: [] as Date[],
     }
   }, [view, anchor])
+
+  // Per-day night range + union visible range for the day/week/3day views.
+  // A range crossing midnight (startH > endH) means the day's visible
+  // portion is [endH, startH]. The union across displayed days defines
+  // the time-grid's visible band; per-day zigzag overlay surfaces each
+  // day's *own* night extension within that band.
+  const { nightByDay, visibleStartH, visibleEndH } = useMemo(() => {
+    const empty = {
+      nightByDay: [] as NightRange[],
+      visibleStartH: 0,
+      visibleEndH: 24,
+    }
+    if (!nightHide || dayRange.length === 0) return empty
+    const nByDay = dayRange.map((d) => {
+      const dow = d.getDay()
+      const weekend = dow === 0 || dow === 6
+      return weekend ? nightWeekend : nightWeekday
+    })
+    let vs = 24
+    let ve = 0
+    for (const n of nByDay) {
+      // Only midnight-crossing ranges count; anything else means
+      // "night disabled for this day".
+      if (n.startH > n.endH) {
+        if (n.endH < vs) vs = n.endH
+        if (n.startH > ve) ve = n.startH
+      } else {
+        return empty
+      }
+    }
+    if (vs >= ve) return empty
+    return { nightByDay: nByDay, visibleStartH: vs, visibleEndH: ve }
+  }, [dayRange, nightHide, nightWeekday, nightWeekend])
 
   // Expand recurring events into per-occurrence instances within the
   // visible range, then bucket by day.
@@ -1319,6 +1415,12 @@ export function CalendarView() {
                 onSortBy={setCalSort}
                 sortReverse={calSortReverse}
                 onToggleSortReverse={toggleCalSortReverse}
+                nightHide={nightHide}
+                onToggleNightHide={toggleNightHide}
+                nightWeekday={nightWeekday}
+                onSetNightWeekday={setNightWeekday}
+                nightWeekend={nightWeekend}
+                onSetNightWeekend={setNightWeekend}
                 onClose={() => setSettingsOpen(false)}
               />
             )}
@@ -1360,6 +1462,9 @@ export function CalendarView() {
             colorFor={colorFor}
             showWeekNum={showWeekNum}
             hourPx={calHourPx}
+            visibleStartH={visibleStartH}
+            visibleEndH={visibleEndH}
+            nightByDay={nightByDay}
             today={today}
             selected={selected}
             onPickDay={pickDay}
