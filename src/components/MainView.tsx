@@ -240,6 +240,11 @@ function writeSidebarSort(v: SidebarSortSpec) {
 }
 const SIDEBAR_FOCUSED_WIDTH_KEY = 'ete-stethic.sidebarFocusedWidth'
 const SIDEBAR_COLLAPSED_WIDTH_KEY = 'ete-stethic.sidebarCollapsedWidth'
+const DETAIL_FOCUSED_WIDTH_KEY = 'ete-stethic.detailFocusedWidth'
+// Detail panel resize bounds. Default matches the prior w-80 (320 px).
+const DETAIL_MIN_WIDTH = 240
+const DETAIL_MAX_WIDTH = 720
+const DETAIL_DEFAULT_WIDTH = 320
 // Sidebar resize bounds. Min keeps the colored dot + open-count visible;
 // max stops the user shoving it past half the typical window.
 const SIDEBAR_MIN_WIDTH = 32
@@ -342,6 +347,25 @@ function readSidebarWidth(key: string, fallback: number): number {
 function writeSidebarWidth(key: string, value: number) {
   try {
     localStorage.setItem(key, String(Math.round(value)))
+  } catch {
+    // not fatal
+  }
+}
+
+function readDetailWidth(): number {
+  try {
+    const raw = localStorage.getItem(DETAIL_FOCUSED_WIDTH_KEY)
+    if (raw == null) return DETAIL_DEFAULT_WIDTH
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return DETAIL_DEFAULT_WIDTH
+    return Math.max(DETAIL_MIN_WIDTH, Math.min(DETAIL_MAX_WIDTH, n))
+  } catch {
+    return DETAIL_DEFAULT_WIDTH
+  }
+}
+function writeDetailWidth(value: number) {
+  try {
+    localStorage.setItem(DETAIL_FOCUSED_WIDTH_KEY, String(Math.round(value)))
   } catch {
     // not fatal
   }
@@ -644,6 +668,10 @@ export function MainView({ onLoggedOut }: Props) {
   )
 
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  const [detailFocusedWidth, setDetailFocusedWidth] = useState<number>(() =>
+    readDetailWidth(),
+  )
+  const [isResizingDetail, setIsResizingDetail] = useState(false)
   const handleSidebarResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -678,6 +706,35 @@ export function MainView({ onLoggedOut }: Props) {
       window.addEventListener('mouseup', onUp)
     },
     [focusZone, sidebarFocusedWidth, sidebarCollapsedWidth],
+  )
+
+  // Detail panel resize. The panel hugs the window's right edge, so a
+  // leftward drag *increases* the width (delta is inverted vs sidebar).
+  const handleDetailResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startWidth = detailFocusedWidth
+      let latest = startWidth
+      setIsResizingDetail(true)
+      const onMove = (ev: MouseEvent) => {
+        const next = Math.max(
+          DETAIL_MIN_WIDTH,
+          Math.min(DETAIL_MAX_WIDTH, startWidth - (ev.clientX - startX)),
+        )
+        latest = next
+        setDetailFocusedWidth(next)
+      }
+      const onUp = () => {
+        setIsResizingDetail(false)
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        writeDetailWidth(latest)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [detailFocusedWidth],
   )
   // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
   // disappearing so a misclicked checkbox can be untoggled. Map value is the
@@ -3577,6 +3634,9 @@ export function MainView({ onLoggedOut }: Props) {
         onSave={handleSaveDetails}
         onSaveRaw={handleSaveRaw}
         onNavigateTask={navigateTask}
+        focusedWidth={detailFocusedWidth}
+        onResizeStart={handleDetailResizeStart}
+        isResizing={isResizingDetail}
         pending={
           selectedTaskItem
             ? pendingItemUids.has(selectedTaskItem.itemUid)

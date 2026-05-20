@@ -38,6 +38,12 @@ interface Props {
   // the detail view. Up = -1, Down = +1. If omitted, in-panel arrow
   // navigation is disabled.
   onNavigateTask?: (delta: -1 | 1) => void
+  // Resize support. When showing the full panel the parent controls the
+  // width (px); a leftward drag on the handle grows the panel.
+  focusedWidth?: number
+  onResizeStart?: (e: React.MouseEvent) => void
+  // True while the drag is in flight — suppresses the width transition.
+  isResizing?: boolean
   pending?: boolean
 }
 
@@ -290,6 +296,9 @@ export function DetailPanel({
   onSave,
   onSaveRaw,
   onNavigateTask,
+  focusedWidth,
+  onResizeStart,
+  isResizing = false,
   pending = false,
 }: Props) {
   // Draft is seeded once per mount. MainView re-keys this component on
@@ -522,11 +531,15 @@ export function DetailPanel({
 
   const collapsedTitle = task?.todo.summary || '(no task selected)'
   const showFullPanel = focused || pinned
-  const asideClasses = pinned
-    ? `w-80 ${focused ? 'opacity-100 translate-x-0' : 'opacity-40 translate-x-1'}`
-    : focused
-      ? 'w-80 opacity-100'
-      : 'w-10 opacity-60'
+  // Width: drag-controlled px when expanded, fixed thin strip when
+  // collapsed. Class stays w-10 in collapsed mode so we don't conflict
+  // with the inline style.
+  const asideClasses = !showFullPanel
+    ? 'w-10 opacity-60'
+    : pinned && !focused
+      ? 'opacity-40 translate-x-1'
+      : 'opacity-100'
+  const widthPx = showFullPanel ? (focusedWidth ?? 320) : undefined
 
   return (
     <aside
@@ -534,10 +547,29 @@ export function DetailPanel({
       onMouseDownCapture={() => {
         if (!focused) onRequestFocus()
       }}
-      style={{ zoom }}
-      className={`flex shrink-0 flex-col overflow-hidden border-l border-border bg-surface transition-[width,opacity,transform] duration-300 ease-out ${asideClasses}`}
+      style={{
+        zoom,
+        ...(widthPx != null ? { width: widthPx } : null),
+      }}
+      className={`relative flex shrink-0 flex-col overflow-hidden border-l border-border bg-surface ${
+        isResizing
+          ? 'select-none'
+          : 'transition-[width,opacity,transform] duration-300 ease-out'
+      } ${asideClasses}`}
       aria-expanded={focused}
     >
+      {showFullPanel && onResizeStart && (
+        <div
+          onMouseDown={onResizeStart}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize detail panel"
+          title="Drag to resize"
+          className="group absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize"
+        >
+          <div className="h-full w-px bg-transparent transition-colors group-hover:bg-accent/40" />
+        </div>
+      )}
       {confirming && (
         <ConfirmModal
           title="Save changes?"
