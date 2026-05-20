@@ -24,10 +24,13 @@ export function CalendarSidebar({
   onExportCalendar,
   onImportCalendar,
   onRenameCalendar,
+  onSyncCalendar,
+  syncingUids,
   showWeekNum,
   defaultCalUid,
   onSetDefaultCal,
   width,
+  zoom,
   onResizeStart,
   isResizing,
 }: {
@@ -42,10 +45,13 @@ export function CalendarSidebar({
   onExportCalendar: (uid: string) => void
   onImportCalendar: (uid: string) => void
   onRenameCalendar: (uid: string, name: string) => void
+  onSyncCalendar: (uid: string) => void
+  syncingUids: ReadonlySet<string>
   showWeekNum: boolean
   defaultCalUid: string
   onSetDefaultCal: (uid: string) => void
   width: number
+  zoom: number
   onResizeStart: (e: React.MouseEvent) => void
   isResizing: boolean
 }) {
@@ -80,7 +86,7 @@ export function CalendarSidebar({
 
   return (
     <aside
-      style={{ width }}
+      style={{ width, zoom }}
       className={`relative flex shrink-0 flex-col border-r border-border bg-surface ${
         isResizing ? 'select-none' : 'transition-[width] duration-200 ease-out'
       }`}
@@ -265,6 +271,47 @@ export function CalendarSidebar({
                   </span>
                 )}
               </label>
+              {syncingUids.has(c.uid) ? (
+                <span
+                  className="shrink-0 px-1 text-text-faint"
+                  aria-label="Syncing"
+                  title="Syncing…"
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    className="h-3 w-3 animate-spin"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    aria-hidden
+                  >
+                    <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+                    <path d="M13.5 2.5v3h-3" />
+                  </svg>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSyncCalendar(c.uid)}
+                  title="Sync this calendar now"
+                  aria-label={`Sync ${c.name}`}
+                  className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    className="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    aria-hidden
+                  >
+                    <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+                    <path d="M13.5 2.5v3h-3" />
+                  </svg>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setRenamingUid(c.uid)}

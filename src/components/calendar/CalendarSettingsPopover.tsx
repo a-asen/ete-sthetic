@@ -1,14 +1,25 @@
 import { useEffect, useRef } from 'react'
 
+type CalSort = 'original' | 'name'
+
 interface Props {
   showWeekNum: boolean
   onToggleWeekNum: () => void
   showTasks: boolean
   onToggleShowTasks: () => void
-  zoomPct: number
-  onZoom: (delta: number | 'reset') => void
+  // Independent zooms — sidebar (mini-month + calendar list) vs main
+  // pane (toolbar + month/week grid).
+  mainZoomPct: number
+  onMainZoom: (delta: number | 'reset') => void
+  sidebarZoomPct: number
+  onSidebarZoom: (delta: number | 'reset') => void
   hourPx: number
   onHourPx: (delta: number | 'reset') => void
+  // Calendar sort order in the sidebar list.
+  sortBy: CalSort
+  onSortBy: (v: CalSort) => void
+  sortReverse: boolean
+  onToggleSortReverse: () => void
   onClose: () => void
 }
 
@@ -21,10 +32,16 @@ export function CalendarSettingsPopover({
   onToggleWeekNum,
   showTasks,
   onToggleShowTasks,
-  zoomPct,
-  onZoom,
+  mainZoomPct,
+  onMainZoom,
+  sidebarZoomPct,
+  onSidebarZoom,
   hourPx,
   onHourPx,
+  sortBy,
+  onSortBy,
+  sortReverse,
+  onToggleSortReverse,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -77,13 +94,22 @@ export function CalendarSettingsPopover({
       <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
         Zoom
       </p>
-      <Row label="Overall zoom">
+      <Row label="Sidebar zoom">
         <Stepper
-          label="Overall zoom"
-          value={`${zoomPct}%`}
-          onDec={() => onZoom(-0.1)}
-          onReset={() => onZoom('reset')}
-          onInc={() => onZoom(0.1)}
+          label="Sidebar zoom"
+          value={`${sidebarZoomPct}%`}
+          onDec={() => onSidebarZoom(-0.1)}
+          onReset={() => onSidebarZoom('reset')}
+          onInc={() => onSidebarZoom(0.1)}
+        />
+      </Row>
+      <Row label="Calendar zoom">
+        <Stepper
+          label="Calendar zoom"
+          value={`${mainZoomPct}%`}
+          onDec={() => onMainZoom(-0.1)}
+          onReset={() => onMainZoom('reset')}
+          onInc={() => onMainZoom(0.1)}
         />
       </Row>
       <Row label="Day / week height">
@@ -96,9 +122,31 @@ export function CalendarSettingsPopover({
         />
       </Row>
       <p className="px-3 pb-2 pt-0.5 text-[11px] text-text-faint">
-        Elongates the day / week grid only; the overall zoom scales
-        everything (sidebar, month grid, headers).
+        Day/week height elongates the time grid only. Sidebar and
+        calendar zooms scale the rest independently.
       </p>
+
+      <p className="px-3 pb-0.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+        Sort calendars
+      </p>
+      <Row label="Order">
+        <select
+          value={sortBy}
+          onChange={(e) => onSortBy(e.target.value as CalSort)}
+          aria-label="Sort calendars"
+          className="rounded-md border border-border bg-surface-2 px-1.5 py-1 text-xs text-text outline-none focus:border-border-strong"
+        >
+          <option value="original">As listed</option>
+          <option value="name">Name (A–Z)</option>
+        </select>
+      </Row>
+      <Row label="Reverse">
+        <Toggle
+          on={sortReverse}
+          onClick={onToggleSortReverse}
+          label="Reverse calendar sort"
+        />
+      </Row>
     </div>
   )
 }

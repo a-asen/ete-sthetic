@@ -62,9 +62,12 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 const WEEKNUM_KEY = 'cal.weekNumbers'
 const DEFAULT_CAL_KEY = 'cal.defaultCal'
 const SIDEBAR_WIDTH_KEY = 'cal.sidebarWidth'
-const ZOOM_KEY = 'cal.zoom'
+const MAIN_ZOOM_KEY = 'cal.mainZoom'
+const SIDEBAR_ZOOM_KEY = 'cal.sidebarZoom'
 const HOUR_PX_KEY = 'cal.hourPx'
 const SHOW_TASKS_KEY = 'cal.showTasks'
+const CAL_SORT_KEY = 'cal.sort'
+const CAL_SORT_REV_KEY = 'cal.sortReverse'
 
 const SIDEBAR_MIN_WIDTH = 160
 const SIDEBAR_MAX_WIDTH = 420
@@ -177,19 +180,32 @@ export function CalendarView() {
     ),
   )
   const [isResizingCalSidebar, setIsResizingCalSidebar] = useState(false)
-  const [calZoom, setCalZoomState] = useState<number>(() =>
-    readNum(ZOOM_KEY, ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX),
+  const [calMainZoom, setCalMainZoomState] = useState<number>(() =>
+    readNum(MAIN_ZOOM_KEY, ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX),
+  )
+  const [calSidebarZoom, setCalSidebarZoomState] = useState<number>(() =>
+    readNum(SIDEBAR_ZOOM_KEY, ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX),
   )
   const [calHourPx, setCalHourPxState] = useState<number>(() =>
     readNum(HOUR_PX_KEY, HOUR_PX_DEFAULT, HOUR_PX_MIN, HOUR_PX_MAX),
   )
-  const adjustCalZoom = useCallback((delta: number | 'reset') => {
-    setCalZoomState((cur) => {
+  const adjustCalMainZoom = useCallback((delta: number | 'reset') => {
+    setCalMainZoomState((cur) => {
       const next =
         delta === 'reset'
           ? ZOOM_DEFAULT
           : Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, +(cur + delta).toFixed(2)))
-      writeNum(ZOOM_KEY, next)
+      writeNum(MAIN_ZOOM_KEY, next)
+      return next
+    })
+  }, [])
+  const adjustCalSidebarZoom = useCallback((delta: number | 'reset') => {
+    setCalSidebarZoomState((cur) => {
+      const next =
+        delta === 'reset'
+          ? ZOOM_DEFAULT
+          : Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, +(cur + delta).toFixed(2)))
+      writeNum(SIDEBAR_ZOOM_KEY, next)
       return next
     })
   }, [])
@@ -204,6 +220,32 @@ export function CalendarView() {
     })
   }, [])
   const [settingsOpen, setSettingsOpen] = useState(false)
+
+  // Per-calendar sort.
+  type CalSort = 'original' | 'name'
+  const [calSort, setCalSortState] = useState<CalSort>(() => {
+    const v = readStr(CAL_SORT_KEY)
+    return v === 'name' ? v : 'original'
+  })
+  const [calSortReverse, setCalSortReverseState] = useState<boolean>(() =>
+    readBool(CAL_SORT_REV_KEY),
+  )
+  const setCalSort = useCallback((v: CalSort) => {
+    setCalSortState(v)
+    writeStr(CAL_SORT_KEY, v)
+  }, [])
+  const toggleCalSortReverse = useCallback(() => {
+    setCalSortReverseState((v) => {
+      writeBool(CAL_SORT_REV_KEY, !v)
+      return !v
+    })
+  }, [])
+
+  // Per-calendar in-flight sync set (drives the row spinners). The
+  // existing loadingCount is a coarse total — we want per-row feedback.
+  const [syncingUids, setSyncingUids] = useState<Set<string>>(
+    () => new Set(),
+  )
   // User-chosen calendar new events default into. '' = not set → fall back
   // to the first visible calendar (resolved below).
   const [defaultCalPref, setDefaultCalPref] = useState<string>(() =>
@@ -219,6 +261,23 @@ export function CalendarView() {
     setDefaultCalPref(uid)
     writeStr(DEFAULT_CAL_KEY, uid)
   }, [])
+  // Display order for the sidebar list — driven by the calendar sort
+  // pref. `calendars` itself stays as fetched (other code references the
+  // server order indirectly via uid lookups).
+  const sortedCalendars = useMemo(() => {
+    if (!calendars) return calendars
+    let arr = calendars
+    if (calSort === 'name') {
+      arr = [...arr].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', undefined, {
+          sensitivity: 'base',
+        }),
+      )
+    }
+    if (calSortReverse) arr = [...arr].reverse()
+    return arr
+  }, [calendars, calSort, calSortReverse])
+
   const handleCalSidebarResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -359,6 +418,33 @@ export function CalendarView() {
       })
     },
     [],
+  )
+
+  // Force a per-calendar sync from the sidebar's ↻ button. Tracks
+  // loading state per uid for the row spinner; failures are swallowed
+  // (the next periodic sync will retry).
+  const handleSyncCalendar = useCallback(
+    async (uid: string) => {
+      if (syncingUids.has(uid)) return
+      setSyncingUids((s) => {
+        const next = new Set(s)
+        next.add(uid)
+        return next
+      })
+      const ac = new AbortController()
+      try {
+        await syncCalendar(uid, ac.signal, eventsByCal.get(uid) ?? [])
+      } catch {
+        // Per-row failure is non-fatal; ignore.
+      } finally {
+        setSyncingUids((s) => {
+          const next = new Set(s)
+          next.delete(uid)
+          return next
+        })
+      }
+    },
+    [syncingUids, syncCalendar, eventsByCal],
   )
 
   const loadAll = useCallback(async () => {
@@ -1092,29 +1178,35 @@ export function CalendarView() {
   }
 
   return (
-    <div className="flex h-screen bg-bg text-text" style={{ zoom: calZoom }}>
+    <div className="flex h-screen bg-bg text-text">
       <CalendarSidebar
         key={`${anchor.getFullYear()}-${anchor.getMonth()}`}
         anchor={anchor}
         today={today}
         rangeStart={rangeStart}
         rangeEnd={rangeEnd}
-        calendars={calendars}
+        calendars={sortedCalendars}
         hidden={hidden}
         onToggle={toggleCal}
         onPickDay={(d) => setAnchor(startOfDay(d))}
         onExportCalendar={handleExportCalendar}
         onImportCalendar={handleImportCalendar}
         onRenameCalendar={handleRenameCalendar}
+        onSyncCalendar={handleSyncCalendar}
+        syncingUids={syncingUids}
         showWeekNum={showWeekNum}
         defaultCalUid={defaultCalUid}
         onSetDefaultCal={chooseDefaultCal}
         width={calSidebarWidth}
+        zoom={calSidebarZoom}
         onResizeStart={handleCalSidebarResizeStart}
         isResizing={isResizingCalSidebar}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className="flex min-w-0 flex-1 flex-col"
+        style={{ zoom: calMainZoom }}
+      >
         {/* Toolbar */}
         <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-1">
@@ -1217,10 +1309,16 @@ export function CalendarView() {
                 onToggleWeekNum={toggleWeekNum}
                 showTasks={showTasks}
                 onToggleShowTasks={toggleShowTasks}
-                zoomPct={Math.round(calZoom * 100)}
-                onZoom={adjustCalZoom}
+                mainZoomPct={Math.round(calMainZoom * 100)}
+                onMainZoom={adjustCalMainZoom}
+                sidebarZoomPct={Math.round(calSidebarZoom * 100)}
+                onSidebarZoom={adjustCalSidebarZoom}
                 hourPx={calHourPx}
                 onHourPx={adjustCalHourPx}
+                sortBy={calSort}
+                onSortBy={setCalSort}
+                sortReverse={calSortReverse}
+                onToggleSortReverse={toggleCalSortReverse}
                 onClose={() => setSettingsOpen(false)}
               />
             )}
