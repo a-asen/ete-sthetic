@@ -29,7 +29,6 @@ function hhmm(min: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
-const HOUR_PX = 44
 const DAY_START_HOUR = 0
 
 // Greedy overlap layout: events that overlap in time are split into
@@ -42,7 +41,11 @@ interface Placed {
   cols: number
 }
 
-function layoutDay(events: EventItem[], day: Date): Placed[] {
+function layoutDay(
+  events: EventItem[],
+  day: Date,
+  hourPx: number,
+): Placed[] {
   const dayStart = new Date(
     day.getFullYear(),
     day.getMonth(),
@@ -64,10 +67,10 @@ function layoutDay(events: EventItem[], day: Date): Placed[] {
     for (const c of cluster) {
       const startMs = Math.max(c.start, dayStart)
       const endMs = Math.max(c.end, startMs + 15 * 60 * 1000)
-      const topPx = ((startMs - dayStart) / 3_600_000) * HOUR_PX
+      const topPx = ((startMs - dayStart) / 3_600_000) * hourPx
       const heightPx = Math.max(
         16,
-        ((endMs - startMs) / 3_600_000) * HOUR_PX,
+        ((endMs - startMs) / 3_600_000) * hourPx,
       )
       placed.push({ item: c.item, topPx, heightPx, col: c.col, cols })
     }
@@ -106,6 +109,7 @@ export function TimeGrid({
   onCreateRange,
   onMoveResize,
   showWeekNum,
+  hourPx,
 }: {
   days: Date[]
   byDay: Map<string, EventItem[]>
@@ -118,6 +122,7 @@ export function TimeGrid({
   onCreateRange: (start: Date, end: Date) => void
   onMoveResize: (item: EventItem, start: Date, end: Date) => void
   showWeekNum: boolean
+  hourPx: number
 }) {
   const hours = useMemo(
     () => Array.from({ length: 24 }, (_, i) => i),
@@ -132,7 +137,7 @@ export function TimeGrid({
     return () => clearInterval(id)
   }, [])
   const nowTopPx =
-    ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_PX
+    ((now.getHours() * 60 + now.getMinutes()) / 60) * hourPx
 
   // All-day / multi-day events packed into spanning bars over the row.
   const allDay = useMemo(() => {
@@ -208,12 +213,15 @@ export function TimeGrid({
     },
     [days.length],
   )
-  const minAt = useCallback((clientY: number): number => {
-    const el = gridRef.current
-    if (!el) return 0
-    const y = clientY - el.getBoundingClientRect().top
-    return snap((y / HOUR_PX) * 60)
-  }, [])
+  const minAt = useCallback(
+    (clientY: number): number => {
+      const el = gridRef.current
+      if (!el) return 0
+      const y = clientY - el.getBoundingClientRect().top
+      return snap((y / hourPx) * 60)
+    },
+    [hourPx],
+  )
 
   useEffect(() => {
     if (!drag) return
@@ -414,7 +422,7 @@ export function TimeGrid({
           className="grid select-none"
           style={{
             gridTemplateColumns: `3rem repeat(${days.length}, 1fr)`,
-            height: `${24 * HOUR_PX}px`,
+            height: `${24 * hourPx}px`,
           }}
         >
           {/* Hour gutter */}
@@ -423,7 +431,7 @@ export function TimeGrid({
               <div
                 key={h}
                 className="absolute right-1 -translate-y-1/2 text-[10px] text-text-faint"
-                style={{ top: `${h * HOUR_PX}px` }}
+                style={{ top: `${h * hourPx}px` }}
               >
                 {h === 0 ? '' : `${String(h).padStart(2, '0')}:00`}
               </div>
@@ -431,7 +439,7 @@ export function TimeGrid({
           </div>
           {/* Day columns */}
           {days.map((d, dIdx) => {
-            const placed = layoutDay(byDay.get(dayKey(d)) ?? [], d)
+            const placed = layoutDay(byDay.get(dayKey(d)) ?? [], d, hourPx)
             return (
               <div
                 key={dayKey(d)}
@@ -454,7 +462,7 @@ export function TimeGrid({
                   <div
                     key={h}
                     className="absolute inset-x-0 border-b border-border/50"
-                    style={{ top: `${h * HOUR_PX}px`, height: `${HOUR_PX}px` }}
+                    style={{ top: `${h * hourPx}px`, height: `${hourPx}px` }}
                   />
                 ))}
                 {sameDay(d, now) && (
@@ -591,8 +599,8 @@ export function TimeGrid({
                     <div
                       className="pointer-events-none absolute inset-x-0.5 z-20 flex flex-col overflow-hidden rounded-sm border-2 border-accent bg-accent/25 px-1 py-0.5 text-xs text-text shadow-lg ring-1 ring-accent"
                       style={{
-                        top: `${(a / 60) * HOUR_PX}px`,
-                        height: `${((b - a) / 60) * HOUR_PX}px`,
+                        top: `${(a / 60) * hourPx}px`,
+                        height: `${((b - a) / 60) * hourPx}px`,
                       }}
                     >
                       <span className="truncate font-medium">{label}</span>

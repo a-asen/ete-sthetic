@@ -43,6 +43,7 @@ import { MonthGrid } from './calendar/MonthGrid'
 import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
 import { CalendarSidebar } from './calendar/CalendarSidebar'
+import { CalendarSettingsPopover } from './calendar/CalendarSettingsPopover'
 import { EventComposer } from './calendar/EventComposer'
 import { ConflictModal } from './calendar/ConflictModal'
 import { EventPopover } from './calendar/EventPopover'
@@ -60,6 +61,20 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 // Persisted calendar UI prefs (localStorage; survive restart).
 const WEEKNUM_KEY = 'cal.weekNumbers'
 const DEFAULT_CAL_KEY = 'cal.defaultCal'
+const SIDEBAR_WIDTH_KEY = 'cal.sidebarWidth'
+const ZOOM_KEY = 'cal.zoom'
+const HOUR_PX_KEY = 'cal.hourPx'
+const SHOW_TASKS_KEY = 'cal.showTasks'
+
+const SIDEBAR_MIN_WIDTH = 160
+const SIDEBAR_MAX_WIDTH = 420
+const SIDEBAR_DEFAULT_WIDTH = 240
+const HOUR_PX_MIN = 28
+const HOUR_PX_MAX = 96
+const HOUR_PX_DEFAULT = 44
+const ZOOM_MIN = 0.7
+const ZOOM_MAX = 1.6
+const ZOOM_DEFAULT = 1
 
 function readBool(key: string): boolean {
   try {
@@ -87,6 +102,25 @@ function writeStr(key: string, v: string): void {
     localStorage.setItem(key, v)
   } catch {
     // Non-fatal — see writeBool.
+  }
+}
+
+function readNum(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw == null) return fallback
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(min, Math.min(max, n))
+  } catch {
+    return fallback
+  }
+}
+function writeNum(key: string, v: number): void {
+  try {
+    localStorage.setItem(key, String(v))
+  } catch {
+    // not fatal
   }
 }
 
@@ -120,10 +154,56 @@ export function CalendarView() {
   const [view, setView] = useState<CalView>(() => m0.view)
   const [anchor, setAnchor] = useState<Date>(() => new Date(m0.anchorMs))
   const [tasks, setTasks] = useState<CalTask[]>(() => m0.tasks)
-  const [showTasks, setShowTasks] = useState<boolean>(() => m0.showTasks)
+  const [showTasks, setShowTasks] = useState<boolean>(() => {
+    const raw = localStorage.getItem(SHOW_TASKS_KEY)
+    return raw == null ? m0.showTasks : raw === '1'
+  })
+  const toggleShowTasks = useCallback(() => {
+    setShowTasks((v) => {
+      writeBool(SHOW_TASKS_KEY, !v)
+      return !v
+    })
+  }, [])
   const [showWeekNum, setShowWeekNum] = useState<boolean>(() =>
     readBool(WEEKNUM_KEY),
   )
+  // Calendar UI sizing prefs.
+  const [calSidebarWidth, setCalSidebarWidth] = useState<number>(() =>
+    readNum(
+      SIDEBAR_WIDTH_KEY,
+      SIDEBAR_DEFAULT_WIDTH,
+      SIDEBAR_MIN_WIDTH,
+      SIDEBAR_MAX_WIDTH,
+    ),
+  )
+  const [isResizingCalSidebar, setIsResizingCalSidebar] = useState(false)
+  const [calZoom, setCalZoomState] = useState<number>(() =>
+    readNum(ZOOM_KEY, ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX),
+  )
+  const [calHourPx, setCalHourPxState] = useState<number>(() =>
+    readNum(HOUR_PX_KEY, HOUR_PX_DEFAULT, HOUR_PX_MIN, HOUR_PX_MAX),
+  )
+  const adjustCalZoom = useCallback((delta: number | 'reset') => {
+    setCalZoomState((cur) => {
+      const next =
+        delta === 'reset'
+          ? ZOOM_DEFAULT
+          : Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, +(cur + delta).toFixed(2)))
+      writeNum(ZOOM_KEY, next)
+      return next
+    })
+  }, [])
+  const adjustCalHourPx = useCallback((delta: number | 'reset') => {
+    setCalHourPxState((cur) => {
+      const next =
+        delta === 'reset'
+          ? HOUR_PX_DEFAULT
+          : Math.max(HOUR_PX_MIN, Math.min(HOUR_PX_MAX, cur + delta))
+      writeNum(HOUR_PX_KEY, next)
+      return next
+    })
+  }, [])
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // User-chosen calendar new events default into. '' = not set → fall back
   // to the first visible calendar (resolved below).
   const [defaultCalPref, setDefaultCalPref] = useState<string>(() =>
@@ -139,6 +219,32 @@ export function CalendarView() {
     setDefaultCalPref(uid)
     writeStr(DEFAULT_CAL_KEY, uid)
   }, [])
+  const handleCalSidebarResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startWidth = calSidebarWidth
+      let latest = startWidth
+      setIsResizingCalSidebar(true)
+      const onMove = (ev: MouseEvent) => {
+        const next = Math.max(
+          SIDEBAR_MIN_WIDTH,
+          Math.min(SIDEBAR_MAX_WIDTH, startWidth + (ev.clientX - startX)),
+        )
+        latest = next
+        setCalSidebarWidth(next)
+      }
+      const onUp = () => {
+        setIsResizingCalSidebar(false)
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        writeNum(SIDEBAR_WIDTH_KEY, latest)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [calSidebarWidth],
+  )
   // Keyboard-focused day (arrow keys move it; the view pages to follow).
   const [selected, setSelected] = useState<Date>(() =>
     startOfDay(new Date(m0.anchorMs)),
@@ -986,7 +1092,7 @@ export function CalendarView() {
   }
 
   return (
-    <div className="flex h-screen bg-bg text-text">
+    <div className="flex h-screen bg-bg text-text" style={{ zoom: calZoom }}>
       <CalendarSidebar
         key={`${anchor.getFullYear()}-${anchor.getMonth()}`}
         anchor={anchor}
@@ -997,15 +1103,15 @@ export function CalendarView() {
         hidden={hidden}
         onToggle={toggleCal}
         onPickDay={(d) => setAnchor(startOfDay(d))}
-        showTasks={showTasks}
-        onToggleTasks={() => setShowTasks((s) => !s)}
         onExportCalendar={handleExportCalendar}
         onImportCalendar={handleImportCalendar}
         onRenameCalendar={handleRenameCalendar}
         showWeekNum={showWeekNum}
-        onToggleWeekNum={toggleWeekNum}
         defaultCalUid={defaultCalUid}
         onSetDefaultCal={chooseDefaultCal}
+        width={calSidebarWidth}
+        onResizeStart={handleCalSidebarResizeStart}
+        isResizing={isResizingCalSidebar}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1081,6 +1187,44 @@ export function CalendarView() {
           {loadingCount > 0 && (
             <span className="text-xs text-text-faint">syncing…</span>
           )}
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((o) => !o)}
+              aria-expanded={settingsOpen}
+              aria-label="Calendar settings"
+              title="Calendar settings (zoom, week numbers, overlay)"
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-muted transition-colors hover:border-border-strong hover:text-text"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <circle cx="8" cy="8" r="2.2" />
+                <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
+              </svg>
+            </button>
+            {settingsOpen && (
+              <CalendarSettingsPopover
+                showWeekNum={showWeekNum}
+                onToggleWeekNum={toggleWeekNum}
+                showTasks={showTasks}
+                onToggleShowTasks={toggleShowTasks}
+                zoomPct={Math.round(calZoom * 100)}
+                onZoom={adjustCalZoom}
+                hourPx={calHourPx}
+                onHourPx={adjustCalHourPx}
+                onClose={() => setSettingsOpen(false)}
+              />
+            )}
+          </div>
         </div>
 
         {/* Active view */}
@@ -1117,6 +1261,7 @@ export function CalendarView() {
             byDay={byDay}
             colorFor={colorFor}
             showWeekNum={showWeekNum}
+            hourPx={calHourPx}
             today={today}
             selected={selected}
             onPickDay={pickDay}

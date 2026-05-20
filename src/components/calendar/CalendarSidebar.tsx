@@ -21,15 +21,15 @@ export function CalendarSidebar({
   hidden,
   onToggle,
   onPickDay,
-  showTasks,
-  onToggleTasks,
   onExportCalendar,
   onImportCalendar,
   onRenameCalendar,
   showWeekNum,
-  onToggleWeekNum,
   defaultCalUid,
   onSetDefaultCal,
+  width,
+  onResizeStart,
+  isResizing,
 }: {
   anchor: Date
   today: Date
@@ -39,15 +39,15 @@ export function CalendarSidebar({
   hidden: Set<string>
   onToggle: (uid: string) => void
   onPickDay: (d: Date) => void
-  showTasks: boolean
-  onToggleTasks: () => void
   onExportCalendar: (uid: string) => void
   onImportCalendar: (uid: string) => void
   onRenameCalendar: (uid: string, name: string) => void
   showWeekNum: boolean
-  onToggleWeekNum: () => void
   defaultCalUid: string
   onSetDefaultCal: (uid: string) => void
+  width: number
+  onResizeStart: (e: React.MouseEvent) => void
+  isResizing: boolean
 }) {
   // The mini-month can be paged independently of the main view. The parent
   // remounts this component (via a year-month key) when the main anchor's
@@ -79,7 +79,23 @@ export function CalendarSidebar({
   for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7))
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
+    <aside
+      style={{ width }}
+      className={`relative flex shrink-0 flex-col border-r border-border bg-surface ${
+        isResizing ? 'select-none' : 'transition-[width] duration-200 ease-out'
+      }`}
+    >
+      {/* Right-edge drag handle. Mirrors the task sidebar's resize. */}
+      <div
+        onMouseDown={onResizeStart}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize calendar sidebar"
+        title="Drag to resize"
+        className="group absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize"
+      >
+        <div className="ml-auto h-full w-px bg-transparent transition-colors group-hover:bg-accent/40" />
+      </div>
       {/* Mini-month */}
       <div className="border-b border-border p-3">
         <div className="mb-2 flex items-center justify-between">
@@ -298,71 +314,6 @@ export function CalendarSidebar({
           )
         })}
 
-        <div className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-wide text-text-faint">
-          Overlays
-        </div>
-        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-surface-2">
-          <input
-            type="checkbox"
-            checked={showTasks}
-            onChange={onToggleTasks}
-            className="sr-only"
-          />
-          <span
-            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
-              showTasks ? 'border-transparent bg-accent' : 'border-border-strong'
-            }`}
-          >
-            {showTasks && (
-              <svg
-                viewBox="0 0 12 12"
-                className="h-2.5 w-2.5"
-                fill="none"
-                stroke="var(--color-bg)"
-                strokeWidth="2.5"
-              >
-                <path d="M2.5 6.5l2.5 2.5 4.5-5" />
-              </svg>
-            )}
-          </span>
-          <span className={showTasks ? 'text-text' : 'text-text-faint'}>
-            Tasks with due dates
-          </span>
-        </label>
-
-        <div className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-wide text-text-faint">
-          Display
-        </div>
-        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-surface-2">
-          <input
-            type="checkbox"
-            checked={showWeekNum}
-            onChange={onToggleWeekNum}
-            className="sr-only"
-          />
-          <span
-            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
-              showWeekNum
-                ? 'border-transparent bg-accent'
-                : 'border-border-strong'
-            }`}
-          >
-            {showWeekNum && (
-              <svg
-                viewBox="0 0 12 12"
-                className="h-2.5 w-2.5"
-                fill="none"
-                stroke="var(--color-bg)"
-                strokeWidth="2.5"
-              >
-                <path d="M2.5 6.5l2.5 2.5 4.5-5" />
-              </svg>
-            )}
-          </span>
-          <span className={showWeekNum ? 'text-text' : 'text-text-faint'}>
-            Week numbers
-          </span>
-        </label>
       </div>
     </aside>
   )
