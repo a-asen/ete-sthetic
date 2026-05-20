@@ -31,6 +31,7 @@ import {
   saveCollectionsList,
   saveSnapshot,
 } from '../services/snapshots'
+import { getTaskMemory, patchTaskMemory } from '../services/taskstore'
 import {
   DEFAULT_TASK_SORT,
   type CollectionInfo,
@@ -409,13 +410,19 @@ function writeZoom(zone: ZoomZone, value: number) {
 }
 
 export function MainView({ onLoggedOut }: Props) {
-  const [collections, setCollections] = useState<CollectionInfo[] | null>(null)
+  // Seed initial state from the process-lifetime task memory cache so
+  // switching back from the calendar module is instant (no spinner, no
+  // disk reread). The state-mirror effect below keeps the cache in sync.
+  const m0 = getTaskMemory()
+  const [collections, setCollections] = useState<CollectionInfo[] | null>(
+    () => m0.collections,
+  )
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
   // True while the last collections load failed and we're rendering the
   // on-disk cached list — i.e. we're offline / the server is unreachable
   // and no sync can happen until it recovers.
   const [offline, setOffline] = useState(false)
-  const [activeUid, setActiveUid] = useState<string | null>(null)
+  const [activeUid, setActiveUid] = useState<string | null>(() => m0.activeUid)
 
   // Bumped to force the collections-load effect to re-run after a
   // create/rename/delete. Also tracks the pending-list operation so the
@@ -453,7 +460,7 @@ export function MainView({ onLoggedOut }: Props) {
   })
 
   const [itemsByUid, setItemsByUid] = useState<Map<string, TaskItem[]>>(
-    () => new Map(),
+    () => new Map(m0.itemsByUid),
   )
   // Latest itemsByUid, readable from the (deps-stable) collections-load
   // effect without making it re-run on every item change.
@@ -470,13 +477,17 @@ export function MainView({ onLoggedOut }: Props) {
   // Used to gate the background prefetch so it doesn't fight the active
   // load for CPU. Populated from disk snapshots on mount so cached lists
   // are instantly considered loaded.
-  const [loadedUids, setLoadedUids] = useState<Set<string>>(() => new Set())
+  const [loadedUids, setLoadedUids] = useState<Set<string>>(
+    () => new Set(m0.loadedUids),
+  )
   // Per-collection sync token (Etebase stoken). Persisted alongside the
   // items so re-opens fetch only the delta.
   const [stokenByUid, setStokenByUid] = useState<Map<string, string>>(
-    () => new Map(),
+    () => new Map(m0.stokenByUid),
   )
-  const [hydrated, setHydrated] = useState(false)
+  // Warm memory counts as already-hydrated — the disk pass below bails
+  // out and we render instantly from the cache.
+  const [hydrated, setHydrated] = useState<boolean>(() => m0.warmed)
   const [activeSyncMin, setActiveSyncMinState] = useState(() =>
     readIntPref(ACTIVE_SYNC_KEY, ACTIVE_SYNC_OPTIONS, DEFAULT_ACTIVE_SYNC_MIN),
   )
@@ -505,7 +516,7 @@ export function MainView({ onLoggedOut }: Props) {
   // uid → last successful sync time (ms). Seeded from disk snapshots at
   // hydration so a recent cache doesn't trigger a re-sync just from
   // switching to the list. A ref (not state) — it only gates effects.
-  const syncedAtRef = useRef<Map<string, number>>(new Map())
+  const syncedAtRef = useRef<Map<string, number>>(new Map(m0.syncedAt))
 
   const [filter, setFilterState] = useState<FilterSpec>(() => ({
     ...DEFAULT_FILTER,
@@ -533,7 +544,9 @@ export function MainView({ onLoggedOut }: Props) {
   // whole subtree (parent moves take their children with them).
   const [moving, setMoving] = useState<MovePayload | null>(null)
   const [dragOverListUid, setDragOverListUid] = useState<string | null>(null)
-  const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(null)
+  const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(
+    () => m0.selectedTaskUid,
+  )
   const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar' | 'details'>(
     'tasks',
   )
@@ -766,8 +779,10 @@ export function MainView({ onLoggedOut }: Props) {
 
   // Hydrate cached snapshots from disk before any network sync. This makes
   // the second-and-onward app open instant: trees render immediately and
-  // sync only pulls deltas.
+  // sync only pulls deltas. Skipped on a warm intra-session remount —
+  // taskstore already holds the parsed VTODOs from earlier this session.
   useEffect(() => {
+    if (getTaskMemory().warmed) return
     let cancelled = false
     void (async () => {
       try {
@@ -811,6 +826,30 @@ export function MainView({ onLoggedOut }: Props) {
       cancelled = true
     }
   }, [])
+
+  // Mirror render state into the process-lifetime cache so an unmount
+  // (module switch) doesn't lose it — matches CalendarView's calstore
+  // mirror. Marks `warmed` so the disk-hydration effect can skip the
+  // re-mount round trip.
+  useEffect(() => {
+    patchTaskMemory({
+      collections,
+      itemsByUid,
+      stokenByUid,
+      loadedUids,
+      syncedAt: syncedAtRef.current,
+      activeUid,
+      selectedTaskUid,
+      warmed: true,
+    })
+  }, [
+    collections,
+    itemsByUid,
+    stokenByUid,
+    loadedUids,
+    activeUid,
+    selectedTaskUid,
+  ])
 
   // Persist the active collection's snapshot to disk on changes (mutations
   // mostly). Debounced so flurries of state updates coalesce into one
