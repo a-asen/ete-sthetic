@@ -10,6 +10,7 @@ import {
   moveEventToCollection,
   replaceEventRaw,
   toggleComplete,
+  updateCollectionMeta,
   updateEvent,
 } from '../services/etebase'
 import { loadCalTasks, type CalTask } from '../services/caltasks'
@@ -312,6 +313,32 @@ export function CalendarView() {
   useEffect(() => {
     startAlarmScheduler()
   }, [])
+
+  // Inline-rename a calendar from the sidebar.
+  const handleRenameCalendar = useCallback(
+    async (uid: string, name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      // Optimistic: update the local list immediately so the rename feels
+      // instant; reconcile from the server response.
+      setCalendars((cur) =>
+        cur
+          ? cur.map((c) => (c.uid === uid ? { ...c, name: trimmed } : c))
+          : cur,
+      )
+      try {
+        const updated = await updateCollectionMeta(uid, { name: trimmed })
+        setCalendars((cur) =>
+          cur ? cur.map((c) => (c.uid === uid ? updated : c)) : cur,
+        )
+      } catch (e) {
+        setNotice(
+          `Rename failed: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
+    },
+    [],
+  )
 
   // ICS export (roadmap U3): merge a calendar's events into one .ics and
   // write it wherever the user picks.
@@ -974,6 +1001,7 @@ export function CalendarView() {
         onToggleTasks={() => setShowTasks((s) => !s)}
         onExportCalendar={handleExportCalendar}
         onImportCalendar={handleImportCalendar}
+        onRenameCalendar={handleRenameCalendar}
         showWeekNum={showWeekNum}
         onToggleWeekNum={toggleWeekNum}
         defaultCalUid={defaultCalUid}

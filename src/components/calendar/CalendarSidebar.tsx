@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CollectionInfo } from '../../types'
 import {
   dayKey,
+  isoWeek,
   monthGridDays,
   sameDay,
   startOfDay,
@@ -24,6 +25,7 @@ export function CalendarSidebar({
   onToggleTasks,
   onExportCalendar,
   onImportCalendar,
+  onRenameCalendar,
   showWeekNum,
   onToggleWeekNum,
   defaultCalUid,
@@ -41,6 +43,7 @@ export function CalendarSidebar({
   onToggleTasks: () => void
   onExportCalendar: (uid: string) => void
   onImportCalendar: (uid: string) => void
+  onRenameCalendar: (uid: string, name: string) => void
   showWeekNum: boolean
   onToggleWeekNum: () => void
   defaultCalUid: string
@@ -52,10 +55,28 @@ export function CalendarSidebar({
   const [miniMonth, setMiniMonth] = useState(
     () => new Date(anchor.getFullYear(), anchor.getMonth(), 1),
   )
+  const [renamingUid, setRenamingUid] = useState<string | null>(null)
+  const renameRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (renamingUid) renameRef.current?.select()
+  }, [renamingUid])
+
+  const commitRename = (uid: string) => {
+    const v = renameRef.current?.value.trim() ?? ''
+    setRenamingUid(null)
+    if (!v) return
+    const current = calendars?.find((c) => c.uid === uid)
+    if (!current || v === current.name) return
+    onRenameCalendar(uid, v)
+  }
 
   const days = monthGridDays(miniMonth)
   const lo = rangeStart.getTime()
   const hi = rangeEnd.getTime()
+  // 6 weeks × 7 days; chunked here so we can render an optional
+  // leading week-number cell per row when showWeekNum is on.
+  const weeks: Date[][] = []
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7))
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
@@ -91,13 +112,29 @@ export function CalendarSidebar({
             ›
           </button>
         </div>
-        <div className="grid grid-cols-7 gap-px text-center text-[10px] text-text-faint">
+        <div
+          className={`grid gap-px text-center text-[10px] text-text-faint ${
+            showWeekNum ? 'grid-cols-8' : 'grid-cols-7'
+          }`}
+        >
+          {showWeekNum && <div className="pb-1" />}
           {DOW.map((d, i) => (
             <div key={i} className="pb-1">
               {d}
             </div>
           ))}
-          {days.map((day) => {
+          {weeks.flatMap((week) => [
+            ...(showWeekNum
+              ? [
+                  <div
+                    key={`wk-${dayKey(week[0])}`}
+                    className="flex aspect-square items-center justify-center tabular-nums opacity-70"
+                  >
+                    {isoWeek(week[0])}
+                  </div>,
+                ]
+              : []),
+            ...week.map((day) => {
             const inMonth = day.getMonth() === miniMonth.getMonth()
             const isToday = sameDay(day, today)
             const t = day.getTime()
@@ -119,7 +156,8 @@ export function CalendarSidebar({
                 {day.getDate()}
               </button>
             )
-          })}
+          }),
+          ])}
         </div>
       </div>
 
@@ -168,18 +206,58 @@ export function CalendarSidebar({
                     </svg>
                   )}
                 </span>
-                <span
-                  className={`truncate ${
-                    isDefault
-                      ? 'font-medium text-accent'
-                      : on
-                        ? 'text-text'
-                        : 'text-text-faint'
-                  }`}
-                >
-                  {c.name}
-                </span>
+                {renamingUid === c.uid ? (
+                  <input
+                    ref={renameRef}
+                    type="text"
+                    defaultValue={c.name}
+                    onClick={(e) => {
+                      // Don't toggle the visibility checkbox while typing.
+                      e.preventDefault()
+                      e.stopPropagation()
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        commitRename(c.uid)
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setRenamingUid(null)
+                      }
+                    }}
+                    onBlur={() => commitRename(c.uid)}
+                    aria-label={`Rename ${c.name}`}
+                    className="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1 py-0.5 text-sm text-text outline-none"
+                  />
+                ) : (
+                  <span
+                    onDoubleClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setRenamingUid(c.uid)
+                    }}
+                    title="Double-click to rename"
+                    className={`truncate ${
+                      isDefault
+                        ? 'font-medium text-accent'
+                        : on
+                          ? 'text-text'
+                          : 'text-text-faint'
+                    }`}
+                  >
+                    {c.name}
+                  </span>
+                )}
               </label>
+              <button
+                type="button"
+                onClick={() => setRenamingUid(c.uid)}
+                title="Rename calendar"
+                aria-label={`Rename ${c.name}`}
+                className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                ✎
+              </button>
               <button
                 type="button"
                 onClick={() => onSetDefaultCal(c.uid)}

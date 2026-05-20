@@ -47,6 +47,16 @@ export function MonthGrid({
   const weeks: Date[][] = []
   for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7))
 
+  // Heatmap: tint each day with accent-soft scaled by how many events
+  // are on it relative to the busiest visible day. Subtle (cap ~22%) so
+  // it reads as a gradient rather than competing with chips/bars.
+  const HEAT_MAX_PCT = 22
+  let busiest = 0
+  for (const d of days) {
+    const n = byDay.get(dayKey(d))?.length ?? 0
+    if (n > busiest) busiest = n
+  }
+
   return (
     <div className="flex flex-1 flex-col">
       <div className="flex border-b border-border">
@@ -93,6 +103,13 @@ export function MonthGrid({
                 const inMonth = day.getMonth() === monthOf
                 const isToday = sameDay(day, today)
                 const k = dayKey(day)
+                const dayCount = byDay.get(k)?.length ?? 0
+                const heatPct =
+                  busiest > 0 ? (dayCount / busiest) * HEAT_MAX_PCT : 0
+                const heatBg =
+                  heatPct > 0
+                    ? `color-mix(in srgb, var(--color-accent) ${heatPct.toFixed(1)}%, transparent)`
+                    : undefined
                 const chips = (byDay.get(k) ?? []).filter(
                   (it) => !isBarEvent(it.event),
                 )
@@ -102,8 +119,13 @@ export function MonthGrid({
                   <div
                     key={k}
                     onClick={() => onNewEvent(day)}
-                    title="Click to add an event"
-                    className={`flex min-h-0 cursor-pointer flex-col overflow-hidden border-b border-r border-border p-1 hover:bg-surface-2/60 ${
+                    title={
+                      dayCount > 0
+                        ? `${dayCount} event${dayCount === 1 ? '' : 's'} — click to add another`
+                        : 'Click to add an event'
+                    }
+                    style={heatBg ? { backgroundColor: heatBg } : undefined}
+                    className={`relative flex min-h-0 cursor-pointer flex-col overflow-hidden border-b border-r border-border p-1 hover:bg-surface-2/60 ${
                       inMonth ? '' : 'bg-surface/40 text-text-faint'
                     } ${
                       sameDay(day, selected)
