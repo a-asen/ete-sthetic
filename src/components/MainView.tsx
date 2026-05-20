@@ -419,6 +419,10 @@ export function MainView({ onLoggedOut }: Props) {
   // unmount blur), which was creating duplicate lists.
   const creatingListBusyRef = useRef(false)
   // Type-to-search buffer for the sidebar list view.
+  const taskTypeaheadRef = useRef<{ buf: string; time: number }>({
+    buf: '',
+    time: 0,
+  })
   const listTypeaheadRef = useRef<{ buf: string; time: number }>({
     buf: '',
     time: 0,
@@ -1778,6 +1782,32 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
+      // Ctrl/Cmd+N → focus the quick-add row (plain `n` is task-view
+      // typeahead now).
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+        if (!activeUid || !activeItems) return
+        e.preventDefault()
+        setFocusZone('tasks')
+        handleStartCreateRoot()
+        return
+      }
+
+      // Ctrl/Cmd+M → move the selected task (plain `m` is typeahead).
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'm' || e.key === 'M')) {
+        if (!selectedTaskUid || !activeUid) return
+        const node = findNodeByUid(fullTree, selectedTaskUid)
+        if (!node) return
+        const itemUids = collectDescendantItemUids(node)
+        e.preventDefault()
+        setMoving({
+          itemUids,
+          rootVtodoUid: node.todo.uid,
+          summary: node.todo.summary,
+          descendantCount: itemUids.length - 1,
+        })
+        return
+      }
+
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
@@ -1786,6 +1816,45 @@ export function MainView({ onLoggedOut }: Props) {
 
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
+      // In the task view, plain letters are typeahead through the
+      // visible task rows (matches the sidebar's list typeahead). Digits
+      // are left alone so TaskTree's 0–9 priority hotkeys still work.
+      // Action shortcuts that used to live on letters moved to Ctrl
+      // chords: Ctrl+S sort, Ctrl+F filter, Ctrl+N new, Ctrl+M move.
+      if (focusZone === 'tasks' && /^[a-z]$/i.test(e.key)) {
+        e.preventDefault()
+        const ch = e.key.toLowerCase()
+        const now = Date.now()
+        const st = taskTypeaheadRef.current
+        let buf: string
+        if (now - st.time > 800) buf = ch
+        else if (st.buf.length === 1 && st.buf === ch) buf = ch
+        else buf = st.buf + ch
+        taskTypeaheadRef.current = { buf, time: now }
+        // Read the rendered rows so the order tracks what the user sees
+        // (current sort/filter + any expanded subtree).
+        const rows = Array.from(
+          document.querySelectorAll<HTMLElement>('[data-task-uid]'),
+        )
+        const summaries = new Map<string, string>()
+        for (const it of activeItems ?? []) {
+          summaries.set(it.todo.uid, (it.todo.summary || '').toLowerCase())
+        }
+        const ordered = rows
+          .map((el) => el.dataset.taskUid)
+          .filter((u): u is string => !!u)
+          .map((uid) => ({ uid, sum: summaries.get(uid) ?? '' }))
+        const matches = ordered.filter((o) => o.sum.startsWith(buf))
+        if (matches.length > 0) {
+          let pick = matches[0]
+          if (buf.length === 1) {
+            const ci = matches.findIndex((m) => m.uid === selectedTaskUid)
+            if (ci >= 0) pick = matches[(ci + 1) % matches.length]
+          }
+          setSelectedTaskUid(pick.uid)
+        }
+        return
+      }
       // In the list (sidebar) view, plain letters/digits are a
       // type-to-search, not shortcuts. This deliberately swallows ALL
       // alphanumerics so none of the task-view single-key shortcuts
