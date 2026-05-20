@@ -438,6 +438,16 @@ export function DetailPanel({
         (e.ctrlKey || e.metaKey) &&
         (e.key === 'Enter' || e.key === 'ArrowLeft')
       ) {
+        // Ctrl+← is native word-jump inside text fields; don't hijack it
+        // there or the user can't move the cursor by word while editing.
+        // Ctrl+Enter has no standard editing meaning, so it always exits.
+        if (
+          e.key === 'ArrowLeft' &&
+          (e.target instanceof HTMLInputElement ||
+            e.target instanceof HTMLTextAreaElement)
+        ) {
+          return
+        }
         e.preventDefault()
         requestExit()
         return
