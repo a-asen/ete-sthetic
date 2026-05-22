@@ -428,7 +428,7 @@ characters before clipping.
 (a fixed 160px) to `max-w-[60%]` of the breadcrumb container, so each
 chip scales with the detail pane's width as the user resizes it.
 
-### "Editing" indicator placement + dismissibility
+### "Editing" indicator placement + dismissibility — ✅ done
 The fixed "✎ Editing — Esc/Enter to exit" pill (`EditModeIndicator`)
 currently sits at the bottom of the screen, where it overlaps / sits
 above the detail panel's Cancel / Save footer. Two changes:
@@ -436,6 +436,12 @@ above the detail panel's Cancel / Save footer. Two changes:
   horizontally** so it's out of the way of action bars.
 - Give it an `×` close button so the user can dismiss it for the
   remainder of the session if it's in the way.
+**Resolution.** Moved to bottom-centre (`bottom-3 left-1/2
+-translate-x-1/2`) so it stays out of the way of zone footers in the
+corners; added an `×` close button (and dropped `pointer-events-none`
+so it's clickable) that dismisses the pill for the session, persisted
+via `sessionStorage` so a quick reload doesn't bring it back. The
+durable opt-out belongs to the "Hint opt-out" item below.
 
 ### More guidance hints
 Add discoverable hints (tooltips / inline tips / a first-run callout)
