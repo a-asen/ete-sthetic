@@ -13,6 +13,9 @@ export interface ContactMemory {
   addressBooks: CollectionInfo[] | null
   contactsByBook: Map<string, ContactItem[]>
   stokenByBook: Map<string, string>
+  // Last successful sync time per book (ms epoch). Survives module
+  // switches so the sidebar header doesn't lose its "Synced …" stamp.
+  lastSyncedAt: Map<string, number>
   activeBook: string | null
   selectedContact: string | null
   // True once a network sync has completed at least once this session, so
@@ -24,6 +27,7 @@ const mem: ContactMemory = {
   addressBooks: null,
   contactsByBook: new Map(),
   stokenByBook: new Map(),
+  lastSyncedAt: new Map(),
   activeBook: null,
   selectedContact: null,
   warmed: false,
@@ -42,6 +46,7 @@ export function resetContactMemory(): void {
   mem.addressBooks = null
   mem.contactsByBook = new Map()
   mem.stokenByBook = new Map()
+  mem.lastSyncedAt = new Map()
   mem.activeBook = null
   mem.selectedContact = null
   mem.warmed = false

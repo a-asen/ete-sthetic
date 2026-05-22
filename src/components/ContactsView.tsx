@@ -75,6 +75,11 @@ export function ContactsView() {
   const [stokenByBook, setStokenByBook] = useState<Map<string, string>>(
     () => new Map(getContactMemory().stokenByBook),
   )
+  // Last successful sync time per book — drives the "Synced HH:MM"
+  // stamp in the contact-list header.
+  const [lastSyncedAt, setLastSyncedAt] = useState<Map<string, number>>(
+    () => new Map(getContactMemory().lastSyncedAt),
+  )
   const [activeBook, setActiveBook] = useState<string | null>(
     () => getContactMemory().activeBook,
   )
@@ -118,11 +123,19 @@ export function ContactsView() {
       addressBooks,
       contactsByBook,
       stokenByBook,
+      lastSyncedAt,
       activeBook,
       selectedContact: selectedUid,
       warmed: true,
     })
-  }, [addressBooks, contactsByBook, stokenByBook, activeBook, selectedUid])
+  }, [
+    addressBooks,
+    contactsByBook,
+    stokenByBook,
+    lastSyncedAt,
+    activeBook,
+    selectedUid,
+  ])
 
   // Persist the active book's contacts to disk (debounced) so a cold start
   // renders instantly from the snapshot before the network sync lands.
@@ -166,6 +179,7 @@ export function ContactsView() {
           ? prev
           : (sortContacts(merged)[0]?.itemUid ?? null),
       )
+      setLastSyncedAt((prev) => new Map(prev).set(uid, Date.now()))
       setError(null)
     } catch (e) {
       if (!cancelledRef.current && !isAbort(e)) setError(message(e))
@@ -218,6 +232,9 @@ export function ContactsView() {
           if (snap.stoken) {
             setStokenByBook((p) => new Map(p).set(active, snap.stoken!))
           }
+          setLastSyncedAt((p) =>
+            new Map(p).set(active, snap.lastSyncedAt),
+          )
         }
       }
       await syncBook(active)
@@ -267,6 +284,9 @@ export function ContactsView() {
             if (snap.stoken) {
               setStokenByBook((p) => new Map(p).set(uid, snap.stoken!))
             }
+            setLastSyncedAt((p) =>
+              new Map(p).set(uid, snap.lastSyncedAt),
+            )
           }
           void syncBook(uid)
         })()
@@ -651,6 +671,24 @@ export function ContactsView() {
         <div className="border-b border-border px-3 pb-2 text-[11px] text-text-faint">
           {filtered.length} contact{filtered.length === 1 ? '' : 's'}
           {search && activeContacts ? ` of ${activeContacts.length}` : ''}
+          {activeBook && (
+            <>
+              {' · '}
+              {syncing.has(activeBook) ? (
+                <span className="text-text-muted">Syncing…</span>
+              ) : lastSyncedAt.has(activeBook) ? (
+                <span title="Last successful sync">
+                  Synced{' '}
+                  {new Date(lastSyncedAt.get(activeBook)!).toLocaleTimeString(
+                    [],
+                    { hour: '2-digit', minute: '2-digit' },
+                  )}
+                </span>
+              ) : (
+                <span>Never synced</span>
+              )}
+            </>
+          )}
         </div>
         <ul className="flex-1 overflow-y-auto py-1">
           {filtered.map((it) => (

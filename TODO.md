@@ -473,12 +473,22 @@ row's outer element was changed from `<button>` to a
 pencil can be a real nested `<button>` without invalid-HTML
 button-in-button nesting.
 
-### Visible sync status
+### Visible sync status — ◑ partly done
 Currently a tiny `↻` spinner appears on a syncing row and that's it.
 Show more: per-book "last synced X ago", a global "all synced" / "1
 syncing…" / "1 failed" line, and a clearer affordance after a sync
 error (the toast hides quickly). Mirror the tasks sidebar's
 sync-all + per-list cadence indicator pattern.
+**Resolution (in progress).** Active book's last-successful-sync time
+now shows in the contact-list header subtitle as "Synced HH:MM"
+(absolute time, no drift). Cycles to "Syncing…" while a sync is in
+flight and "Never synced" before the first one ever lands. Persisted
+via a new `lastSyncedAt: Map<string,number>` in `ContactMemory` so it
+survives module switches; seeded from the snapshot's `lastSyncedAt`
+on disk hydration / book switch and updated on every successful
+`syncBook`. **Still pending:** the global "all / 1 syncing / 1
+failed" summary, a per-book inline stamp (the current one is only
+for the active book), and a stickier error affordance.
 
 ### Adaptive (relative) sync for address books
 Contacts currently syncs the active book on open + on the manual
@@ -566,7 +576,7 @@ bindings…" footer pinned at the bottom. Visual lift: `rounded-2xl`,
 `shadow-2xl`, a thin `ring-1 ring-border/60`, `max-w-lg`, and the
 backdrop bumped to `bg-black/60 backdrop-blur-sm`.
 
-### Independent zoom for the task-list pane
+### Independent zoom for the task-list pane — ✅ done (already shipped)
 The task-list (middle) pane should carry its own persisted zoom level
 that's **fully independent** of the sidebar and detail zooms, both for
 `Ctrl+=`/`Ctrl+-`/`Ctrl+0` (when the task pane is the focused zone) and
@@ -575,6 +585,23 @@ exists in `MainView` (`adjustZoom('tasks', …)` + CSS `zoom` on
 `<main>`), but verify nothing's piggy-backing tasks zoom on another
 zone's factor, and surface the current `tasks` zoom as a labelled
 +/-/reset row in `SettingsPopover` alongside the existing readouts.
+**Resolution.** Audited — both halves of the request were already
+shipped:
+- **Independence verified.** Each zone has its own `zoom.<zone>` state
+  slice, its own `ete-stethic.zoom.<zone>` localStorage key, and the
+  Ctrl+/-/0 handler in `MainView` only touches `zoom[focusZone]`. The
+  tasks zone applies its factor to `<main>` exclusively
+  ([MainView.tsx:3595](src/components/MainView.tsx#L3595)); the
+  sidebar and detail zones apply theirs to their own `<aside>`s. No
+  shared factor anywhere.
+- **Settings exposure already present.** `SettingsPopover` has a "Task
+  card size" row with A−/A+ buttons + a clickable percentage (which
+  resets on click), wired through `taskZoomPct` and `onZoom` to
+  `adjustZoom('tasks', …)`. Renaming the label to "Task pane zoom" is
+  arguably clearer but is a bikeshed; left as-is.
+- Sidebar and detail zooms remain Ctrl+/-/0-only (no settings rows).
+  If desired, adding matching rows under "View" is a small follow-up,
+  but not part of this TODO's scope.
 
 ## Known issues
 
