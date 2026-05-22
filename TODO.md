@@ -458,12 +458,20 @@ boolean, plus a per-hint dismiss (the `×`) that remembers itself.
 
 Targeted feedback against the freshly-shipped contacts module.
 
-### Discoverable address-book rename
+### Discoverable address-book rename — ✅ done
 Rename exists today but is right-click-only — the user didn't realise it
 was there. Surface it with a visible affordance: e.g. an inline F2 alias
 on the focused row, a hover-only pencil icon, or a small per-book
 settings popover (mirroring the tasks sidebar's gear). Keep the
 right-click path as the secondary route.
+**Resolution.** Added a hover-revealed pencil button on each book row
+(`opacity-0 group-hover:opacity-100` so it stays out of the way until
+the row is hovered or focused). Click → enters inline rename mode for
+that book. The right-click "Rename" menu item is unchanged. The book
+row's outer element was changed from `<button>` to a
+`<div role="button" tabIndex={0}>` with Enter / Space handlers so the
+pencil can be a real nested `<button>` without invalid-HTML
+button-in-button nesting.
 
 ### Visible sync status
 Currently a tiny `↻` spinner appears on a syncing row and that's it.

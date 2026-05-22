@@ -515,10 +515,21 @@ export function ContactsView() {
                 className="mb-0.5 w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
               />
             ) : (
-              <button
+              // Outer is a div+role rather than a <button> so the pencil
+              // can be a real nested <button> (nested buttons are invalid
+              // HTML). Enter / Space on the row activates it like a
+              // button would.
+              <div
                 key={b.uid}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => selectBook(b.uid)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    selectBook(b.uid)
+                  }
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setCtxMenu({
@@ -540,7 +551,7 @@ export function ContactsView() {
                     ],
                   })
                 }}
-                className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                className={`group mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
                   b.uid === activeBook
                     ? 'bg-accent-soft text-text'
                     : 'text-text-muted hover:bg-surface-2 hover:text-text'
@@ -550,7 +561,35 @@ export function ContactsView() {
                 {syncing.has(b.uid) && (
                   <span className="text-[10px] text-text-faint">↻</span>
                 )}
-              </button>
+                {/* Hover-revealed rename affordance — the right-click
+                    "Rename" item still exists; this just makes the
+                    feature discoverable without right-clicking. */}
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setBookDraft({ mode: 'rename', uid: b.uid })
+                    setBookDraftText(b.name)
+                  }}
+                  aria-label={`Rename ${b.name}`}
+                  title="Rename"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-faint opacity-0 transition-opacity hover:bg-bg/40 hover:text-text group-hover:opacity-100 focus:opacity-100"
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    className="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M11 2l3 3-8 8-3.5.5.5-3.5 8-8z" />
+                  </svg>
+                </button>
+              </div>
             ),
           )}
           {bookDraft?.mode === 'create' && (
