@@ -11,8 +11,12 @@ interface Props {
   accent: string | null
   accentPresets: readonly string[]
   onSetAccent: (hex: string | null) => void
+  sidebarZoomPct: number
+  onSidebarZoom: (delta: number | 'reset') => void
   taskZoomPct: number
   onZoom: (delta: number | 'reset') => void
+  detailZoomPct: number
+  onDetailZoom: (delta: number | 'reset') => void
   activeSyncMin: number
   activeSyncOptions: readonly number[]
   onSetActiveSync: (min: number) => void
@@ -83,6 +87,48 @@ function Row({
   )
 }
 
+function ZoomRow({
+  label,
+  pct,
+  onZoom,
+}: {
+  label: string
+  pct: number
+  onZoom: (delta: number | 'reset') => void
+}) {
+  return (
+    <Row label={label}>
+      <span className="flex items-center rounded-md border border-border text-text-muted">
+        <button
+          type="button"
+          onClick={() => onZoom(-0.1)}
+          aria-label={`Smaller ${label}`}
+          className="flex h-6 w-6 items-center justify-center rounded-l-md text-xs transition-colors hover:bg-surface-2 hover:text-text"
+        >
+          A−
+        </button>
+        <button
+          type="button"
+          onClick={() => onZoom('reset')}
+          aria-label={`Reset ${label}`}
+          title="Reset"
+          className="h-6 min-w-[2.75rem] border-x border-border px-1 text-[11px] tabular-nums transition-colors hover:bg-surface-2 hover:text-text"
+        >
+          {pct}%
+        </button>
+        <button
+          type="button"
+          onClick={() => onZoom(0.1)}
+          aria-label={`Larger ${label}`}
+          className="flex h-6 w-6 items-center justify-center rounded-r-md text-sm transition-colors hover:bg-surface-2 hover:text-text"
+        >
+          A+
+        </button>
+      </span>
+    </Row>
+  )
+}
+
 function Toggle({
   on,
   onClick,
@@ -127,8 +173,12 @@ export function SettingsPopover({
   accent,
   accentPresets,
   onSetAccent,
+  sidebarZoomPct,
+  onSidebarZoom,
   taskZoomPct,
   onZoom,
+  detailZoomPct,
+  onDetailZoom,
   activeSyncMin,
   activeSyncOptions,
   onSetActiveSync,
@@ -198,35 +248,20 @@ export function SettingsPopover({
         />
       </Row>
 
-      <Row label="Task card size">
-        <span className="flex items-center rounded-md border border-border text-text-muted">
-          <button
-            type="button"
-            onClick={() => onZoom(-0.1)}
-            aria-label="Smaller task cards"
-            className="flex h-6 w-6 items-center justify-center rounded-l-md text-xs transition-colors hover:bg-surface-2 hover:text-text"
-          >
-            A−
-          </button>
-          <button
-            type="button"
-            onClick={() => onZoom('reset')}
-            aria-label="Reset task card size"
-            title="Reset"
-            className="h-6 min-w-[2.75rem] border-x border-border px-1 text-[11px] tabular-nums transition-colors hover:bg-surface-2 hover:text-text"
-          >
-            {taskZoomPct}%
-          </button>
-          <button
-            type="button"
-            onClick={() => onZoom(0.1)}
-            aria-label="Larger task cards"
-            className="flex h-6 w-6 items-center justify-center rounded-r-md text-sm transition-colors hover:bg-surface-2 hover:text-text"
-          >
-            A+
-          </button>
-        </span>
-      </Row>
+      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+        Zoom
+      </p>
+      <ZoomRow
+        label="Sidebar zoom"
+        pct={sidebarZoomPct}
+        onZoom={onSidebarZoom}
+      />
+      <ZoomRow label="Task pane zoom" pct={taskZoomPct} onZoom={onZoom} />
+      <ZoomRow
+        label="Detail zoom"
+        pct={detailZoomPct}
+        onZoom={onDetailZoom}
+      />
       <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
         Sync
       </p>

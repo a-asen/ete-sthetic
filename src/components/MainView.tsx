@@ -3825,8 +3825,12 @@ export function MainView({ onLoggedOut }: Props) {
                   accent={accent}
                   accentPresets={ACCENT_PRESETS}
                   onSetAccent={setAccent}
+                  sidebarZoomPct={Math.round(zoom.sidebar * 100)}
+                  onSidebarZoom={(d) => adjustZoom('sidebar', d)}
                   taskZoomPct={Math.round(zoom.tasks * 100)}
                   onZoom={(d) => adjustZoom('tasks', d)}
+                  detailZoomPct={Math.round(zoom.details * 100)}
+                  onDetailZoom={(d) => adjustZoom('details', d)}
                   activeSyncMin={activeSyncMin}
                   activeSyncOptions={ACTIVE_SYNC_OPTIONS}
                   onSetActiveSync={setActiveSyncMin}

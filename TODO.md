@@ -609,9 +609,12 @@ shipped:
   resets on click), wired through `taskZoomPct` and `onZoom` to
   `adjustZoom('tasks', …)`. Renaming the label to "Task pane zoom" is
   arguably clearer but is a bikeshed; left as-is.
-- Sidebar and detail zooms remain Ctrl+/-/0-only (no settings rows).
-  If desired, adding matching rows under "View" is a small follow-up,
-  but not part of this TODO's scope.
+- **Follow-up done.** `SettingsPopover` now has a "Zoom" subsection
+  with three labelled +/-/reset rows — Sidebar zoom, Task pane zoom,
+  Detail zoom — wired through `onSidebarZoom` / `onZoom` /
+  `onDetailZoom` to `adjustZoom(<zone>, …)`. The previous standalone
+  "Task card size" row was retired; its function lives in the new
+  three-row block.
 
 ## Known issues
 
