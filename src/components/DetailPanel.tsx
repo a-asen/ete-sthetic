@@ -8,6 +8,7 @@ import type {
   VTodo,
 } from '../types'
 import type { DateValue, VTodoPatch } from '../services/vtodo'
+import { CalendarPopover } from './CalendarPopover'
 import { ConfirmModal } from './ConfirmModal'
 
 interface Props {
@@ -282,6 +283,24 @@ const fieldClass =
 const labelClass =
   'block text-[11px] font-semibold uppercase tracking-wider text-text-faint'
 
+function CalendarIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="2.5" y="3" width="11" height="10.5" rx="1.5" />
+      <path d="M2.5 6.5h11M5.5 1.5v3M10.5 1.5v3" />
+    </svg>
+  )
+}
+
 export function DetailPanel({
   task,
   ancestors,
@@ -318,11 +337,17 @@ export function DetailPanel({
   const [resourceInput, setResourceInput] = useState('')
   const [depQuery, setDepQuery] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(() => readAdvancedOpen())
+  // Which date field, if any, has its arrow-key calendar popover open.
+  const [dueCalOpen, setDueCalOpen] = useState(false)
+  const [startCalOpen, setStartCalOpen] = useState(false)
   const summaryRef = useRef<HTMLInputElement>(null)
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
   const statusRef = useRef<HTMLSelectElement>(null)
   const priorityRef = useRef<HTMLSelectElement>(null)
   const dueRef = useRef<HTMLInputElement>(null)
+  const dueRowRef = useRef<HTMLDivElement>(null)
+  const startDateRef = useRef<HTMLInputElement>(null)
+  const startRowRef = useRef<HTMLDivElement>(null)
   const tagRef = useRef<HTMLInputElement>(null)
   // Which field the user last focused inside the panel. Persists across
   // Esc/Ctrl+Enter exits and re-entries so the caret returns to where the
@@ -820,7 +845,10 @@ export function DetailPanel({
                 </div>
 
                 <label className={`mt-3 ${labelClass}`}>Due</label>
-                <div className="mt-1 flex items-center gap-2">
+                <div
+                  ref={dueRowRef}
+                  className="relative mt-1 flex items-center gap-2"
+                >
                   <input
                     ref={dueRef}
                     type="date"
@@ -831,6 +859,20 @@ export function DetailPanel({
                     }}
                     className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setDueCalOpen((o) => !o)}
+                    aria-label="Open calendar"
+                    aria-expanded={dueCalOpen}
+                    title="Pick a date (arrow keys)"
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors ${
+                      dueCalOpen
+                        ? 'border-accent/40 bg-accent-soft text-text'
+                        : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+                    }`}
+                  >
+                    <CalendarIcon />
+                  </button>
                   <input
                     type="time"
                     value={draft.dueTime}
@@ -850,6 +892,18 @@ export function DetailPanel({
                     >
                       Clear
                     </button>
+                  )}
+                  {dueCalOpen && (
+                    <CalendarPopover
+                      value={draft.dueDate}
+                      ignoreRef={dueRowRef}
+                      returnFocusRef={dueRef}
+                      onPick={(iso) => {
+                        update('dueDate', iso)
+                        setDueCalOpen(false)
+                      }}
+                      onClose={() => setDueCalOpen(false)}
+                    />
                   )}
                 </div>
 
@@ -945,8 +999,12 @@ export function DetailPanel({
                       })()}
                     <div>
                       <label className={labelClass}>Start</label>
-                      <div className="mt-1 flex items-center gap-2">
+                      <div
+                        ref={startRowRef}
+                        className="relative mt-1 flex items-center gap-2"
+                      >
                         <input
+                          ref={startDateRef}
                           type="date"
                           value={draft.startDate}
                           onChange={(e) =>
@@ -954,6 +1012,20 @@ export function DetailPanel({
                           }
                           className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
                         />
+                        <button
+                          type="button"
+                          onClick={() => setStartCalOpen((o) => !o)}
+                          aria-label="Open calendar"
+                          aria-expanded={startCalOpen}
+                          title="Pick a date (arrow keys)"
+                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors ${
+                            startCalOpen
+                              ? 'border-accent/40 bg-accent-soft text-text'
+                              : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+                          }`}
+                        >
+                          <CalendarIcon />
+                        </button>
                         <input
                           type="time"
                           value={draft.startTime}
@@ -975,6 +1047,18 @@ export function DetailPanel({
                           >
                             Clear
                           </button>
+                        )}
+                        {startCalOpen && (
+                          <CalendarPopover
+                            value={draft.startDate}
+                            ignoreRef={startRowRef}
+                            returnFocusRef={startDateRef}
+                            onPick={(iso) => {
+                              update('startDate', iso)
+                              setStartCalOpen(false)
+                            }}
+                            onClose={() => setStartCalOpen(false)}
+                          />
                         )}
                       </div>
                     </div>
