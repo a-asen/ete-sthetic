@@ -509,12 +509,22 @@ Enter and Ctrl+Enter opens detail.
 calls `startEdit()`, so the detail pane swaps into the editor for that
 contact. The keyboard effect's deps array picks up `startEdit`.
 
-### Richer hover preview in the contact list
+### Richer hover preview in the contact list — ✅ done
 The list pane shows avatar + name + a one-line subtitle, leaving lots
 of empty horizontal space. On hover (or for the focused row), show
 more — e.g. all emails, all phones, an org line — either inline (the
 row expands a little) or as a side preview. The pane is wider than the
 content needs; use it.
+**Resolution.** Picked "always show more inline" over a hover popover —
+mouse jitter / chasing-target reflow makes hover-expand awkward, and
+the user's underlying ask ("there is not much else to use the space
+for") fits an always-on layout better. Each contact row now shows up
+to three lines: name, then **org or title** when present, then a
+compact **first email · first phone** line. Lines are skipped when
+their underlying field is empty, so bare contacts still render
+compactly — no fixed reserved height. Avatar bumped 32→36px to balance
+the multi-line text column. `subtitleOf` helper retired since it
+collapsed all of this into one line.
 
 ### Resizable / zoomable contact panes
 The contacts view has fixed widths for the address-book sidebar (w-52)

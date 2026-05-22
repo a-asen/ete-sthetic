@@ -53,16 +53,6 @@ function sortContacts(contacts: ContactItem[]): ContactItem[] {
   )
 }
 
-function subtitleOf(card: VCard): string {
-  return (
-    card.org ||
-    card.emails[0]?.value ||
-    card.phones[0]?.value ||
-    card.title ||
-    ''
-  )
-}
-
 export function ContactsView() {
   // Seeded synchronously from the process-lifetime cache so a module
   // switch and back is instant (no flash, no spinner).
@@ -699,20 +689,36 @@ export function ContactsView() {
                   setSelectedUid(it.itemUid)
                   setMode('view')
                 }}
-                className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+                className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ${
                   it.itemUid === selectedUid && mode === 'view'
                     ? 'bg-accent-soft'
                     : 'hover:bg-surface-2'
                 }`}
               >
-                <Avatar card={it.card} size={32} />
-                <span className="min-w-0 flex-1">
+                <Avatar card={it.card} size={36} />
+                {/* Up to three rows — name, then org/title, then a
+                    compact email · phone line — using the list pane's
+                    spare vertical/horizontal space instead of dropping
+                    everything past the first chip. Lines are skipped
+                    when their underlying field is empty, so a bare
+                    contact (FN only) still renders as a compact row. */}
+                <span className="min-w-0 flex-1 space-y-0.5">
                   <span className="block truncate text-sm text-text">
                     {it.card.fn || '(no name)'}
                   </span>
-                  {subtitleOf(it.card) && (
-                    <span className="block truncate text-xs text-text-faint">
-                      {subtitleOf(it.card)}
+                  {(it.card.org || it.card.title) && (
+                    <span className="block truncate text-xs text-text-muted">
+                      {it.card.org || it.card.title}
+                    </span>
+                  )}
+                  {(it.card.emails[0] || it.card.phones[0]) && (
+                    <span className="block truncate text-[11px] text-text-faint">
+                      {[
+                        it.card.emails[0]?.value,
+                        it.card.phones[0]?.value,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
                   )}
                 </span>
