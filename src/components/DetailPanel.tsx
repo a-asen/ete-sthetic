@@ -749,22 +749,23 @@ export function DetailPanel({
             <>
               <div className="flex-1 overflow-y-auto px-4 pb-4">
                 {ancestors.length > 0 && (
+                  // Ancestor chain only — the trailing "› this task" chip is
+                  // omitted; the user is already in the detail and the Title
+                  // input below is the current task. Each chip caps at 60%
+                  // of the breadcrumb's width so long parent names scale up
+                  // as the panel widens (the panel is user-resizable).
                   <div className="mb-3 flex flex-wrap items-center gap-1 text-[11px] text-text-faint">
                     {ancestors.map((a, i) => (
                       <span key={a.uid} className="flex items-center gap-1">
                         {i > 0 && <span aria-hidden>›</span>}
                         <span
-                          className="max-w-[10rem] truncate"
+                          className="max-w-[60%] truncate"
                           title={a.summary}
                         >
                           {a.summary || '(untitled)'}
                         </span>
                       </span>
                     ))}
-                    <span aria-hidden className="text-text-faint">
-                      ›
-                    </span>
-                    <span className="text-text-muted">this task</span>
                   </div>
                 )}
 

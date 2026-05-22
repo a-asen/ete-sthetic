@@ -435,6 +435,14 @@ export function ContactsView() {
         startCreate()
         return
       }
+      if (e.key === 'Enter' && selectedUid) {
+        // Enter on the selected contact opens it for editing — matches
+        // the user's "Enter opens the detail" mental model (the detail
+        // pane is always visible, so "open" = enter edit mode).
+        e.preventDefault()
+        startEdit()
+        return
+      }
       if (
         (e.key === 'Delete' || e.key === 'Backspace') &&
         selectedUid
@@ -457,7 +465,7 @@ export function ContactsView() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, search, selectedUid, filtered, startCreate])
+  }, [mode, search, selectedUid, filtered, startCreate, startEdit])
 
   const books = addressBooks ? liveBooks(addressBooks) : []
   const deletingContact = deletingUid

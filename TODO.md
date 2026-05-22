@@ -409,18 +409,24 @@ surface it read-only in the detail panel when the task is completed.
 
 ## Polish & fixes (queued 2026-05-22)
 
-### Detail-panel breadcrumb wording
+### Detail-panel breadcrumb wording — ✅ done
 The trailing "› this task" in the detail panel's ancestor breadcrumb
 reads weirdly — the user is already in the detail, so labelling the
 current item "this task" is redundant. Decide between dropping the
 trailing chip entirely (just show ancestors), bolding the parent's name,
 or replacing "this task" with the actual task title.
+**Resolution.** Dropped the trailing chip + separator entirely
+(`DetailPanel.tsx`). The Title input directly below the breadcrumb is
+already the current task's name, so the chip was pure redundancy.
 
-### Ellipsis should scale with width
+### Ellipsis should scale with width — ✅ done
 Long task titles truncate with `…`, which is fine — but the truncation
 cutoff is the same regardless of pane width. Make the `text-truncate`
 cap responsive to the available width so a wider task pane shows more
 characters before clipping.
+**Resolution.** Breadcrumb ancestor chips changed from `max-w-[10rem]`
+(a fixed 160px) to `max-w-[60%]` of the breadcrumb container, so each
+chip scales with the detail pane's width as the user resizes it.
 
 ### "Editing" indicator placement + dismissibility
 The fixed "✎ Editing — Esc/Enter to exit" pill (`EditModeIndicator`)
@@ -467,7 +473,7 @@ book on a fast interval, other books on a slow one, opening a book
 triggers a delta sync only if its snapshot is older than a freshness
 window. Configurable from a contacts settings popover.
 
-### Enter on a contact opens the detail
+### Enter on a contact opens the detail — ✅ done
 Today ↑/↓ moves the selection and the detail card on the right updates
 live, but Enter does nothing on a row. Two reasonable interpretations:
 either (a) Enter starts edit mode for the selected contact (matches
@@ -475,6 +481,9 @@ either (a) Enter starts edit mode for the selected contact (matches
 into the detail pane so its Edit / Delete buttons become reachable.
 Pick one — probably (a), matching how the tasks list cycles status on
 Enter and Ctrl+Enter opens detail.
+**Resolution.** Picked (a) — pressing Enter on the selected contact
+calls `startEdit()`, so the detail pane swaps into the editor for that
+contact. The keyboard effect's deps array picks up `startEdit`.
 
 ### Richer hover preview in the contact list
 The list pane shows avatar + name + a one-line subtitle, leaving lots
@@ -487,7 +496,11 @@ content needs; use it.
 The contacts view has fixed widths for the address-book sidebar (w-52)
 and the contact list (w-80). Port the tasks/calendar pattern: drag-to-
 resize handles between panes, plus per-zone `Ctrl/Cmd +/-/0` zoom with
-localStorage persistence.
+localStorage persistence. Each of the three zones (address-books /
+contact-list / detail) should carry its **own independent** zoom
+factor — including the contact list itself — and each should be a
+labelled +/-/reset row in a contacts settings popover (mirroring the
+matching tasks-pane request under the 2026-05-23 polish block).
 
 ### Zone meta-navigation + cross-zone fade
 Ctrl+←/→ (or even bare ←/→ from the address-book list) should walk
@@ -522,7 +535,7 @@ created destination items; the follow-vs-stay distinction is just
 whether `setActiveUid(destUid)` runs after the move resolves. Surface
 both in `KeybindingsModal`.
 
-### Help modal: scrollable, more visible, smoother
+### Help modal: scrollable, more visible, smoother — ✅ done
 The `KeybindingsModal` is cramped (overflows without scrolling), blends
 into the background, and has sharp corners. Three tweaks:
 - Make the body **scrollable** (`overflow-y-auto` + a `max-h`), so long
@@ -532,6 +545,22 @@ into the background, and has sharp corners. Three tweaks:
   a small drop-shadow elevation.
 - **Rounded corners** (`rounded-2xl` or `rounded-xl`) on the modal box
   to match the softer aesthetic the rest of the app is moving toward.
+**Resolution.** Modal restructured as a flex-column: a fixed header
+("Keyboard shortcuts" + ×), a scrolling body (`min-h-0 flex-1
+overflow-y-auto`) capped at `max-h-[85vh]`, and the "Customizable
+bindings…" footer pinned at the bottom. Visual lift: `rounded-2xl`,
+`shadow-2xl`, a thin `ring-1 ring-border/60`, `max-w-lg`, and the
+backdrop bumped to `bg-black/60 backdrop-blur-sm`.
+
+### Independent zoom for the task-list pane
+The task-list (middle) pane should carry its own persisted zoom level
+that's **fully independent** of the sidebar and detail zooms, both for
+`Ctrl+=`/`Ctrl+-`/`Ctrl+0` (when the task pane is the focused zone) and
+as an explicit control in the settings popover. Per-zone zoom already
+exists in `MainView` (`adjustZoom('tasks', …)` + CSS `zoom` on
+`<main>`), but verify nothing's piggy-backing tasks zoom on another
+zone's factor, and surface the current `tasks` zoom as a labelled
++/-/reset row in `SettingsPopover` alongside the existing readouts.
 
 ## Known issues
 

@@ -114,14 +114,18 @@ export function KeybindingsModal({ onClose }: Props) {
       role="dialog"
       aria-modal="true"
       aria-label="Keyboard shortcuts"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
       onClick={onClose}
     >
+      {/* Flex column: a fixed header + footer with a scrolling body, so a
+          long shortcut list stays reachable as the catalogue grows.
+          Rounded-2xl + shadow-2xl + the ring lift the modal off the dim
+          backdrop without feeling busy. */}
       <div
-        className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl"
+        className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl ring-1 ring-border/60"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
           <h3 className="text-sm font-medium text-text">Keyboard shortcuts</h3>
           <button
             type="button"
@@ -132,7 +136,7 @@ export function KeybindingsModal({ onClose }: Props) {
             ×
           </button>
         </div>
-        <div className="space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
           {SHORTCUTS.map((section) => (
             <section key={section.group}>
               <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
@@ -163,7 +167,7 @@ export function KeybindingsModal({ onClose }: Props) {
             </section>
           ))}
         </div>
-        <p className="mt-5 text-[11px] text-text-faint">
+        <p className="shrink-0 border-t border-border px-6 py-3 text-[11px] text-text-faint">
           Customizable bindings coming in a later update.
         </p>
       </div>
