@@ -3,17 +3,21 @@ import { LoginScreen } from './components/LoginScreen'
 import { MainView } from './components/MainView'
 import { restoreSession } from './services/etebase'
 
-// The whole calendar module (CalendarView + calendar components +
-// recurrence/ics services) is dead weight for a tasks-only session, so it
-// loads on demand the first time the user switches to it.
+// The calendar and contacts modules are dead weight for a tasks-only
+// session, so each loads on demand the first time the user switches to it.
 const CalendarView = lazy(() =>
   import('./components/CalendarView').then((m) => ({
     default: m.CalendarView,
   })),
 )
+const ContactsView = lazy(() =>
+  import('./components/ContactsView').then((m) => ({
+    default: m.ContactsView,
+  })),
+)
 
 type AuthState = 'checking' | 'unauthenticated' | 'authenticated'
-type Module = 'tasks' | 'calendar'
+type Module = 'tasks' | 'calendar' | 'contacts'
 
 // Slim module switcher (calendar-contacts-plan.md path A, step 2). Rendered
 // as a fixed pill so MainView's full-screen layout is left untouched.
@@ -26,7 +30,7 @@ function ModuleSwitch({
 }) {
   return (
     <div className="fixed bottom-3 left-3 z-50 flex gap-0.5 rounded-lg border border-border bg-surface p-0.5 text-xs shadow-lg">
-      {(['tasks', 'calendar'] as const).map((m) => (
+      {(['tasks', 'calendar', 'contacts'] as const).map((m) => (
         <button
           key={m}
           onClick={() => onChange(m)}
@@ -67,9 +71,10 @@ function App() {
 
   return (
     <>
-      {module === 'tasks' ? (
+      {module === 'tasks' && (
         <MainView onLoggedOut={() => setAuth('unauthenticated')} />
-      ) : (
+      )}
+      {module === 'calendar' && (
         <Suspense
           fallback={
             <div className="flex h-screen items-center justify-center bg-bg">
@@ -78,6 +83,17 @@ function App() {
           }
         >
           <CalendarView />
+        </Suspense>
+      )}
+      {module === 'contacts' && (
+        <Suspense
+          fallback={
+            <div className="flex h-screen items-center justify-center bg-bg">
+              <p className="text-sm text-text-faint">Loading contacts…</p>
+            </div>
+          }
+        >
+          <ContactsView />
         </Suspense>
       )}
       <ModuleSwitch module={module} onChange={setModule} />

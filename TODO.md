@@ -357,8 +357,11 @@ surface it read-only in the detail panel when the task is completed.
       tree-UX backlog memory for the design sketch.
 - [ ] Fill in [`docs/task-item-options.md`](docs/task-item-options.md) — which
       remaining VTODO fields (recurrence, alarms, …) are worth adding.
-- [ ] Unified EteSync client (calendar + contacts) —
+- [x] Unified EteSync client (calendar + contacts) —
       [`docs/calendar-contacts-plan.md`](docs/calendar-contacts-plan.md).
+      Calendar shipped earlier; contacts module added 2026-05-22 (see the
+      "Contacts module" entry below). All three EteSync data types are now
+      handled in one app — the original "one window" goal.
 - [x] Tree-UX: coordinated subtree fade. Completing tasks under Hide-done
       no longer blinks each row out on its own 5s timer. A completed task
       lingers solid for the grace window, then fades over `FADE_MS`; a
@@ -388,3 +391,182 @@ surface it read-only in the detail panel when the task is completed.
       kept mutually exclusive: `markRecentlyCompleted` skips a fade for a
       task pinned by a revealed ancestor, and a branch cascading out drops
       its reveal so it can actually leave.
+- [x] Contacts module (vCard) shipped 2026-05-22 — `ContactsView` + a
+      hand-rolled `services/vcard.ts` parser/serializer (no new deps;
+      handles vCard 3.0 + 4.0, preserves unmodelled properties like PHOTO
+      and X-* verbatim across an edit). Mirrors the calendar module's
+      architecture: `etebase.ts` gains `listAddressBooks` /
+      `listContactItems` / `createContact` / `updateContact` /
+      `deleteContact` + `createAddressBook`; `contactsnapshot.ts` for
+      cold-start disk cache; `contactstore.ts` for warm-remount in-memory
+      cache. UI: address-book sidebar (create / rename / delete via
+      right-click context menu), searchable contact list, view card with
+      avatar (photo fallback → coloured initials), full editor for FN /
+      N / ORG / TITLE / emails / phones / URLs / addresses / BDAY / NOTE /
+      categories. Keyboard: `n` new, `/` search, ↑/↓ navigate, Del
+      delete, Esc cancel. `App.tsx` lazy-loads the module behind the
+      bottom-left switcher alongside Tasks and Calendar.
+
+## Polish & fixes (queued 2026-05-22)
+
+### Detail-panel breadcrumb wording
+The trailing "› this task" in the detail panel's ancestor breadcrumb
+reads weirdly — the user is already in the detail, so labelling the
+current item "this task" is redundant. Decide between dropping the
+trailing chip entirely (just show ancestors), bolding the parent's name,
+or replacing "this task" with the actual task title.
+
+### Ellipsis should scale with width
+Long task titles truncate with `…`, which is fine — but the truncation
+cutoff is the same regardless of pane width. Make the `text-truncate`
+cap responsive to the available width so a wider task pane shows more
+characters before clipping.
+
+### "Editing" indicator placement + dismissibility
+The fixed "✎ Editing — Esc/Enter to exit" pill (`EditModeIndicator`)
+currently sits at the bottom of the screen, where it overlaps / sits
+above the detail panel's Cancel / Save footer. Two changes:
+- Move it to a less-conflicting position — the user suggests **centred
+  horizontally** so it's out of the way of action bars.
+- Give it an `×` close button so the user can dismiss it for the
+  remainder of the session if it's in the way.
+
+### More guidance hints
+Add discoverable hints (tooltips / inline tips / a first-run callout)
+to surface the keyboard-first features that aren't obvious from looking
+at the UI — e.g. `/` to search, `n` to create, `g t` / `g c` / `g k`
+for module switching, `Ctrl+Enter` for the detail panel, etc.
+
+### Hint opt-out
+Hints from the above must be possible to disable globally. A toggle in
+the settings popover ("Show usage hints") that flips a persisted
+boolean, plus a per-hint dismiss (the `×`) that remembers itself.
+
+## Contacts polish (queued 2026-05-22)
+
+Targeted feedback against the freshly-shipped contacts module.
+
+### Discoverable address-book rename
+Rename exists today but is right-click-only — the user didn't realise it
+was there. Surface it with a visible affordance: e.g. an inline F2 alias
+on the focused row, a hover-only pencil icon, or a small per-book
+settings popover (mirroring the tasks sidebar's gear). Keep the
+right-click path as the secondary route.
+
+### Visible sync status
+Currently a tiny `↻` spinner appears on a syncing row and that's it.
+Show more: per-book "last synced X ago", a global "all synced" / "1
+syncing…" / "1 failed" line, and a clearer affordance after a sync
+error (the toast hides quickly). Mirror the tasks sidebar's
+sync-all + per-list cadence indicator pattern.
+
+### Adaptive (relative) sync for address books
+Contacts currently syncs the active book on open + on the manual
+refresh button. Match the tasks module's adaptive cadence: the active
+book on a fast interval, other books on a slow one, opening a book
+triggers a delta sync only if its snapshot is older than a freshness
+window. Configurable from a contacts settings popover.
+
+### Enter on a contact opens the detail
+Today ↑/↓ moves the selection and the detail card on the right updates
+live, but Enter does nothing on a row. Two reasonable interpretations:
+either (a) Enter starts edit mode for the selected contact (matches
+"open" as in "open for editing"), or (b) Enter moves keyboard focus
+into the detail pane so its Edit / Delete buttons become reachable.
+Pick one — probably (a), matching how the tasks list cycles status on
+Enter and Ctrl+Enter opens detail.
+
+### Richer hover preview in the contact list
+The list pane shows avatar + name + a one-line subtitle, leaving lots
+of empty horizontal space. On hover (or for the focused row), show
+more — e.g. all emails, all phones, an org line — either inline (the
+row expands a little) or as a side preview. The pane is wider than the
+content needs; use it.
+
+### Resizable / zoomable contact panes
+The contacts view has fixed widths for the address-book sidebar (w-52)
+and the contact list (w-80). Port the tasks/calendar pattern: drag-to-
+resize handles between panes, plus per-zone `Ctrl/Cmd +/-/0` zoom with
+localStorage persistence.
+
+### Zone meta-navigation + cross-zone fade
+Ctrl+←/→ (or even bare ←/→ from the address-book list) should walk
+between the three zones (address-books ↔ contacts ↔ detail), and the
+out-of-focus zones should fade like they do in the tasks module. Today
+the contacts view has no `focusZone` concept and all three panes stay
+fully opaque regardless.
+
+## Polish & fixes (queued 2026-05-23)
+
+### Make all keyboard shortcuts Ctrl-prefixed
+Bare-letter shortcuts (`n` new, `f` filter, `s` sort, `m` move, `t` jump
+to tasks, etc.) collide with the sidebar/task-list typeahead — typing a
+letter is ambiguous between "shortcut" and "jump to the item whose name
+starts with that letter." Standardise: every command shortcut becomes
+`Ctrl/Cmd+<letter>`, freeing bare letters entirely for typeahead. The
+existing typeahead in `MainView` (`taskTypeaheadRef`, `listTypeaheadRef`)
+already works — just stop competing with it. Update `KeybindingsModal`
+to reflect the new bindings.
+
+### Move shortcut: `Ctrl+M` moves, `Ctrl+Shift+M` moves + follows
+Today `m` opens the move-task picker; after picking a destination the
+task is moved. Split that into two:
+- **`Ctrl+M`** — move the task (and its subtree) to the picked list,
+  but **stay in the current list** (no follow). The common case is "get
+  this off my plate," not "go look at it where it landed."
+- **`Ctrl+Shift+M`** — move **and** switch the active list to the
+  destination so the user can keep working on the moved task there.
+
+Implementation note: the existing `performMove` already returns the
+created destination items; the follow-vs-stay distinction is just
+whether `setActiveUid(destUid)` runs after the move resolves. Surface
+both in `KeybindingsModal`.
+
+### Help modal: scrollable, more visible, smoother
+The `KeybindingsModal` is cramped (overflows without scrolling), blends
+into the background, and has sharp corners. Three tweaks:
+- Make the body **scrollable** (`overflow-y-auto` + a `max-h`), so long
+  shortcut lists stay reachable as the catalogue grows.
+- Bump visual prominence: a slightly translucent dark backdrop
+  (`bg-black/60` or similar), a higher-contrast surface inside, maybe
+  a small drop-shadow elevation.
+- **Rounded corners** (`rounded-2xl` or `rounded-xl`) on the modal box
+  to match the softer aesthetic the rest of the app is moving toward.
+
+## Known issues
+
+Things that have been observed misbehaving but haven't been root-caused
+yet. These get tracked here (not in the polish queue) so they're visible
+without committing to a specific fix.
+
+### Tasks pane stuck at "Loading tasks…" until manual refresh
+Observed 2026-05-23, intermittent. After certain sessions (likely
+following an HMR reload while developing other modules, e.g. contacts),
+the tasks pane sits on "Loading tasks…" indefinitely and only loads
+after the user clicks a per-list / sync-all refresh button — and when
+it does load, it reads from etebase rather than the local snapshot, so
+the local cache benefit is lost for that session.
+
+**Where the gate lives.** The trigger in
+[`MainView.tsx`](src/components/MainView.tsx) (`fetchCollection` trigger
+effect, gated on `!hydrated || !activeUid`) only fires after the
+disk-hydration effect's `finally` block runs `setHydrated(true)`. If
+that `setHydrated(true)` doesn't land for the current mount, the
+trigger never fires and only a manual sync recovers (it calls
+`fetchCollection` directly, bypassing the gate).
+
+**Likely cause (unconfirmed).** Vite/Tauri HMR + React strict-mode
+interaction with the hydration IIFE's `cancelled` flag, where the
+`if (!cancelled) setHydrated(true)` guard skips on a mount that's
+been logically replaced. Possibly something else upstream — the
+contacts module changes that preceded the observation don't touch this
+path (lazy-loaded, separate snapshot prefix, no taskstore mutation), so
+the contacts work didn't introduce it but may have exposed it via
+extra HMR churn.
+
+**Defensive fix sketch.** Add a 2-second safety timeout in the
+hydration effect that force-sets `hydrated = true` if the disk pass
+hasn't finished by then. Happy path unchanged (the `finally` clears
+the timeout); only fires when hydration genuinely stalls. Worst case:
+the cold-cache optimisation is skipped and the app falls through to a
+normal network sync.

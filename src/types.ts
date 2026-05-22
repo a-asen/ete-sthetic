@@ -127,6 +127,68 @@ export interface EventItem {
   occId?: string
 }
 
+// ---- Contacts (vCard) ----
+
+// A typed, single-valued vCard property (EMAIL / TEL / URL). `type` is the
+// lower-cased TYPE token chosen for display (home / work / cell / …), '' if
+// none.
+export interface VCardField {
+  value: string
+  type: string
+}
+
+// Structured N property — the five RFC 6350 components.
+export interface VCardName {
+  family: string
+  given: string
+  additional: string
+  prefixes: string
+  suffixes: string
+}
+
+// Structured ADR property — the seven RFC 6350 components plus the chosen
+// TYPE token. pobox / ext are modelled (so they round-trip) but the editor
+// only surfaces street…country.
+export interface VCardAddress {
+  type: string
+  pobox: string
+  ext: string
+  street: string
+  locality: string
+  region: string
+  postal: string
+  country: string
+}
+
+export interface VCard {
+  // vCard UID property (distinct from the Etebase item uid). Synthesised
+  // if the source card omits it.
+  uid: string
+  // Formatted display name (FN). Always present — derived from N / an
+  // email when the card has no FN.
+  fn: string
+  name: VCardName
+  org: string
+  title: string
+  emails: VCardField[]
+  phones: VCardField[]
+  urls: VCardField[]
+  addresses: VCardAddress[]
+  // Raw BDAY value (e.g. "1990-05-15" or "19900515"), '' if none.
+  birthday: string
+  note: string
+  categories: string[]
+  // Display-only: a `data:` URI or http(s) URL usable as an <img> src.
+  // Preserved verbatim on save (never re-encoded).
+  photo?: string
+  raw: string
+}
+
+export interface ContactItem {
+  itemUid: string
+  card: VCard
+}
+
 export type TaskSort = 'priority' | 'due' | 'created' | 'summary'
 
 export interface TaskSortSpec {

@@ -1,5 +1,12 @@
 import * as Etebase from 'etebase'
-import type { ColType, CollectionInfo, EventItem, TaskItem } from '../types'
+import type {
+  ColType,
+  CollectionInfo,
+  ContactItem,
+  EventItem,
+  TaskItem,
+  VCard,
+} from '../types'
 import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
 import {
   buildVEvent,
@@ -8,16 +15,20 @@ import {
   type NewVEventArgs,
   type VEventPatch,
 } from './vevent'
+import { parseVCard, serializeVCard } from './vcard'
 import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
 import { clearAllCalSnapshots } from './calsnapshot'
+import { clearAllContactSnapshots } from './contactsnapshot'
 import { resetCalMemory } from './calstore'
+import { resetContactMemory } from './contactstore'
 import { resetTaskMemory } from './taskstore'
 import { stopAlarmScheduler } from './alarms'
 
 export const DEFAULT_SERVER = 'https://api.etebase.com'
 const TASK_COLLECTION_TYPE: ColType = 'etebase.vtodo'
 const CALENDAR_COLLECTION_TYPE: ColType = 'etebase.vevent'
+const CONTACT_COLLECTION_TYPE: ColType = 'etebase.vcard'
 
 let account: Etebase.Account | null = null
 
@@ -100,10 +111,12 @@ export async function logout(): Promise<void> {
   clearHandles()
   stopAlarmScheduler()
   resetCalMemory()
+  resetContactMemory()
   resetTaskMemory()
   await clearSession()
   await clearAllSnapshots()
   await clearAllCalSnapshots()
+  await clearAllContactSnapshots()
 }
 
 export function isAuthenticated(): boolean {
@@ -507,11 +520,12 @@ function collectionInfo(c: Etebase.Collection): CollectionInfo {
 export async function createCollection(
   name: string,
   opts: { description?: string; color?: string } = {},
+  type: ColType = TASK_COLLECTION_TYPE,
 ): Promise<CollectionInfo> {
   const acc = await ensureAccount()
   const cm = acc.getCollectionManager()
   const collection = await cm.create(
-    TASK_COLLECTION_TYPE,
+    type,
     {
       name,
       description: opts.description,
@@ -810,4 +824,136 @@ export async function moveEventToCollection(
   const event = parseVEvent(content)
   if (!event) throw new Error('Moved VEVENT failed to parse')
   return { itemUid: created.uid, event }
+}
+
+// ---- Contacts (vCard) ----
+// Reuses the same type-agnostic collection/item plumbing as tasks and
+// calendar; only the parser (parseVCard) and serializer differ.
+
+export interface ContactSyncResult {
+  items: ContactItem[]
+  removed: string[]
+  stoken: string
+}
+
+export interface ListContactItemsOptions {
+  signal?: AbortSignal
+  onBatch?: (batch: ContactItem[]) => void
+  fromStoken?: string
+}
+
+// Address books are just collections of the vCard type.
+export function listAddressBooks(
+  options: ListCollectionsOptions = {},
+): Promise<CollectionInfo[]> {
+  return listCollections(options, CONTACT_COLLECTION_TYPE)
+}
+
+export function createAddressBook(
+  name: string,
+  opts: { description?: string; color?: string } = {},
+): Promise<CollectionInfo> {
+  return createCollection(name, opts, CONTACT_COLLECTION_TYPE)
+}
+
+// Mirror of listTaskItems / listEventItems for vCard. Same incremental
+// sync / batching / abort shape.
+export async function listContactItems(
+  collectionUid: string,
+  options: ListContactItemsOptions = {},
+): Promise<ContactSyncResult> {
+  const { signal, onBatch, fromStoken } = options
+  checkAborted(signal)
+
+  const im = await getItemManager(collectionUid)
+  const accumulated: ContactItem[] = []
+  const removed: string[] = []
+  let pendingBatch: ContactItem[] = []
+
+  const flush = () => {
+    if (pendingBatch.length === 0) return
+    const batch = pendingBatch
+    pendingBatch = []
+    accumulated.push(...batch)
+    onBatch?.(batch)
+  }
+
+  let stoken: string | undefined = fromStoken
+  while (true) {
+    checkAborted(signal)
+    const page = await im.list({ stoken })
+    checkAborted(signal)
+
+    for (const item of page.data) {
+      checkAborted(signal)
+      if (item.isDeleted) {
+        removed.push(item.uid)
+        itemHandles.delete(itemKey(collectionUid, item.uid))
+        continue
+      }
+      const raw = await item.getContent(Etebase.OutputFormat.String)
+      const card = parseVCard(raw)
+      if (!card) continue
+      itemHandles.set(itemKey(collectionUid, item.uid), item)
+      pendingBatch.push({ itemUid: item.uid, card })
+      if (pendingBatch.length >= BATCH_SIZE) {
+        flush()
+        await yieldToEventLoop()
+        checkAborted(signal)
+      }
+    }
+    stoken = page.stoken
+    if (page.done) break
+  }
+
+  flush()
+  return { items: accumulated, removed, stoken: stoken ?? '' }
+}
+
+export async function createContact(
+  collectionUid: string,
+  card: VCard,
+): Promise<ContactItem> {
+  const im = await getItemManager(collectionUid)
+  const raw = serializeVCard(card)
+  const item = await im.create({ name: card.fn, mtime: Date.now() }, raw)
+  await im.transaction([item])
+  itemHandles.set(itemKey(collectionUid, item.uid), item)
+  const parsed = parseVCard(raw)
+  if (!parsed) throw new Error('Built vCard failed to parse')
+  return { itemUid: item.uid, card: parsed }
+}
+
+// Update a contact from an edited model. The previous raw text is passed
+// to serializeVCard so unmodelled properties (PHOTO, X-*, …) round-trip.
+export function updateContact(
+  collectionUid: string,
+  itemUid: string,
+  card: VCard,
+): Promise<ContactItem> {
+  return chainItemMutation(collectionUid, itemUid, async () => {
+    const item = await getItem(collectionUid, itemUid)
+    const oldRaw = await item.getContent(Etebase.OutputFormat.String)
+    const newRaw = serializeVCard(card, oldRaw)
+    await item.setContent(newRaw)
+    setItemMeta(item, card.fn)
+
+    const im = await getItemManager(collectionUid)
+    await im.transaction([item])
+
+    const parsed = parseVCard(newRaw)
+    if (!parsed) throw new Error('Updated vCard failed to parse')
+    return { itemUid: item.uid, card: parsed }
+  })
+}
+
+export async function deleteContact(
+  collectionUid: string,
+  itemUid: string,
+): Promise<void> {
+  const item = await getItem(collectionUid, itemUid)
+  item.delete()
+  const im = await getItemManager(collectionUid)
+  await im.transaction([item])
+  itemHandles.delete(itemKey(collectionUid, itemUid))
 }
