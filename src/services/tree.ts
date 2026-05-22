@@ -142,6 +142,10 @@ export interface TreeFilter {
   // Uids to force-keep regardless of other filters (used for the
   // recently-completed grace period).
   keep?: ReadonlySet<string>
+  // Parent uids whose subtree has its completed tasks revealed inline
+  // despite hideCompleted — the per-branch "show completed" peek. Any
+  // node under one of these is kept even when completed.
+  revealedBranches?: ReadonlySet<string>
 }
 
 type SearchScope = 'title' | 'tag' | 'notes' | 'any'
@@ -232,22 +236,30 @@ function nodeSelfPasses(
 
 // Walk the tree applying the filter. A node is included when it self-passes,
 // has a surviving descendant, or is in `keep`. This preserves ancestors of
-// matching tasks so the hierarchy stays navigable.
+// matching tasks so the hierarchy stays navigable. `underRevealed` carries
+// down whether an ancestor is a revealed branch — if so, the node is kept
+// even when completed (the per-branch "show completed" peek).
 export function applyFilter(
   roots: TaskNode[],
   filter: TreeFilter,
 ): TaskNode[] {
   const terms = filter.search ? parseSearchQuery(filter.search) : []
-  const walk = (node: TaskNode): TaskNode | null => {
+  const revealed = filter.revealedBranches
+  const walk = (node: TaskNode, underRevealed: boolean): TaskNode | null => {
+    const revealsChildren =
+      underRevealed || (revealed?.has(node.todo.uid) ?? false)
     const filteredChildren = node.children
-      .map(walk)
+      .map((c) => walk(c, revealsChildren))
       .filter((c): c is TaskNode => c !== null)
-    const isKept = filter.keep?.has(node.todo.uid) ?? false
+    const isKept =
+      underRevealed || (filter.keep?.has(node.todo.uid) ?? false)
     const selfPasses = nodeSelfPasses(node.todo, filter, isKept, terms)
     if (!selfPasses && filteredChildren.length === 0 && !isKept) return null
     return { ...node, children: filteredChildren }
   }
-  return roots.map(walk).filter((c): c is TaskNode => c !== null)
+  return roots
+    .map((r) => walk(r, false))
+    .filter((c): c is TaskNode => c !== null)
 }
 
 // Backwards-compat thin wrapper around applyFilter.

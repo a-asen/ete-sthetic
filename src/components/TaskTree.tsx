@@ -73,9 +73,21 @@ interface Props {
   // collapsed (or a leaf with no parent). Lets the caller decide what
   // "leaving the tree to the left" means — typically focus the sidebar.
   onLeaveLeft?: () => void
-  // uid → expiry timestamp (ms). Rows in this map fade out and show a
-  // countdown until they're removed by the caller's grace timer.
+  // uid → removal timestamp (ms). Rows in this map are in the grace
+  // window: they stay visible (solid) and show a countdown until removal.
   fadingExpires?: ReadonlyMap<string, number>
+  // The subset of `fadingExpires` rows currently in their fade-out
+  // animation (the tail of the grace window). Staggered down a branch so
+  // a completed subtree clears bottom-up.
+  activelyFading?: ReadonlySet<string>
+  // Per-branch "show completed" peek. `branchDoneHidden` maps a uid to
+  // the count of its completed descendants hidden by Hide-done; a row
+  // with a positive count (or one already revealed) shows a control to
+  // reveal that branch's completed tasks inline. `revealedBranches` is
+  // the set currently revealed.
+  branchDoneHidden?: ReadonlyMap<string, number>
+  revealedBranches?: ReadonlySet<string>
+  onToggleBranchReveal?: (uid: string) => void
   // When true, +/- snap between the four RFC priority buckets instead
   // of stepping one level at a time. Mirrors the detail panel's
   // phone-friendly dropdown.
@@ -329,6 +341,10 @@ export function TaskTree({
   taskDndMime,
   onLeaveLeft,
   fadingExpires,
+  activelyFading,
+  branchDoneHidden,
+  revealedBranches,
+  onToggleBranchReveal,
   phonePriority = false,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -352,12 +368,13 @@ export function TaskTree({
     }
   }, [editingUid])
 
-  // Tick to refresh the countdown on fading rows. Idle when nothing's fading.
+  // Ticked clock for the grace-window countdown. Idle when nothing's
+  // counting down; holding it in state keeps render pure (no Date.now()).
   const fadingActive = !!fadingExpires && fadingExpires.size > 0
-  const [, setNowTick] = useState(0)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   useEffect(() => {
     if (!fadingActive) return
-    const id = setInterval(() => setNowTick((t) => t + 1), 250)
+    const id = setInterval(() => setNowMs(Date.now()), 250)
     return () => clearInterval(id)
   }, [fadingActive])
 
@@ -673,10 +690,17 @@ export function TaskTree({
         const pLabel = priorityLabel(node.todo.priority)
         const pTier = priorityTier(node.todo.priority)
         const expiresAt = fadingExpires?.get(node.todo.uid)
-        const isFading = expiresAt != null
-        const fadingRemainingS = isFading
-          ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+        // Kept = in the grace window (solid, counting down). Fading = in
+        // the tail-end fade-out animation just before removal.
+        const isKept = expiresAt != null
+        const isFading = activelyFading?.has(node.todo.uid) ?? false
+        const fadingRemainingS = isKept
+          ? Math.max(0, Math.ceil((expiresAt - nowMs) / 1000))
           : 0
+        const hiddenDone = branchDoneHidden?.get(node.todo.uid) ?? 0
+        const isRevealed = revealedBranches?.has(node.todo.uid) ?? false
+        const canRevealBranch =
+          !!onToggleBranchReveal && (hiddenDone > 0 || isRevealed)
 
         const row = (
           <li
@@ -714,8 +738,8 @@ export function TaskTree({
             }
             className={`group relative flex cursor-default items-center gap-2 px-3 py-1.5 text-sm outline-none ${
               isFading
-                ? 'opacity-10 transition-opacity duration-[5000ms] ease-linear'
-                : 'transition-opacity'
+                ? 'opacity-10 transition-opacity duration-[1400ms] ease-linear'
+                : 'transition-opacity duration-300'
             } ${
               isSelected
                 ? 'bg-accent-soft'
@@ -897,10 +921,58 @@ export function TaskTree({
               </button>
             )}
 
-            {isFading && fadingRemainingS > 0 && (
+            {canRevealBranch && (
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Revealing only helps if the branch is expanded — make
+                  // sure it is so the completed subtasks actually show.
+                  if (!isRevealed) {
+                    setExpanded((prev) => {
+                      if (prev.has(node.todo.uid)) return prev
+                      const next = new Set(prev)
+                      next.add(node.todo.uid)
+                      return next
+                    })
+                  }
+                  onToggleBranchReveal!(node.todo.uid)
+                }}
+                aria-pressed={isRevealed}
+                title={
+                  isRevealed
+                    ? 'Hide completed subtasks'
+                    : `Show ${hiddenDone} completed subtask${
+                        hiddenDone === 1 ? '' : 's'
+                      }`
+                }
+                className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
+                  isRevealed
+                    ? 'bg-accent-soft text-text'
+                    : 'text-text-faint hover:bg-surface-2 hover:text-text-muted'
+                }`}
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3 w-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M3 8l3.5 3.5L13 5" />
+                </svg>
+                {!isRevealed && hiddenDone}
+              </button>
+            )}
+
+            {isKept && fadingRemainingS > 0 && (
               <span
                 className="shrink-0 text-[10px] font-medium tabular-nums text-text-muted"
-                title="Hiding soon"
+                title="Hiding soon — toggle to keep"
               >
                 {fadingRemainingS}s
               </span>

@@ -272,7 +272,7 @@ list to move it to that collection.
 - Independent of the deferred *intra-list* manual-order DnD (this is a
   cross-list move and needs no ordering store).
 
-### 12. Calendar popover for due / start dates
+### 12. Calendar popover for due / start dates — ✅ done
 **Task.** When setting a due (or start) date in the detail panel, offer a
 month calendar grid the user can navigate with the arrow keys instead of the
 raw native date input. Bias selection toward near-future dates (the common
@@ -290,6 +290,18 @@ case for a task deadline).
 - Note: overlaps conceptually with the calendar (VEVENT) module being built
   in the `worktree-calendar` branch — check whether a shared month-grid
   primitive should come from there before duplicating.
+**Outcome.** New `src/components/CalendarPopover.tsx`: a 6×7 month grid
+with `←/→/↑/↓` (day/week), `PageUp/Dn` (month, `Shift` = year), `Home/End`
+(week edges), `t` (today), `Enter`/click to commit, `Esc` to close. The
+calendar (VEVENT) module's `MonthGrid` is too event-specific to reuse, but
+its `caldate.ts` date helpers (`monthGridDays`, `addDays`, `sameDay`, …)
+are shared. A calendar-icon toggle sits next to each Due/Start date input;
+the popover is `absolute`-anchored to the field row, `scrollIntoView`s on
+open (the Start field sits low in the scrolling panel), and commits the
+same `YYYY-MM-DD` string the native input would — so `buildPatch` /
+date-only-vs-date-time semantics are untouched. Cursor lands on the
+current value or today. `role="dialog"` makes MainView's & DetailPanel's
+global key handlers stand down while it's open.
 
 ### 13. Optimistic list create/delete with a "syncing" badge — ✅ done
 **Task.** Creating a list should show it in the sidebar immediately with a
@@ -347,5 +359,32 @@ surface it read-only in the detail panel when the task is completed.
       remaining VTODO fields (recurrence, alarms, …) are worth adding.
 - [ ] Unified EteSync client (calendar + contacts) —
       [`docs/calendar-contacts-plan.md`](docs/calendar-contacts-plan.md).
-- [ ] Tree-UX backlog: cascading completed-fade, per-branch reveal of
-      completed subtasks.
+- [x] Tree-UX: coordinated subtree fade. Completing tasks under Hide-done
+      no longer blinks each row out on its own 5s timer. A completed task
+      lingers solid for the grace window, then fades over `FADE_MS`; a
+      completed parent's fade is staggered `CASCADE_STEP_MS` after its
+      completed children's, so a finished branch clears bottom-up.
+      `recentlyCompleted` (kept rows) + `fadingUids` (rows mid-fade, armed
+      by precise per-uid timers) in `MainView.tsx`; `TaskTree` takes
+      `activelyFading` for the fade visual. `markRecentlyCompleted` builds
+      the tree via `buildTree` (PARENT+CHILD reltypes, cycle-safe) and is
+      subtree-status-aware: a completed task with an open descendant isn't
+      scheduled to fade (it stays via the surviving-descendant rule) and
+      is pulled into the cascade only once that last descendant completes
+      — so a completed parent no longer fades-and-pops or blinks out
+      ungracefully. `clearRecentlyCompleted` un-cascades: un-completing a
+      task also cancels every ancestor that was fading on the assumption
+      the branch was done.
+- [x] Tree-UX: per-branch reveal of completed subtasks. Under Hide-done, a
+      parent with hidden completed descendants shows a check-count control
+      on its row; clicking it expands the parent and reveals that branch's
+      completed tasks inline (to inspect/uncheck them) without un-hiding
+      completed tasks anywhere else. Structural, not a sticky keep-set:
+      `applyFilter` takes `revealedBranches` and carries an `underRevealed`
+      flag down the walk so completed nodes under a revealed parent pass
+      the filter. `revealedBranches` state in `MainView` (transient — reset
+      on list switch / Hide-done off); `branchDoneHidden` counts each
+      row's hidden-completed descendants. Reveal and the fade cascade are
+      kept mutually exclusive: `markRecentlyCompleted` skips a fade for a
+      task pinned by a revealed ancestor, and a branch cascading out drops
+      its reveal so it can actually leave.

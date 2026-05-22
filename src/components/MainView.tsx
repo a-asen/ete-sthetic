@@ -256,7 +256,16 @@ const SIDEBAR_MAX_WIDTH = 480
 // is clearly over.
 const SIDEBAR_FULL_THRESHOLD = 120
 const PREFETCH_CONCURRENCY = 4
+// A completed task lingers solid for HIDE_GRACE_MS (the "oops, un-click"
+// window), then fades out over FADE_MS. CASCADE_STEP_MS staggers the fade
+// down a branch: each completed parent starts fading a beat after its
+// completed children, so a finished subtree clears bottom-up.
 const HIDE_GRACE_MS = 5000
+const FADE_MS = 1400
+const CASCADE_STEP_MS = 700
+const EMPTY_FADING: ReadonlySet<string> = new Set()
+const EMPTY_REVEALED: ReadonlySet<string> = new Set()
+const EMPTY_DONE_COUNTS: ReadonlyMap<string, number> = new Map()
 
 // Drag-and-drop: a task row carries its VTODO uid under this mime so a
 // sidebar list row can accept the drop and move the subtree.
@@ -749,14 +758,36 @@ export function MainView({ onLoggedOut }: Props) {
     },
     [detailFocusedWidth],
   )
-  // When Hide-done is on, completed tasks linger for HIDE_GRACE_MS before
+  // When Hide-done is on, completed tasks linger for a grace window before
   // disappearing so a misclicked checkbox can be untoggled. Map value is the
-  // expiry timestamp (Date.now() + HIDE_GRACE_MS) so the row can show a
-  // countdown.
+  // expiry timestamp (removal time) so the row can show a countdown.
   const [recentlyCompleted, setRecentlyCompleted] = useState<
     Map<string, number>
   >(() => new Map())
-  const completionTimers = useRef<Map<string, number>>(new Map())
+  // The subset of `recentlyCompleted` currently in its fade-out animation
+  // (the last FADE_MS before removal). Driven by precise per-uid timers so
+  // the cascade staggers cleanly rather than at the countdown's tick rate.
+  const [fadingUids, setFadingUids] = useState<Set<string>>(() => new Set())
+  // Per uid: the fade-start timer and the removal timer.
+  const completionTimers = useRef<
+    Map<string, { fade: number; remove: number }>
+  >(new Map())
+  // Synchronous mirror of `recentlyCompleted` so markRecentlyCompleted can
+  // read the live schedule (incl. back-to-back completions) without taking
+  // the state as a dependency.
+  const recentlyCompletedRef = useRef(recentlyCompleted)
+  // Latest active-list items, for resolving the parent/child links the
+  // cascade walks. A ref so the completion handlers stay stable.
+  const activeItemsRef = useRef<TaskItem[] | undefined>(undefined)
+  // Per-branch "show completed" peeks (parent uids). Lets the user
+  // inspect a branch's completed subtasks under Hide-done without
+  // un-hiding completed tasks globally. Transient — reset on list switch.
+  const [revealedBranches, setRevealedBranches] = useState<Set<string>>(
+    () => new Set(),
+  )
+  // Synchronous mirror so the completion handlers can tell whether a
+  // freshly-completed task is pinned visible by a reveal.
+  const revealedBranchesRef = useRef(revealedBranches)
 
   const inFlightRef = useRef<Set<string>>(new Set())
   const cancelledRef = useRef(false)
@@ -768,11 +799,22 @@ export function MainView({ onLoggedOut }: Props) {
     }
   }, [])
 
+  useEffect(() => {
+    recentlyCompletedRef.current = recentlyCompleted
+  }, [recentlyCompleted])
+
+  useEffect(() => {
+    revealedBranchesRef.current = revealedBranches
+  }, [revealedBranches])
+
   // Cleanup any pending completion timers on unmount.
   useEffect(() => {
     const timers = completionTimers.current
     return () => {
-      for (const id of timers.values()) clearTimeout(id)
+      for (const { fade, remove } of timers.values()) {
+        clearTimeout(fade)
+        clearTimeout(remove)
+      }
       timers.clear()
     }
   }, [])
@@ -880,38 +922,211 @@ export function MainView({ onLoggedOut }: Props) {
     el?.scrollIntoView({ block: 'nearest' })
   }, [activeUid])
 
-  const markRecentlyCompleted = useCallback((uid: string) => {
-    const expiresAt = Date.now() + HIDE_GRACE_MS
-    setRecentlyCompleted((prev) => {
-      const next = new Map(prev)
-      next.set(uid, expiresAt)
-      return next
-    })
-    const existing = completionTimers.current.get(uid)
-    if (existing) clearTimeout(existing)
-    const id = window.setTimeout(() => {
-      setRecentlyCompleted((prev) => {
+  // (Re)arm a uid's two timers: it enters the fade animation after
+  // `fadeDelayMs`, and is removed (with its fade flag) after
+  // `removeDelayMs`. Clears any prior timers and un-sets the fade flag so
+  // a re-armed row restarts solid until its (possibly later) fade turn.
+  const armCompletionTimers = useCallback(
+    (uid: string, fadeDelayMs: number, removeDelayMs: number) => {
+      const timers = completionTimers.current
+      const existing = timers.get(uid)
+      if (existing) {
+        clearTimeout(existing.fade)
+        clearTimeout(existing.remove)
+      }
+      setFadingUids((prev) => {
         if (!prev.has(uid)) return prev
-        const next = new Map(prev)
+        const next = new Set(prev)
         next.delete(uid)
         return next
       })
-      completionTimers.current.delete(uid)
-    }, HIDE_GRACE_MS)
-    completionTimers.current.set(uid, id)
-  }, [])
+      const fade = window.setTimeout(() => {
+        setFadingUids((prev) => {
+          if (prev.has(uid)) return prev
+          const next = new Set(prev)
+          next.add(uid)
+          return next
+        })
+      }, Math.max(0, fadeDelayMs))
+      const remove = window.setTimeout(() => {
+        setRecentlyCompleted((prev) => {
+          if (!prev.has(uid)) return prev
+          const next = new Map(prev)
+          next.delete(uid)
+          recentlyCompletedRef.current = next
+          return next
+        })
+        setFadingUids((prev) => {
+          if (!prev.has(uid)) return prev
+          const next = new Set(prev)
+          next.delete(uid)
+          return next
+        })
+        completionTimers.current.delete(uid)
+      }, Math.max(0, removeDelayMs))
+      timers.set(uid, { fade, remove })
+    },
+    [],
+  )
+
+  // Mark `uid` newly completed and (re)schedule the cascade. A node fades
+  // after its own HIDE_GRACE_MS, but never sooner than a CASCADE_STEP past
+  // its latest still-fading child; each completed ancestor of the
+  // now-finished subtree trails the level below it, so a completed subtree
+  // clears bottom-up. A completed task that still has an open descendant
+  // isn't leaving — it's skipped (it stays via applyFilter's
+  // surviving-descendant rule), and gets pulled into the cascade only once
+  // that last descendant is itself completed.
+  const markRecentlyCompleted = useCallback(
+    (uid: string) => {
+      // buildTree resolves PARENT and CHILD reltypes and breaks cycles, so
+      // the cascade walks the same hierarchy the tree view renders.
+      const roots = buildTree(activeItemsRef.current ?? [])
+      const nodeOf = new Map<string, TaskNode>()
+      const parentOf = new Map<string, string>()
+      const walk = (n: TaskNode, parent?: string) => {
+        nodeOf.set(n.todo.uid, n)
+        if (parent) parentOf.set(n.todo.uid, parent)
+        for (const c of n.children) walk(c, n.todo.uid)
+      }
+      for (const r of roots) walk(r)
+
+      // The items snapshot may still show `uid`'s pre-completion status,
+      // and a graced sibling/ancestor is already on its way out — both
+      // count as done for the "is this subtree finished?" test.
+      const graced = recentlyCompletedRef.current
+      const isDone = (id: string): boolean =>
+        id === uid ||
+        graced.has(id) ||
+        nodeOf.get(id)?.todo.status === 'COMPLETED'
+      const allDoneCache = new Map<string, boolean>()
+      const allDone = (n: TaskNode): boolean => {
+        const cached = allDoneCache.get(n.todo.uid)
+        if (cached != null) return cached
+        let ok = isDone(n.todo.uid)
+        for (const c of n.children) if (!allDone(c)) ok = false
+        allDoneCache.set(n.todo.uid, ok)
+        return ok
+      }
+
+      const node = nodeOf.get(uid)
+      // Still has an open descendant → not leaving the list, so no fade.
+      if (node && !allDone(node)) return
+      // Inside a revealed branch → pinned visible by the peek; no fade
+      // until the user collapses the reveal.
+      for (let a = parentOf.get(uid); a; a = parentOf.get(a)) {
+        if (revealedBranchesRef.current.has(a)) return
+      }
+
+      const now = Date.now()
+      const next = new Map(graced)
+      const rescheduled: Array<{ uid: string; fadeStartsAt: number }> = []
+      const fadeStartOf = (id: string): number | undefined => {
+        const exp = next.get(id)
+        return exp == null ? undefined : exp - FADE_MS
+      }
+      const place = (id: string, fadeStartsAt: number) => {
+        next.set(id, fadeStartsAt + FADE_MS)
+        rescheduled.push({ uid: id, fadeStartsAt })
+      }
+
+      // The just-completed node trails its latest still-fading child.
+      let latestChild = -Infinity
+      for (const c of node?.children ?? []) {
+        const fs = fadeStartOf(c.todo.uid)
+        if (fs != null) latestChild = Math.max(latestChild, fs)
+      }
+      let cursorStart = Math.max(
+        now + HIDE_GRACE_MS,
+        latestChild + CASCADE_STEP_MS,
+      )
+      place(uid, cursorStart)
+
+      // Pull each completed ancestor whose whole subtree is now finished
+      // into the cascade, trailing the level below it. Stop at the first
+      // ancestor that's still open or still has an unfinished branch.
+      let cursor = uid
+      const seen = new Set<string>([uid])
+      for (;;) {
+        const par = parentOf.get(cursor)
+        if (!par || seen.has(par)) break
+        seen.add(par)
+        const parNode = nodeOf.get(par)
+        if (!parNode || !isDone(par) || !allDone(parNode)) break
+        const required = cursorStart + CASCADE_STEP_MS
+        const parFadeStart = fadeStartOf(par)
+        if (parFadeStart != null && parFadeStart >= required) break
+        place(par, required)
+        cursorStart = required
+        cursor = par
+      }
+
+      recentlyCompletedRef.current = next
+      setRecentlyCompleted(next)
+      for (const { uid: id, fadeStartsAt } of rescheduled) {
+        armCompletionTimers(
+          id,
+          fadeStartsAt - now,
+          fadeStartsAt + FADE_MS - now,
+        )
+      }
+      // A branch that's now cascading out has been "consumed" — drop its
+      // reveal so it can actually leave (a revealed branch is pinned).
+      setRevealedBranches((prev) => {
+        let changed = false
+        const nextR = new Set(prev)
+        for (const { uid: id } of rescheduled) {
+          if (nextR.delete(id)) changed = true
+        }
+        return changed ? nextR : prev
+      })
+    },
+    [armCompletionTimers],
+  )
 
   const clearRecentlyCompleted = useCallback((uid: string) => {
-    const existing = completionTimers.current.get(uid)
-    if (existing) {
-      clearTimeout(existing)
-      completionTimers.current.delete(uid)
+    // Un-completing a task un-finishes its subtree: cancel its own fade
+    // plus every ancestor that was cascading out on the assumption the
+    // branch was done, so none of them fade-and-pop back into view.
+    const roots = buildTree(activeItemsRef.current ?? [])
+    const parentOf = new Map<string, string>()
+    const walk = (n: TaskNode, parent?: string) => {
+      if (parent) parentOf.set(n.todo.uid, parent)
+      for (const c of n.children) walk(c, n.todo.uid)
+    }
+    for (const r of roots) walk(r)
+
+    const sched = recentlyCompletedRef.current
+    const victims = new Set<string>([uid])
+    let cur = uid
+    for (;;) {
+      const par = parentOf.get(cur)
+      if (!par || victims.has(par) || !sched.has(par)) break
+      victims.add(par)
+      cur = par
+    }
+
+    for (const v of victims) {
+      const existing = completionTimers.current.get(v)
+      if (existing) {
+        clearTimeout(existing.fade)
+        clearTimeout(existing.remove)
+        completionTimers.current.delete(v)
+      }
     }
     setRecentlyCompleted((prev) => {
-      if (!prev.has(uid)) return prev
+      let changed = false
       const next = new Map(prev)
-      next.delete(uid)
+      for (const v of victims) if (next.delete(v)) changed = true
+      if (!changed) return prev
+      recentlyCompletedRef.current = next
       return next
+    })
+    setFadingUids((prev) => {
+      let changed = false
+      const next = new Set(prev)
+      for (const v of victims) if (next.delete(v)) changed = true
+      return changed ? next : prev
     })
   }, [])
 
@@ -1255,6 +1470,17 @@ export function MainView({ onLoggedOut }: Props) {
   const activeError = activeUid ? errorByUid.get(activeUid) : undefined
   const activeLoading = activeUid ? loadingUids.has(activeUid) : false
 
+  // Keep the cascade's link source pointed at the live active list.
+  useEffect(() => {
+    activeItemsRef.current = activeItems
+  }, [activeItems])
+
+  // Per-branch reveals are a transient peek — drop them on a list switch
+  // or when Hide-done is turned off (nothing to reveal then).
+  useEffect(() => {
+    setRevealedBranches((prev) => (prev.size === 0 ? prev : new Set()))
+  }, [activeUid, filter.hideCompleted])
+
   // Effective sort for the active list. State wins; if a uid hasn't
   // been touched in this session, fall back to localStorage; if even
   // that's empty, use the global default.
@@ -1318,9 +1544,53 @@ export function MainView({ onLoggedOut }: Props) {
         search: filter.search.trim().toLowerCase() || undefined,
         tags: filter.tags,
         keep: recentlyCompletedKeys,
+        revealedBranches: filter.hideCompleted ? revealedBranches : undefined,
       }),
-    [fullTree, filter, recentlyCompletedKeys],
+    [fullTree, filter, recentlyCompletedKeys, revealedBranches],
   )
+
+  // uid → count of completed descendants currently hidden by Hide-done.
+  // Drives the per-row "show completed subtasks" control; empty (so no
+  // controls) when Hide-done is off.
+  const branchDoneHidden = useMemo(() => {
+    if (!filter.hideCompleted) return EMPTY_DONE_COUNTS
+    const visibleUids = new Set<string>()
+    const collectVisible = (n: TaskNode) => {
+      visibleUids.add(n.todo.uid)
+      n.children.forEach(collectVisible)
+    }
+    visibleTree.forEach(collectVisible)
+    const counts = new Map<string, number>()
+    const count = (n: TaskNode): number => {
+      let hidden = 0
+      for (const c of n.children) {
+        hidden += count(c)
+        if (c.todo.status === 'COMPLETED' && !visibleUids.has(c.todo.uid)) {
+          hidden += 1
+        }
+      }
+      counts.set(n.todo.uid, hidden)
+      return hidden
+    }
+    fullTree.forEach(count)
+    return counts
+  }, [filter.hideCompleted, fullTree, visibleTree])
+
+  // Revealed set as the tree view sees it — empty while Hide-done is off
+  // so stale reveals don't surface a control with nothing to reveal.
+  const revealedForView = useMemo(
+    () => (filter.hideCompleted ? revealedBranches : EMPTY_REVEALED),
+    [filter.hideCompleted, revealedBranches],
+  )
+
+  const handleToggleBranchReveal = useCallback((uid: string) => {
+    setRevealedBranches((prev) => {
+      const next = new Set(prev)
+      if (next.has(uid)) next.delete(uid)
+      else next.add(uid)
+      return next
+    })
+  }, [])
 
   // Distinct tags across the active list, alphabetical, preserving the
   // first-seen casing for display.
@@ -1341,6 +1611,11 @@ export function MainView({ onLoggedOut }: Props) {
     () =>
       filter.hideCompleted ? recentlyCompleted : new Map<string, number>(),
     [filter.hideCompleted, recentlyCompleted],
+  )
+  // Rows mid fade-out — only visually fades while Hide-done is on.
+  const fadingActiveUids = useMemo(
+    () => (filter.hideCompleted ? fadingUids : EMPTY_FADING),
+    [filter.hideCompleted, fadingUids],
   )
   const activeCounts = useMemo(
     () => (activeItems ? countTasks(activeItems) : null),
@@ -3637,6 +3912,10 @@ export function MainView({ onLoggedOut }: Props) {
               taskDndMime={TASK_DND_MIME}
               onLeaveLeft={() => setFocusZone('sidebar')}
               fadingExpires={fadingExpires}
+              activelyFading={fadingActiveUids}
+              branchDoneHidden={branchDoneHidden}
+              revealedBranches={revealedForView}
+              onToggleBranchReveal={handleToggleBranchReveal}
               phonePriority={phonePriority}
               selectedUid={selectedTaskUid}
               onSelectChange={(uid) => {
