@@ -778,6 +778,154 @@ existing `Ctrl+S` handler (sort popover) now gates on `!e.shiftKey`
 so the Shift variant doesn't fall through. The same spinners as the
 toolbar sync-all button light up (per-row + aggregate count).
 
+## Backlog (queued 2026-05-23 — batch 2)
+
+### Custom Etebase server URL
+**Task.** Let users point ete-stethic at their own Etebase server
+instead of the hard-coded default (self-hosted Etebase forks /
+non-etebase.com deployments).
+**Plan.**
+- Add a "Server" field to the login screen (already the natural
+  surface — users hit it before any URL is needed). Default is the
+  current hard-coded host shown as a placeholder.
+- Persist under `ete-stethic.etebase.serverUrl`; read it in
+  `services/etebase.ts` instead of the constant when constructing
+  `Account.login` / `Account.signup`.
+- Validate `URL` parsing + `http(s)` scheme client-side before
+  submit; surface server errors inline on auth failure.
+- One-time migration: if no key is set, write the current default
+  on first login so existing users see it pre-filled.
+
+### Disable individual modules
+**Task.** Some users only want a subset (tasks only, or
+tasks + contacts but no calendar, etc.). Let each module be turned
+off so its switcher button hides and its background sync stops
+running.
+**Plan.**
+- Four booleans `ete-stethic.modules.{tasks,calendar,contacts,mail}
+  .enabled` (default on). Toggle row per module in a new "Modules"
+  subsection of the global settings popover.
+- `App.tsx` reads the flags and conditionally renders each switcher
+  button + lazy module. The active module stays selected if its flag
+  goes off mid-session — fall back to the first enabled one (or an
+  empty-state if none).
+- Disabled modules don't run their adaptive sync timers (gate the
+  effects in each `*View` on the flag). The on-disk snapshot stays
+  put so re-enabling is instant.
+
+### Move logout to the settings menu
+**Task.** Logout currently sits at a high-visibility surface
+(bottom-left of the sidebar). Move it into the settings popover so
+the persistent sidebar real estate goes to navigation only.
+**Plan.**
+- Remove the logout button from `MainView`'s sidebar footer.
+- Add a "Sign out" row to `SettingsPopover` under a new "Account"
+  subsection (room there for future per-account settings — server
+  URL switch, account name, etc.). `onLoggedOut` is already wired
+  through props; just plumb it to the popover instead.
+- Mirror in `ContactsSettingsPopover` / calendar settings so logout
+  is reachable from any module's settings.
+
+### Module: Mail (proposed)
+**Task.** A minimal mail client whose **primary job is surfacing
+iTIP invitations** (`.ics` attachments with `METHOD:REQUEST`) so
+they can be accepted straight into the calendar module in one
+click. Reading regular mail is a bonus; rich features
+(threading, search, HTML rendering, attachments beyond `.ics`)
+are explicitly **out of scope for v1**.
+
+**Compatibility.** Standard IMAP (read) + SMTP (send REPLY) so it
+works with any provider that exposes them — Gmail (app password),
+iCloud, Fastmail, self-hosted Dovecot/Postfix, Outlook /
+Office365 (app password or basic IMAP; OAuth is v2). Outlook *the
+desktop client* isn't a server — what we're really matching is
+"any IMAP-reachable mailbox", which Outlook.com mailboxes are.
+
+**Plan (v1 — minimum useful).**
+
+*Storage / transport.*
+- Tauri Rust backend gains two crates: `async-imap` (read) and
+  `lettre` (send). Expose Tauri commands:
+  `mail_login(account_id)`, `mail_list_folders(account_id)`,
+  `mail_fetch_envelopes(account_id, folder, limit, since_uid?)`,
+  `mail_fetch_body(account_id, folder, uid)`,
+  `mail_send(account_id, raw_mime)`,
+  `mail_set_flag(account_id, folder, uid, flag, set)`.
+- Credentials stored in OS keychain via the `keyring` Rust crate
+  (never localStorage). Account metadata (host, port, username,
+  display name) in a JSON file in the app data dir — small enough
+  not to need etebase round-tripping.
+- Frontend `services/mail.ts`: thin wrappers around the Tauri
+  commands; cold-cache snapshot of envelopes per folder
+  (`mailsnapshot.ts`) mirroring `calendarsnapshot.ts`.
+
+*iTIP detection.*
+- When fetching a message body, walk MIME parts for
+  `text/calendar` or `application/ics`. Parse with the `ical.js`
+  already used by the calendar/contacts modules.
+- Tag the envelope in the snapshot: `kind: 'invite' | 'reply' |
+  'cancel' | 'normal'` based on the inner VCALENDAR's METHOD
+  property.
+
+*UI module.*
+- New `MailView.tsx` modelled after `ContactsView`: three-pane
+  layout (accounts/folders sidebar · message list · message
+  detail), per-zone zoom + drag-resize + focus zone, same
+  Ctrl+L/T/E navigation.
+- List header has a filter chip defaulting to **"Invitations"**
+  so the v1 use case is one click away; "All" shows everything.
+- Invite detail pane shows organizer / time / location /
+  description + **Accept / Decline / Tentative** buttons.
+  Accept: writes the VEVENT into the user's default calendar via
+  `services/etebase.ts::createCalendarItem`, updates the
+  invite's PARTSTAT, sends a METHOD:REPLY back to the ORGANIZER
+  via SMTP, and marks the mail `\Seen`.
+- Reuse `Hint`, `ContextMenu`, drag-resize handles, settings
+  popover patterns from the existing modules.
+
+*Auth UX.*
+- Per-account login flow: server (autodetected from email domain
+  via well-known autoconfig endpoints for common providers,
+  fallback to manual host/port + TLS toggle) + username +
+  password / app password.
+- **OAuth (Gmail / Microsoft Identity) is v2.** v1 ships
+  IMAP/SMTP + app passwords only, keeps the surface small, and
+  defers Office365 modern-auth restrictions to that round.
+
+*Settings.*
+- "Mail" subsection in the global settings popover: add /
+  remove accounts, set the **default calendar** that Accept
+  writes to, poll interval (mirrors the contacts adaptive-sync
+  prefs grid: 0/1/5/15/30/60 min active, etc.).
+
+*Out of scope for v1.*
+- Compose (beyond the auto-generated METHOD:REPLY for RSVP),
+  drafts, threading, search, HTML rendering, non-`.ics`
+  attachments, multi-account merged inbox, IMAP IDLE push
+  (polling on the contacts cadence is fine).
+
+*Open questions / risks.*
+- **Keychain on Linux.** The `keyring` crate uses Secret Service
+  / DBus which works on most desktops but not in headless /
+  remote setups. Document fallback: env-var or one-shot
+  passphrase prompt that doesn't persist.
+- **Office365 basic-auth deprecation.** Many orgs disable
+  password-based IMAP. v1 explicitly says "needs an app
+  password; OAuth in v2."
+- **Duplicate VEVENT on Accept.** If the user already imported
+  the `.ics` manually before clicking Accept, the calendar would
+  get two. Mitigation: de-dupe by VEVENT `UID` before insert —
+  iTIP invitations carry the canonical UID, and idempotent
+  inserts already exist in the calendar module's helpers.
+- **Sent-folder write.** SMTP doesn't append to Sent; we'd need
+  to IMAP-APPEND the sent REPLY into the configured Sent folder
+  (autodetect via the IMAP `SPECIAL-USE` extension, fallback to
+  the literal "Sent" name).
+
+**Dependency on the other batch-2 items.** "Disable individual
+modules" is a prerequisite if shipping Mail by default — users
+who never wanted a mail client should be able to turn it off.
+
 ## Known issues
 
 Things that have been observed misbehaving but haven't been root-caused
