@@ -443,16 +443,40 @@ so it's clickable) that dismisses the pill for the session, persisted
 via `sessionStorage` so a quick reload doesn't bring it back. The
 durable opt-out belongs to the "Hint opt-out" item below.
 
-### More guidance hints
+### More guidance hints — ✅ infrastructure + first cuts
 Add discoverable hints (tooltips / inline tips / a first-run callout)
 to surface the keyboard-first features that aren't obvious from looking
 at the UI — e.g. `/` to search, `n` to create, `g t` / `g c` / `g k`
 for module switching, `Ctrl+Enter` for the detail panel, etc.
+**Resolution.** New `services/hints.ts` + `components/Hint.tsx`. The
+service exposes `readHintsEnabled` / `setHintsEnabled` (global on/off
+under `ete-stethic.hints.enabled`, default on) and `dismissHint(id)` /
+`isHintDismissed(id)` (per-hint under
+`ete-stethic.hints.dismissed.<id>`). Both fire a custom
+`HINTS_CHANGED_EVENT` on `window` so subscribers update without
+prop-drilling state. The `<Hint id="...">` component renders nothing
+when either layer is off, otherwise wraps its children with a
+dismiss-`×` that calls `dismissHint`. Two concrete uses landed: an
+empty-list card in the tasks pane (`Ctrl+N` to add · `?` for
+shortcuts) and an empty-detail card in contacts (`/` to search ·
+`Ctrl+L/T/E` to switch zones). The earlier `n` / `g t/c/k` examples
+in the original ask aren't wired — bare `n` was removed when shortcuts
+were Ctrl-prefixed, and the module-switching chord doesn't exist yet.
+Wiring more hints is a paint-by-numbers iteration when other features
+need surfacing.
 
-### Hint opt-out
+### Hint opt-out — ✅ done
 Hints from the above must be possible to disable globally. A toggle in
 the settings popover ("Show usage hints") that flips a persisted
 boolean, plus a per-hint dismiss (the `×`) that remembers itself.
+**Resolution.** Both layers landed with the hints infrastructure above.
+"Show usage hints" appears in a new **Help** subsection in BOTH the
+tasks `SettingsPopover` and `ContactsSettingsPopover` — toggling
+either one fires `HINTS_CHANGED_EVENT` and the other popover's switch
+mirrors via a `useEffect` listener, so the on/off state stays in
+lockstep across modules. Per-hint `×` is built into the `<Hint>`
+component and persists to localStorage so a one-off tip the user has
+read doesn't come back next session.
 
 ## Contacts polish (queued 2026-05-22)
 
@@ -473,29 +497,55 @@ row's outer element was changed from `<button>` to a
 pencil can be a real nested `<button>` without invalid-HTML
 button-in-button nesting.
 
-### Visible sync status — ◑ partly done
+### Visible sync status — ✅ done
 Currently a tiny `↻` spinner appears on a syncing row and that's it.
 Show more: per-book "last synced X ago", a global "all synced" / "1
 syncing…" / "1 failed" line, and a clearer affordance after a sync
 error (the toast hides quickly). Mirror the tasks sidebar's
 sync-all + per-list cadence indicator pattern.
-**Resolution (in progress).** Active book's last-successful-sync time
-now shows in the contact-list header subtitle as "Synced HH:MM"
-(absolute time, no drift). Cycles to "Syncing…" while a sync is in
-flight and "Never synced" before the first one ever lands. Persisted
-via a new `lastSyncedAt: Map<string,number>` in `ContactMemory` so it
-survives module switches; seeded from the snapshot's `lastSyncedAt`
-on disk hydration / book switch and updated on every successful
-`syncBook`. **Still pending:** the global "all / 1 syncing / 1
-failed" summary, a per-book inline stamp (the current one is only
-for the active book), and a stickier error affordance.
+**Resolution (initial cut).** Active book's last-successful-sync time
+shows in the contact-list header subtitle as "Synced HH:MM" (absolute
+time, no drift). Cycles to "Syncing…" while a sync is in flight and
+"Never synced" before the first one ever lands. Persisted via a
+`lastSyncedAt: Map<string,number>` in `ContactMemory` so it survives
+module switches.
+**Resolution (this iteration).** Added `errorByBook: Map<string,
+string>` so per-book sync failures linger instead of being clobbered
+by the next transient error. The subtitle now appends global tallies:
+`· Syncing N others…` (when books besides the active one are mid-
+sync, derived from `syncing.size − active-is-syncing`) and
+`· N failed` (`text-danger`, with a tooltip pointing the user at the
+per-book ⚠ icons). Each book row carries a `⚠` button after its name
+when `errorByBook.has(uid)` and it isn't currently syncing; clicking
+the warning re-surfaces that book's failure in the main error banner
+prefixed with the book name. The warning stays until that book's
+next successful `syncBook` (which clears the map entry) — no more
+silent failures behind newer ops. Sync-all button + per-book inline
+"last synced N ago" stamp deferred (the global tally + active-book
+"Synced HH:MM" cover the common cases; a future iteration can add
+those if the user finds them missing in practice).
 
-### Adaptive (relative) sync for address books
+### Adaptive (relative) sync for address books — ✅ done
 Contacts currently syncs the active book on open + on the manual
 refresh button. Match the tasks module's adaptive cadence: the active
 book on a fast interval, other books on a slow one, opening a book
 triggers a delta sync only if its snapshot is older than a freshness
 window. Configurable from a contacts settings popover.
+**Resolution.** Three persisted prefs (`ete-stethic.contacts.{active,
+bg,switchFresh}SyncMin`) with the same option grids the tasks module
+uses (active `0,1,5,15,30,60`min · other `0,30,60,240,720,1440`min
+· freshness `0,15,30,60,240`min) and the same defaults (5 / 240 / 60).
+Two periodic effects run alongside the existing on-mount sync: one
+refreshes the active book on the fast cadence, another scans the
+other books on the slow cadence and re-syncs any whose `lastSyncedAt`
+is older than the window. Both read from `getContactMemory()` rather
+than closure state so they don't restart on every `lastSyncedAt`
+update. `selectBook` now gates its delta sync on the freshness window
+(special-casing "Always" = 0min, cold-cache loads, and the post-
+snapshot stamp) so cycling between books doesn't hammer the server
+when they're all already fresh. Three labelled selects landed in the
+ContactsSettingsPopover under a new "Sync" subsection — widened the
+popover from `w-64` to `w-72` to fit them comfortably.
 
 ### Enter on a contact opens the detail — ✅ done
 Today ↑/↓ moves the selection and the detail card on the right updates
@@ -526,7 +576,7 @@ compactly — no fixed reserved height. Avatar bumped 32→36px to balance
 the multi-line text column. `subtitleOf` helper retired since it
 collapsed all of this into one line.
 
-### Resizable / zoomable contact panes
+### Resizable / zoomable contact panes — ✅ done
 The contacts view has fixed widths for the address-book sidebar (w-52)
 and the contact list (w-80). Port the tasks/calendar pattern: drag-to-
 resize handles between panes, plus per-zone `Ctrl/Cmd +/-/0` zoom with
@@ -535,17 +585,49 @@ contact-list / detail) should carry its **own independent** zoom
 factor — including the contact list itself — and each should be a
 labelled +/-/reset row in a contacts settings popover (mirroring the
 matching tasks-pane request under the 2026-05-23 polish block).
+**Resolution.** Three independent zoom factors per zone (books / list /
+detail), persisted under `ete-stethic.contacts.zoom.<zone>`, applied
+via CSS `zoom` on each pane. `Ctrl/Cmd +/-/0` while the corresponding
+zone is focused steps / resets that zone's factor (honored even from
+text inputs, like the tasks module). Drag-to-resize handles sit on
+the right edge of the books and contact-list panes — accent strip on
+hover, solid while dragging, clamps `[140,360]px` for books and
+`[220,600]px` for the list (defaults `208px` / `320px` to match the
+former `w-52` / `w-80`); detail fills the remaining space. The handle
+`stopPropagation`s its `onMouseDown` so it doesn't trip the zone's own
+focus-zone click. New `ContactsSettingsPopover` (gear button in the
+contact-list header) holds the three +/-/reset zoom rows — a narrow
+component for now, designed to grow when adaptive-sync cadence lands.
+Owns its own Esc / click-away dismissal mirroring the tasks
+`SettingsPopover`.
 
-### Zone meta-navigation + cross-zone fade
+### Zone meta-navigation + cross-zone fade — ✅ done
 Ctrl+←/→ (or even bare ←/→ from the address-book list) should walk
 between the three zones (address-books ↔ contacts ↔ detail), and the
 out-of-focus zones should fade like they do in the tasks module. Today
 the contacts view has no `focusZone` concept and all three panes stay
 fully opaque regardless.
+**Resolution.** Added `ContactsFocusZone = 'books' | 'list' | 'detail'`
+to `ContactsView`. State persists under `ete-stethic.contacts.focusZone`
+so a module switch or remount lands where the user left off. The same
+Ctrl-prefixed shortcuts the tasks module uses now work here:
+`Ctrl+L`/`Ctrl+T`/`Ctrl+E` jump directly to a zone, `Ctrl+→` and
+`Ctrl+←` step through them (clamping at the ends and yielding to native
+word-jump inside text fields). The address-books arrow-nav was wired up
+too — when `focusZone === 'books'`, `↑/↓` page through books via
+`selectBook`; otherwise they walk the contact list as before. Each
+zone applies an `opacity-{100|30|40}` class with a 300ms transition
+(`opacity-30` for books/list, `opacity-40` for detail — same numbers as
+MainView/DetailPanel). Each zone's outermost element catches
+`onMouseDown` and sets the focus zone, so click-to-focus works without
+hijacking inner controls. Bare `←/→` from the books pane was
+intentionally skipped — `Ctrl+→` is the unambiguous path and adding a
+bare-arrow stepper would have to fight with the future left-arrow
+"collapse" semantics tracked under the tree-UX backlog.
 
 ## Polish & fixes (queued 2026-05-23)
 
-### Make all keyboard shortcuts Ctrl-prefixed
+### Make all keyboard shortcuts Ctrl-prefixed — ✅ done
 Bare-letter shortcuts (`n` new, `f` filter, `s` sort, `m` move, `t` jump
 to tasks, etc.) collide with the sidebar/task-list typeahead — typing a
 letter is ambiguous between "shortcut" and "jump to the item whose name
@@ -554,8 +636,24 @@ starts with that letter." Standardise: every command shortcut becomes
 existing typeahead in `MainView` (`taskTypeaheadRef`, `listTypeaheadRef`)
 already works — just stop competing with it. Update `KeybindingsModal`
 to reflect the new bindings.
+**Resolution.** `MainView` now exposes `Ctrl+L` (focus lists), `Ctrl+T`
+(focus tasks), `Ctrl+E` (open details) alongside the already-existing
+`Ctrl+N` / `Ctrl+M` / `Ctrl+S` / `Ctrl+F`; the bare-letter handlers
+(`l/t/e/m/s/n/f`) were removed. `CalendarView` converts `t` (today) and
+`n` (new event) to their Ctrl counterparts (the digit 1–5 view switcher
+stays — digits don't compete with typeahead). `ContactsView` converts
+`n` (new contact) to `Ctrl+N`, kept `/` for search and Enter for opening
+a contact; the contact list also moved its `typing` bail-out below the
+Ctrl+N handler so the shortcut works even when the search box has
+focus. Tooltips ("New list (n)", "Focus list selection (l)", "Filter
+(f)", "New contact (n)") updated; the "Select a contact … press n" hint
+on the empty contact pane was changed to `Ctrl+N`. `KeybindingsModal`
+rewritten: every command row is now Ctrl-prefixed, a new "Tasks" group
+calls out typeahead in both zones, and a navigation row documents
+`Ctrl+E` / `Ctrl+→` / `Ctrl+Enter` / `Ctrl+←` zone-stepping. Unblocks
+the `Ctrl+M` stay vs `Ctrl+Shift+M` follow split below.
 
-### Move shortcut: `Ctrl+M` moves, `Ctrl+Shift+M` moves + follows
+### Move shortcut: `Ctrl+M` moves, `Ctrl+Shift+M` moves + follows — ✅ done
 Today `m` opens the move-task picker; after picking a destination the
 task is moved. Split that into two:
 - **`Ctrl+M`** — move the task (and its subtree) to the picked list,
@@ -568,6 +666,18 @@ Implementation note: the existing `performMove` already returns the
 created destination items; the follow-vs-stay distinction is just
 whether `setActiveUid(destUid)` runs after the move resolves. Surface
 both in `KeybindingsModal`.
+**Resolution.** Added `follow: boolean` to `MovePayload` and gated the
+post-success `setActiveUid(destUid) + setSelectedTaskUid(rootVtodoUid)`
+on it. Stay mode clears `selectedTaskUid` rather than leaving the now-
+gone uid dangling — arrow nav recovers cleanly from there. The
+destination's in-memory items still get spliced in either way, so the
+list is pre-warmed when the user does switch over manually. Keyboard:
+the existing Ctrl+M handler reads `e.shiftKey` (already reaches with
+shift held since the modifier bail-out runs later in the effect). Other
+callers: the right-click "Move to another list…" defaults to stay (the
+common case); drag-to-list keeps follow because the user's pointer
+destination *is* the goal. `KeybindingsModal` now lists both as
+separate rows.
 
 ### Help modal: scrollable, more visible, smoother — ✅ done
 The `KeybindingsModal` is cramped (overflows without scrolling), blends
@@ -622,7 +732,7 @@ Things that have been observed misbehaving but haven't been root-caused
 yet. These get tracked here (not in the polish queue) so they're visible
 without committing to a specific fix.
 
-### Tasks pane stuck at "Loading tasks…" until manual refresh
+### Tasks pane stuck at "Loading tasks…" until manual refresh — ✅ defensive fix shipped
 Observed 2026-05-23, intermittent. After certain sessions (likely
 following an HMR reload while developing other modules, e.g. contacts),
 the tasks pane sits on "Loading tasks…" indefinitely and only loads
@@ -630,26 +740,29 @@ after the user clicks a per-list / sync-all refresh button — and when
 it does load, it reads from etebase rather than the local snapshot, so
 the local cache benefit is lost for that session.
 
-**Where the gate lives.** The trigger in
+**Where the gate lived.** The trigger in
 [`MainView.tsx`](src/components/MainView.tsx) (`fetchCollection` trigger
 effect, gated on `!hydrated || !activeUid`) only fires after the
 disk-hydration effect's `finally` block runs `setHydrated(true)`. If
-that `setHydrated(true)` doesn't land for the current mount, the
-trigger never fires and only a manual sync recovers (it calls
+that `setHydrated(true)` didn't land for the current mount, the
+trigger never fired and only a manual sync recovered (it calls
 `fetchCollection` directly, bypassing the gate).
 
 **Likely cause (unconfirmed).** Vite/Tauri HMR + React strict-mode
 interaction with the hydration IIFE's `cancelled` flag, where the
-`if (!cancelled) setHydrated(true)` guard skips on a mount that's
+`if (!cancelled) setHydrated(true)` guard skipped on a mount that had
 been logically replaced. Possibly something else upstream — the
 contacts module changes that preceded the observation don't touch this
 path (lazy-loaded, separate snapshot prefix, no taskstore mutation), so
 the contacts work didn't introduce it but may have exposed it via
 extra HMR churn.
 
-**Defensive fix sketch.** Add a 2-second safety timeout in the
-hydration effect that force-sets `hydrated = true` if the disk pass
-hasn't finished by then. Happy path unchanged (the `finally` clears
-the timeout); only fires when hydration genuinely stalls. Worst case:
-the cold-cache optimisation is skipped and the app falls through to a
-normal network sync.
+**Defensive fix.** Added a 2-second safety timeout in the hydration
+effect that force-sets `hydrated = true` if the disk pass hasn't
+finished by then. Happy path unchanged (the `finally` clears the
+timer; the cleanup return also clears it on unmount). When the safety
+timer does fire, we skip the cold-cache optimisation for that session
+and fall through to a normal network sync — the "Loading tasks…" line
+clears within 2s no matter what, and `fetchCollection` populates the
+items the same way a manual refresh would. Root cause not pinpointed,
+but the symptom can no longer leave the pane stuck.
