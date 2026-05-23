@@ -62,6 +62,16 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
         keys: ['Alt+→'],
         description: 'Indent: become a child of the previous sibling',
       },
+      {
+        keys: ['Alt+↑'],
+        description:
+          "Reparent to the parent's previous sibling (same depth, prior branch)",
+      },
+      {
+        keys: ['Alt+↓'],
+        description:
+          "Reparent to the parent's next sibling (same depth, next branch)",
+      },
       { keys: ['+'], description: 'Raise priority on selected task' },
       { keys: ['-'], description: 'Lower priority on selected task' },
       {

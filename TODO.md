@@ -751,6 +751,24 @@ them (synced via an effect after `handleSaveDetails` lands). Avoids
 both a TDZ ReferenceError and a re-subscription on every
 `handleSaveDetails` identity change.
 
+### Alt+↑/↓ to reparent across adjacent branches — ✅ done
+**Task.** Under priority sort, Alt+↑/↓ on a subtask should move it to
+the previous/next *parent* in the tree, changing only the hierarchy
+(not the priority that drives sort order). Sibling reorder remains
+deferred behind the manual-order store.
+**Resolution.** Added a third arm to the existing Alt+arrow block in
+[`MainView.tsx`](src/components/MainView.tsx). For the selected task
+it looks up its parent's location via `findParentAndSiblings`, then
+re-points `parentUid` at `parentLoc.siblings[parentLoc.index ± 1]`
+— last child of the previous branch on Alt+↑, first child of the
+next branch on Alt+↓. No-ops for a root (no parent to step) and at
+the ends of the parent's sibling row. Position within the destination
+is decided by the active sort comparator, so under priority sort the
+moved row slots in by its existing priority — the hierarchy changes,
+the sort key doesn't. UX caveat shared with Alt+→: if the destination
+parent is collapsed in TaskTree, the moved row disappears until the
+user expands it.
+
 ### Ctrl+Shift+S to force sync every list — ✅ done
 **Task.** A keyboard equivalent of the sidebar "sync all lists"
 button: force a sync of every list now, bypassing the per-list

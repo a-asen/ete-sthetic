@@ -2264,12 +2264,16 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      // Alt+←/→ on the selected task: outdent / indent in the hierarchy.
-      // Pure parentUid change (re-uses handleSaveDetails's optimistic +
-      // rollback path), so it works without the per-list manual-order
-      // store that sibling reorder (Alt+↑/↓) would need. Scoped to the
-      // tasks zone and skipped inside text fields so it doesn't fight
-      // native word-jump in renames / detail inputs.
+      // Alt+arrow on the selected task: pure parentUid edits that reuse
+      // handleSaveDetails's optimistic + rollback path. Sibling reorder
+      // is still deferred (needs the per-list manual-order store), so
+      // Alt+↑/↓ here is a *reparent*, not a swap.
+      //   Alt+←  outdent — become a sibling of the current parent
+      //   Alt+→  indent  — become a child of the previous visible sibling
+      //   Alt+↑  reparent — become a child of the parent's previous sibling
+      //   Alt+↓  reparent — become a child of the parent's next sibling
+      // Scoped to the tasks zone and skipped inside text fields so native
+      // Alt+arrow word-jump still works in renames / detail inputs.
       if (
         e.altKey &&
         !e.ctrlKey &&
@@ -2278,7 +2282,10 @@ export function MainView({ onLoggedOut }: Props) {
         focusZone === 'tasks' &&
         !inTextField &&
         selectedTaskUid &&
-        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        (e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight' ||
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown')
       ) {
         const loc = findParentAndSiblings(visibleTree, selectedTaskUid)
         if (!loc) return
@@ -2292,13 +2299,32 @@ export function MainView({ onLoggedOut }: Props) {
           const grand = findParentAndSiblings(visibleTree, loc.parent.todo.uid)
           const newParentUid: string | null = grand?.parent?.todo.uid ?? null
           void save({ parentUid: newParentUid })
-        } else {
+        } else if (e.key === 'ArrowRight') {
           // Indent: become a child of the previous visible sibling. No-op
           // for the first sibling (nothing to slot under).
           if (loc.index === 0) return
           e.preventDefault()
           const prev = loc.siblings[loc.index - 1]
           void save({ parentUid: prev.todo.uid })
+        } else {
+          // Alt+↑/↓: step the *parent reference* one position through the
+          // parent's siblings — same depth, new branch. Under priority
+          // sort, position within the destination is decided by sort, not
+          // by us: we change the hierarchy only, not the sort key. No-op
+          // for a root (no parent to step) and when the current parent is
+          // already at the relevant end of its sibling row.
+          if (!loc.parent) return
+          const parentLoc = findParentAndSiblings(
+            visibleTree,
+            loc.parent.todo.uid,
+          )
+          if (!parentLoc) return
+          const targetIdx =
+            e.key === 'ArrowUp' ? parentLoc.index - 1 : parentLoc.index + 1
+          if (targetIdx < 0 || targetIdx >= parentLoc.siblings.length) return
+          e.preventDefault()
+          const newParent = parentLoc.siblings[targetIdx]
+          void save({ parentUid: newParent.todo.uid })
         }
         return
       }
