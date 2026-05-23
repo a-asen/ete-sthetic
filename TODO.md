@@ -751,6 +751,15 @@ them (synced via an effect after `handleSaveDetails` lands). Avoids
 both a TDZ ReferenceError and a re-subscription on every
 `handleSaveDetails` identity change.
 
+### Ctrl+Shift+S to force sync every list — ✅ done
+**Task.** A keyboard equivalent of the sidebar "sync all lists"
+button: force a sync of every list now, bypassing the per-list
+staleness/freshness windows.
+**Resolution.** `Ctrl+Shift+S` calls `syncAll()` directly. The
+existing `Ctrl+S` handler (sort popover) now gates on `!e.shiftKey`
+so the Shift variant doesn't fall through. The same spinners as the
+toolbar sync-all button light up (per-row + aggregate count).
+
 ## Known issues
 
 Things that have been observed misbehaving but haven't been root-caused

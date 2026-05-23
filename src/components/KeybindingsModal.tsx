@@ -78,6 +78,10 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     items: [
       { keys: ['Ctrl+F'], description: 'Open filter and focus search' },
       { keys: ['Ctrl+S'], description: 'Open sort options (per-list)' },
+      {
+        keys: ['Ctrl+Shift+S'],
+        description: 'Force sync every list now (bypass staleness windows)',
+      },
     ],
   },
   {

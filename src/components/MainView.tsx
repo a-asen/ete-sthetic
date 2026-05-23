@@ -2200,10 +2200,29 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
+      // Ctrl/Cmd+Shift+S → force a sync-all (every list refreshes now,
+      // bypassing the staleness windows). The per-row spinners and the
+      // sidebar's sync-all spinner light up the same way as the toolbar
+      // button. Handled before the bare Ctrl+S so the Shift variant
+      // doesn't fall through to the sort popover.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        (e.key === 's' || e.key === 'S')
+      ) {
+        e.preventDefault()
+        syncAll()
+        return
+      }
+
       // Ctrl/Cmd+S → jump to the sorting menu (overrides browser Save).
       // In the list view that's the sidebar list-settings popover (sort
       // lists / show deleted); elsewhere it's the task sort popover.
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        (e.key === 's' || e.key === 'S')
+      ) {
         e.preventDefault()
         if (focusZone === 'sidebar') {
           setSidebarSettingsOpen(true)
@@ -2483,6 +2502,7 @@ export function MainView({ onLoggedOut }: Props) {
     startRenameList,
     adjustZoom,
     focusTasks,
+    syncAll,
   ])
 
   // The hardened move itself (used by the picker and by drag-to-list).
