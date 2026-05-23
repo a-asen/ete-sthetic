@@ -277,6 +277,13 @@ interface MovePayload {
   rootVtodoUid: string
   summary: string
   descendantCount: number
+  // When true, after the move resolves the active list switches to the
+  // destination and the moved root re-selects there (the "go look at it
+  // where it landed" path). When false, the user stays on the source
+  // list and the just-moved row leaves the view (the more common "get
+  // this off my plate" path). Drag-to-list keeps the legacy follow
+  // behaviour since the drop's destination is the user's pointer goal.
+  follow: boolean
 }
 
 function readHideCompleted(): boolean {
@@ -2208,7 +2215,10 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      // Ctrl/Cmd+M → move the selected task (plain `m` is typeahead).
+      // Ctrl/Cmd+M → move the selected task, staying on the source list
+      //   (the "get this off my plate" path — the common case).
+      // Ctrl/Cmd+Shift+M → move AND follow the task to the destination
+      //   list so the user can keep working on it where it landed.
       if ((e.ctrlKey || e.metaKey) && (e.key === 'm' || e.key === 'M')) {
         if (!selectedTaskUid || !activeUid) return
         const node = findNodeByUid(fullTree, selectedTaskUid)
@@ -2220,6 +2230,7 @@ export function MainView({ onLoggedOut }: Props) {
           rootVtodoUid: node.todo.uid,
           summary: node.todo.summary,
           descendantCount: itemUids.length - 1,
+          follow: e.shiftKey,
         })
         return
       }
@@ -2463,7 +2474,8 @@ export function MainView({ onLoggedOut }: Props) {
         )
         if (!cancelledRef.current) {
           // Splice the freshly-created items into the destination's
-          // in-memory list so the user sees them on switch.
+          // in-memory list so the user sees them on switch (whether or
+          // not we follow now — the destination is pre-warmed either way).
           setItemsByUid((prev) => {
             const existing = prev.get(destUid) ?? []
             const byId = new Map(existing.map((t) => [t.itemUid, t]))
@@ -2472,10 +2484,17 @@ export function MainView({ onLoggedOut }: Props) {
             next.set(destUid, Array.from(byId.values()))
             return next
           })
-          // Follow the task: switch to the destination list and
-          // re-select it by its preserved VTODO uid.
-          setActiveUid(destUid)
-          setSelectedTaskUid(cur.rootVtodoUid)
+          if (cur.follow) {
+            // Follow the task: switch to the destination list and
+            // re-select it by its preserved VTODO uid.
+            setActiveUid(destUid)
+            setSelectedTaskUid(cur.rootVtodoUid)
+          } else {
+            // Stay on the source. The moved row is gone from the source's
+            // visible items, so clear selection rather than leaving a
+            // dangling uid that arrow-nav would have to recover from.
+            setSelectedTaskUid(null)
+          }
         }
       } catch (err) {
         // NEVER silent. A move that didn't fully complete must surface,
@@ -2554,12 +2573,16 @@ export function MainView({ onLoggedOut }: Props) {
       const node = findNodeByUid(fullTree, draggedUid)
       if (!node) return
       const itemUids = collectDescendantItemUids(node)
+      // Drag-to-list keeps the legacy follow behaviour — the drop's
+      // destination is the user's pointer goal, so jumping there is what
+      // they asked for. (Keyboard Ctrl+M is the "stay" path.)
       void performMove(
         {
           itemUids,
           rootVtodoUid: node.todo.uid,
           summary: node.todo.summary,
           descendantCount: itemUids.length - 1,
+          follow: true,
         },
         srcUid,
         destUid,
@@ -2656,11 +2679,14 @@ export function MainView({ onLoggedOut }: Props) {
     (node: TaskNode) => {
       if (!activeUid) return
       const itemUids = collectDescendantItemUids(node)
+      // Right-click "Move" defaults to stay-on-source (the common case);
+      // Ctrl+Shift+M is the path to also follow the task to its new list.
       setMoving({
         itemUids,
         rootVtodoUid: node.todo.uid,
         summary: node.todo.summary,
         descendantCount: itemUids.length - 1,
+        follow: false,
       })
     },
     [activeUid],
