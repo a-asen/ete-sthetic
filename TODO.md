@@ -802,6 +802,62 @@ meta-nav should only fire once writing is done.
 - Mirror the fix in the sidebar / detail inline-create inputs if
   they have the same bug.
 
+### Open `.ics` files in ete-stethic → one-click add to calendar
+**Task.** Register ete-stethic as a handler for `.ics` /
+`text/calendar` files so a double-click anywhere (file manager,
+browser download, "Open with" from a mail client) opens the app
+with an "Add to calendar" prompt instead of dropping the file in
+some other calendar app or doing nothing.
+**Plan.**
+- Tauri side:
+  - Linux: ship a `.desktop` file with
+    `MimeType=text/calendar;` + `%f`/`%U` argv and a handler
+    binary entry. Optional helper for `xdg-mime default` on first
+    run (with the user's consent).
+  - macOS: `Info.plist` `CFBundleDocumentTypes` claiming the
+    `com.apple.ical.ics` UTI.
+  - Windows: registry `HKCR\.ics` + `HKCR\ete-stethic.ics\shell\
+    open\command` entries written by the installer (or a one-off
+    "Set as default" button in settings).
+- App side: parse the first argv (or the `tauri://file-open`
+  event) for an `.ics` path on launch. Read the file, run it
+  through the same `ical.js` import path the future Mail
+  Accept-invite flow uses, then show a small confirm dialog:
+  "Add 'Sprint planning' to <calendar dropdown>?" → writes the
+  VEVENT via `services/etebase.ts::createCalendarItem` and
+  navigates to the day so the user sees the result.
+- Multi-event `.ics` (full calendar export, not a single invite):
+  prompt "1 event" vs "N events — import all to <calendar>?" so
+  a 500-event export doesn't import silently.
+- If a VEVENT with the same UID already exists, replace it (this
+  is the iTIP UPDATE semantic) rather than duplicate; surface
+  "Updated existing event" in the confirm.
+
+### Quick-add VEVENTs from mail invites (without the full Mail module)
+**Task.** Even before the proposed Mail module lands, give users
+a fast path to drop an invite into the calendar from whatever
+mail client they're already using. Mail invites are by far the
+most common source of VEVENTs and worth a shortcut today.
+**Plan.** Three lightweight surfaces, any of which can land
+independently of the Mail module:
+- **Drag-and-drop target.** The calendar view becomes a drop
+  target for `.ics` files (HTML5 DnD `dataTransfer.files`).
+  Reuses the same import path as the `.ics` association above.
+- **Paste-to-import.** A "Paste invite (.ics)" item in the
+  calendar new-event popover that opens a textarea — paste the
+  raw VCALENDAR block (right-click → "View source" in most mail
+  clients, or copy from the `.ics` attachment), Import button
+  parses and writes. Cheaper than DnD for headless / SSH'd
+  Linux setups.
+- **OS share / "Open with" handler.** Falls out of the
+  `.ics`-association work above for free on macOS/Linux; on
+  Windows the installer entry covers it.
+- All three converge on the same import helper
+  (`services/icsImport.ts`?) so the Mail module's Accept-invite
+  flow can reuse it 1:1 when that lands. De-dupe on VEVENT UID
+  the same way (an invite UPDATE replaces; a fresh REQUEST
+  inserts).
+
 ### Custom Etebase server URL
 **Task.** Let users point ete-stethic at their own Etebase server
 instead of the hard-coded default (self-hosted Etebase forks /
