@@ -876,6 +876,23 @@ export function CalendarView() {
           t.isContentEditable)
       )
         return
+      // Command shortcuts are Ctrl-prefixed across the app so bare letters
+      // can be reserved for future typeahead (e.g. event search).
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        if (e.key === 't' || e.key === 'T') {
+          e.preventDefault()
+          const td = startOfDay(new Date())
+          setSelected(td)
+          setAnchor(td)
+          return
+        }
+        if (e.key === 'n' || e.key === 'N') {
+          e.preventDefault()
+          setComposer({ mode: 'new', date: selected })
+          return
+        }
+      }
+
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
       const viewByKey: Record<string, CalView> = {
@@ -887,16 +904,6 @@ export function CalendarView() {
       }
       if (viewByKey[e.key]) {
         setView(viewByKey[e.key])
-        return
-      }
-      if (e.key === 't' || e.key === 'T') {
-        const td = startOfDay(new Date())
-        setSelected(td)
-        setAnchor(td)
-        return
-      }
-      if (e.key === 'n' || e.key === 'N') {
-        setComposer({ mode: 'new', date: selected })
         return
       }
 

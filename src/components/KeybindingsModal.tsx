@@ -9,12 +9,17 @@ interface Binding {
   description: string
 }
 
+// All command shortcuts are Ctrl/Cmd-prefixed so bare letters stay
+// reserved for type-to-search (sidebar list names + task summaries).
 const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
   {
     group: 'Navigation',
     items: [
-      { keys: ['l'], description: 'Focus task lists' },
-      { keys: ['t'], description: 'Focus tasks' },
+      { keys: ['Ctrl+L'], description: 'Focus task lists' },
+      { keys: ['Ctrl+T'], description: 'Focus tasks' },
+      { keys: ['Ctrl+E'], description: 'Open detail panel for selected task' },
+      { keys: ['Ctrl+→', 'Ctrl+Enter'], description: 'Step focus right (lists → tasks → details)' },
+      { keys: ['Ctrl+←'], description: 'Step focus left (details → tasks → lists)' },
       { keys: ['↑', '↓'], description: 'Move selection' },
       { keys: ['PgUp', 'PgDn'], description: 'Skip 10 rows' },
       { keys: ['Home', 'End'], description: 'First / last' },
@@ -30,16 +35,25 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     ],
   },
   {
-    group: 'Tree',
+    group: 'Tasks',
     items: [
+      { keys: ['a–z'], description: 'Type to jump to a task (repeat to cycle)' },
       { keys: ['←'], description: 'Collapse, then jump to parent' },
       { keys: ['→'], description: 'Expand a parent, or start a subtask' },
       {
         keys: ['Enter'],
         description: 'Cycle status: needs-action → in-progress → completed',
       },
-      { keys: ['n'], description: 'New task at top of list (tasks focused)' },
-      { keys: ['m'], description: 'Move task (and subtree) to another list' },
+      { keys: ['Ctrl+N'], description: 'New task at top of list' },
+      {
+        keys: ['Ctrl+M'],
+        description:
+          'Move task (and subtree) to another list — stays on the source',
+      },
+      {
+        keys: ['Ctrl+Shift+M'],
+        description: 'Move task and follow to the destination list',
+      },
       { keys: ['+'], description: 'Raise priority on selected task' },
       { keys: ['-'], description: 'Lower priority on selected task' },
       {
@@ -47,25 +61,20 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
         description:
           'Set priority on the hovered task (or selected if none); phone mode uses 0–3',
       },
-      { keys: ['F2', 'Double-click'], description: 'Rename a task' },
+      { keys: ['F2', 'Ctrl+A', 'Double-click'], description: 'Rename a task' },
       { keys: ['Del', 'Backspace'], description: 'Delete (with confirmation)' },
     ],
   },
   {
     group: 'Filters & sort',
     items: [
-      { keys: ['f'], description: 'Open filter options' },
       { keys: ['Ctrl+F'], description: 'Open filter and focus search' },
-      { keys: ['s'], description: 'Open sort options (per-list)' },
+      { keys: ['Ctrl+S'], description: 'Open sort options (per-list)' },
     ],
   },
   {
     group: 'Details',
     items: [
-      {
-        keys: ['e', 'Ctrl+→', 'Ctrl+Enter'],
-        description: 'Open detail panel for the selected task',
-      },
       { keys: ['Ctrl+Enter'], description: 'Inside panel: save & exit' },
       { keys: ['Esc', 'Ctrl+←'], description: 'Leave detail panel' },
     ],

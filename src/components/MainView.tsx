@@ -2073,10 +2073,13 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid, sortedCollections, refreshCollections],
   )
 
-  // Global single-key shortcuts: l / t to switch focus zones, n to start a
-  // new task, f to toggle Hide done, plus sidebar arrow navigation while
-  // focusZone === 'sidebar'. Skipped while typing or while a modal is open
-  // (and modifier-key combos are ignored so OS shortcuts pass through).
+  // Global keybindings. All command shortcuts are Ctrl/Cmd-prefixed so bare
+  // letters can stay reserved for typeahead in the sidebar / task list:
+  //   Ctrl+L / Ctrl+T / Ctrl+E zone switches, Ctrl+N new, Ctrl+M move,
+  //   Ctrl+S sort, Ctrl+F filter, Ctrl+Enter / Ctrl+→ open details,
+  //   Ctrl +/-/0 zoom, Ctrl+←/→ meta-nav. Bare keys here are arrow
+  //   navigation, F2/Delete in the sidebar, and `?` for the help modal.
+  // Skipped while a modal is open; typeahead handlers are gated separately.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (document.querySelector('[role="dialog"]')) return
@@ -2107,6 +2110,32 @@ export function MainView({ onLoggedOut }: Props) {
         e.preventDefault()
         setFilterOpen(true)
         setFilterFocusKey((k) => k + 1)
+        return
+      }
+
+      // Ctrl/Cmd+L → focus the sidebar (list of task lists). Honored
+      // even from inside text inputs so it works as a universal
+      // "jump to lists" shortcut.
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault()
+        setFocusZone('sidebar')
+        return
+      }
+      // Ctrl/Cmd+T → focus the task pane.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        (e.key === 't' || e.key === 'T')
+      ) {
+        e.preventDefault()
+        focusTasks()
+        return
+      }
+      // Ctrl/Cmd+E → open the detail panel for the selected task.
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'e' || e.key === 'E')) {
+        if (!selectedTaskUid) return
+        e.preventDefault()
+        setFocusZone('details')
         return
       }
 
@@ -2206,8 +2235,8 @@ export function MainView({ onLoggedOut }: Props) {
       // In the task view, plain letters are typeahead through the
       // visible task rows (matches the sidebar's list typeahead). Digits
       // are left alone so TaskTree's 0–9 priority hotkeys still work.
-      // Action shortcuts that used to live on letters moved to Ctrl
-      // chords: Ctrl+S sort, Ctrl+F filter, Ctrl+N new, Ctrl+M move.
+      // Every action shortcut is Ctrl-prefixed so bare letters never
+      // double as commands here.
       if (focusZone === 'tasks' && /^[a-z]$/i.test(e.key)) {
         e.preventDefault()
         const ch = e.key.toLowerCase()
@@ -2243,10 +2272,9 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
       // In the list (sidebar) view, plain letters/digits are a
-      // type-to-search, not shortcuts. This deliberately swallows ALL
-      // alphanumerics so none of the task-view single-key shortcuts
-      // (l/t/e/m/s/n/f/0-9) fire while browsing lists. Repeating the
-      // same single char cycles through matches.
+      // type-to-search, not shortcuts. Repeating the same single char
+      // cycles through matches. Every command shortcut is Ctrl-prefixed
+      // and handled above, so nothing competes with typeahead here.
       if (focusZone === 'sidebar' && /^[a-z0-9]$/i.test(e.key)) {
         e.preventDefault()
         const lists = sortedCollections ?? []
@@ -2274,46 +2302,11 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      if (e.key === 'l' || e.key === 'L') {
-        e.preventDefault()
-        setFocusZone('sidebar')
-        return
-      }
-      if (e.key === 't' || e.key === 'T') {
-        e.preventDefault()
-        focusTasks()
-        return
-      }
-      if (e.key === 'e' || e.key === 'E') {
-        if (!selectedTaskUid) return
-        e.preventDefault()
-        setFocusZone('details')
-        return
-      }
-      if (e.key === 'm' || e.key === 'M') {
-        if (!selectedTaskUid || !activeUid) return
-        const node = findNodeByUid(fullTree, selectedTaskUid)
-        if (!node) return
-        const itemUids = collectDescendantItemUids(node)
-        e.preventDefault()
-        setMoving({
-          itemUids,
-          rootVtodoUid: node.todo.uid,
-          summary: node.todo.summary,
-          descendantCount: itemUids.length - 1,
-        })
-        return
-      }
-      if (e.key === 's' || e.key === 'S') {
-        if (!activeUid) return
-        e.preventDefault()
-        setFocusZone('tasks')
-        setSortOpen((open) => !open)
-        setSortFocusKey((k) => k + 1)
-        return
-      }
       // Sidebar list management. (List creation is the header "+" button;
-      // plain letters are type-to-search, handled above.)
+      // plain letters are type-to-search, handled above.) Command shortcuts
+      // (new / move / sort / filter / focus zones / details) are all
+      // Ctrl-prefixed and handled at the top of this effect — bare letters
+      // are reserved for typeahead.
       if (focusZone === 'sidebar') {
         const activeCol = sortedCollections?.find((c) => c.uid === activeUid)
         if (e.key === 'F2' && activeCol && !activeCol.isDeleted) {
@@ -2333,18 +2326,6 @@ export function MainView({ onLoggedOut }: Props) {
         }
       }
 
-      if (e.key === 'n' || e.key === 'N') {
-        if (!activeUid || !activeItems) return
-        e.preventDefault()
-        setFocusZone('tasks')
-        handleStartCreateRoot()
-        return
-      }
-      if (e.key === 'f' || e.key === 'F') {
-        e.preventDefault()
-        setFilterOpen((open) => !open)
-        return
-      }
       if (e.key === '?') {
         e.preventDefault()
         setShowKeybindings(true)
@@ -3083,7 +3064,7 @@ export function MainView({ onLoggedOut }: Props) {
                     <button
                       type="button"
                       onClick={() => setFocusZone('sidebar')}
-                      title="Focus the list selection (l)"
+                      title="Focus the list selection (Ctrl+L)"
                       className="text-xs font-semibold uppercase tracking-wider text-text-faint transition-colors hover:text-text-muted"
                     >
                       Lists
@@ -3123,7 +3104,7 @@ export function MainView({ onLoggedOut }: Props) {
                       <button
                         type="button"
                         onClick={startCreateList}
-                        title="New list (n)"
+                        title="New list"
                         aria-label="New list"
                         className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[10px] text-text-faint transition-colors hover:border-border-strong hover:text-text-muted"
                       >
@@ -3266,7 +3247,7 @@ export function MainView({ onLoggedOut }: Props) {
                   <button
                     type="button"
                     onClick={() => setFocusZone('sidebar')}
-                    title="Focus the list selection (l)"
+                    title="Focus the list selection (Ctrl+L)"
                     aria-label="Focus list selection"
                     className="mx-auto text-xs font-semibold text-text-faint transition-colors hover:text-text-muted"
                   >
@@ -3711,7 +3692,7 @@ export function MainView({ onLoggedOut }: Props) {
                 onClick={() => setFilterOpen((open) => !open)}
                 aria-expanded={filterOpen}
                 aria-pressed={isFilterActive(filter)}
-                title="Filter (f)"
+                title="Filter (Ctrl+F)"
                 className={`relative flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${
                   isFilterActive(filter)
                     ? 'border-accent/40 bg-accent-soft text-text'
