@@ -827,6 +827,19 @@ export function MainView({ onLoggedOut }: Props) {
   useEffect(() => {
     if (getTaskMemory().warmed) return
     let cancelled = false
+
+    // Safety net for the "Loading tasks… forever" bug: if the disk pass
+    // hasn't completed within 2s — whether a Vite/Tauri HMR + strict-mode
+    // double-mount swallowed the IIFE's resolution, or disk I/O genuinely
+    // stalled — force `hydrated = true` so the network-sync trigger
+    // (gated on `!hydrated || !activeUid`) can fire instead of leaving
+    // the pane stuck. Happy path: the finally below clears the timer
+    // first. Failure path: we skip the cold-cache optimisation for this
+    // session and fall through to a normal network sync.
+    const safetyTimer = setTimeout(() => {
+      if (!cancelled) setHydrated(true)
+    }, 2000)
+
     void (async () => {
       try {
         const uids = await listSnapshotUids()
@@ -862,11 +875,13 @@ export function MainView({ onLoggedOut }: Props) {
           })
         }
       } finally {
+        clearTimeout(safetyTimer)
         if (!cancelled) setHydrated(true)
       }
     })()
     return () => {
       cancelled = true
+      clearTimeout(safetyTimer)
     }
   }, [])
 
