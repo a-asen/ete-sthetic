@@ -780,6 +780,28 @@ toolbar sync-all button light up (per-row + aggregate count).
 
 ## Backlog (queued 2026-05-23 — batch 2)
 
+### Ctrl+←/→ should not exit an in-progress task name
+**Task.** After `Ctrl+N` opens the inline new-task input, pressing
+`Ctrl+←` or `Ctrl+→` while typing the name jumps the focus zone
+(meta-nav) instead of staying inside the input. The user should
+have to commit (`Enter`) or cancel (`Esc`) the create first; zone
+meta-nav should only fire once writing is done.
+**Plan.**
+- Existing keybindings effect already guards Ctrl+←/→ with an
+  `inTextField` check (HTMLInputElement / HTMLTextAreaElement) —
+  if the symptom is real, the inline-create input may not be
+  matching that check (contenteditable? wrapper div catching the
+  event before bubbling?), or a different path is firing the
+  zone change. First step is to repro and confirm where the event
+  actually lands.
+- If it's the input element type, broaden the gate (also match
+  `[role="textbox"]` / `contenteditable`).
+- If it's the inline-create specifically, swallow Ctrl+arrow in
+  `InlineCreate`'s own keydown handler with `stopPropagation` so
+  it never reaches the global listener while a draft is open.
+- Mirror the fix in the sidebar / detail inline-create inputs if
+  they have the same bug.
+
 ### Custom Etebase server URL
 **Task.** Let users point ete-stethic at their own Etebase server
 instead of the hard-coded default (self-hosted Etebase forks /
