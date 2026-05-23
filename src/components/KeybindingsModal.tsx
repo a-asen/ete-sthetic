@@ -54,6 +54,14 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
         keys: ['Ctrl+Shift+M'],
         description: 'Move task and follow to the destination list',
       },
+      {
+        keys: ['Alt+←'],
+        description: 'Outdent: become a sibling of the current parent',
+      },
+      {
+        keys: ['Alt+→'],
+        description: 'Indent: become a child of the previous sibling',
+      },
       { keys: ['+'], description: 'Raise priority on selected task' },
       { keys: ['-'], description: 'Lower priority on selected task' },
       {

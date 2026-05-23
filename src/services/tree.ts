@@ -282,6 +282,29 @@ export function findNodeByUid(
   return null
 }
 
+// Locate a node by uid and report its sibling list + position within it.
+// `parent` is null when the uid lives at the root level. Returns null when
+// the uid isn't anywhere in the tree. Used by the indent/outdent keybinds
+// to compute the new parentUid.
+export function findParentAndSiblings(
+  roots: TaskNode[],
+  uid: string,
+): { parent: TaskNode | null; siblings: TaskNode[]; index: number } | null {
+  const rootIdx = roots.findIndex((n) => n.todo.uid === uid)
+  if (rootIdx >= 0) {
+    return { parent: null, siblings: roots, index: rootIdx }
+  }
+  for (const node of roots) {
+    const childIdx = node.children.findIndex((c) => c.todo.uid === uid)
+    if (childIdx >= 0) {
+      return { parent: node, siblings: node.children, index: childIdx }
+    }
+    const deeper = findParentAndSiblings(node.children, uid)
+    if (deeper) return deeper
+  }
+  return null
+}
+
 export function collectDescendantItemUids(node: TaskNode): string[] {
   const out: string[] = []
   const walk = (n: TaskNode) => {

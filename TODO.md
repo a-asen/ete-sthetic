@@ -726,6 +726,31 @@ shipped:
   "Task card size" row was retired; its function lives in the new
   three-row block.
 
+### Alt+←/→ to indent / outdent a task — ✅ done
+**Task.** Either Alt or Shift on the arrow keys should reparent a task
+in the tree: Alt+→ indents (becomes a child of the previous sibling),
+Alt+← outdents (becomes a sibling of the current parent). Alt+↑/↓
+sibling reorder is intentionally deferred since it needs the per-list
+manual-order store tracked elsewhere.
+**Resolution.** Modifier scoped to **Alt only** (Shift stays free for
+future selection-extension bindings). New `findParentAndSiblings`
+helper in [`src/services/tree.ts`](src/services/tree.ts) returns
+`{ parent, siblings, index }` for any uid in the tree (parent=null for
+a root). The keybindings effect in
+[`MainView.tsx`](src/components/MainView.tsx) handles Alt+← /
+Alt+→ on the selected task: outdent computes the grandparent and
+saves `{ parentUid: grandparent?.uid ?? null }`; indent reads the
+previous visible sibling and saves `{ parentUid: prevSibling.uid }`.
+Both reuse `handleSaveDetails`'s optimistic + rollback path. No-ops
+gracefully (already root for outdent, first sibling for indent).
+Scoped to the tasks zone and skipped inside text fields so it doesn't
+fight native Alt+arrow word-jump.
+**Implementation note.** `handleSaveDetails` is defined after the
+keybindings effect, so a `handleSaveDetailsRef` forward-ref bridges
+them (synced via an effect after `handleSaveDetails` lands). Avoids
+both a TDZ ReferenceError and a re-subscription on every
+`handleSaveDetails` identity change.
+
 ## Known issues
 
 Things that have been observed misbehaving but haven't been root-caused

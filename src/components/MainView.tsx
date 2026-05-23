@@ -19,6 +19,7 @@ import {
   collectDescendantItemUids,
   countTasks,
   findNodeByUid,
+  findParentAndSiblings,
   getAncestorChain,
 } from '../services/tree'
 import { parseVTodo, updateVTodo, type VTodoPatch } from '../services/vtodo'
@@ -799,6 +800,15 @@ export function MainView({ onLoggedOut }: Props) {
 
   const inFlightRef = useRef<Set<string>>(new Set())
   const cancelledRef = useRef(false)
+
+  // Forward ref to the (later-defined) detail-save handler so the global
+  // keybindings effect — which runs before handleSaveDetails is defined —
+  // can call it for the Alt+←/→ indent/outdent shortcuts. A live ref
+  // (updated by an effect downstream) keeps the closure fresh without
+  // forcing the keybindings effect to re-subscribe on every render of
+  // handleSaveDetails's identity.
+  const handleSaveDetailsRef =
+    useRef<((patch: VTodoPatch) => Promise<void>) | null>(null)
 
   useEffect(() => {
     cancelledRef.current = false
@@ -2235,6 +2245,45 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
+      // Alt+←/→ on the selected task: outdent / indent in the hierarchy.
+      // Pure parentUid change (re-uses handleSaveDetails's optimistic +
+      // rollback path), so it works without the per-list manual-order
+      // store that sibling reorder (Alt+↑/↓) would need. Scoped to the
+      // tasks zone and skipped inside text fields so it doesn't fight
+      // native word-jump in renames / detail inputs.
+      if (
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        focusZone === 'tasks' &&
+        !inTextField &&
+        selectedTaskUid &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      ) {
+        const loc = findParentAndSiblings(visibleTree, selectedTaskUid)
+        if (!loc) return
+        const save = handleSaveDetailsRef.current
+        if (!save) return
+        if (e.key === 'ArrowLeft') {
+          // Outdent: become a sibling of the current parent. No-op when
+          // already at the root.
+          if (!loc.parent) return
+          e.preventDefault()
+          const grand = findParentAndSiblings(visibleTree, loc.parent.todo.uid)
+          const newParentUid: string | null = grand?.parent?.todo.uid ?? null
+          void save({ parentUid: newParentUid })
+        } else {
+          // Indent: become a child of the previous visible sibling. No-op
+          // for the first sibling (nothing to slot under).
+          if (loc.index === 0) return
+          e.preventDefault()
+          const prev = loc.siblings[loc.index - 1]
+          void save({ parentUid: prev.todo.uid })
+        }
+        return
+      }
+
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
@@ -2902,6 +2951,13 @@ export function MainView({ onLoggedOut }: Props) {
       clearRecentlyCompleted,
     ],
   )
+
+  // Keep handleSaveDetailsRef pointing at the latest closure so the
+  // forward-call from the keybindings effect (Alt+←/→ indent/outdent)
+  // sees current state.
+  useEffect(() => {
+    handleSaveDetailsRef.current = handleSaveDetails
+  }, [handleSaveDetails])
 
   // Raw passthrough save for `broken` items: store the hand-edited iCal
   // verbatim, then re-parse (leniently) to refresh the row.
