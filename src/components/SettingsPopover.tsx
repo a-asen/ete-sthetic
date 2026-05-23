@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Theme } from '../services/theme'
+import {
+  HINTS_CHANGED_EVENT,
+  readHintsEnabled,
+  setHintsEnabled,
+} from '../services/hints'
 
 interface Props {
   hideCompleted: boolean
@@ -192,6 +197,14 @@ export function SettingsPopover({
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [hex, setHex] = useState(accent ?? '#2f8a6c')
+  const [hintsOn, setHintsOn] = useState(readHintsEnabled)
+  // Reflect changes made from the contacts settings popover (or any
+  // future surface that flips hints).
+  useEffect(() => {
+    const refresh = () => setHintsOn(readHintsEnabled())
+    window.addEventListener(HINTS_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(HINTS_CHANGED_EVENT, refresh)
+  }, [])
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -349,6 +362,17 @@ export function SettingsPopover({
           </button>
         </div>
       </div>
+
+      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+        Help
+      </p>
+      <Row label="Show usage hints">
+        <Toggle
+          on={hintsOn}
+          onClick={() => setHintsEnabled(!hintsOn)}
+          label="Show usage hints"
+        />
+      </Row>
     </div>
   )
 }

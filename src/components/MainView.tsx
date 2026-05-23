@@ -51,6 +51,7 @@ import {
 } from './ContextMenu'
 import { SettingsPopover } from './SettingsPopover'
 import { SidebarSettingsPopover } from './SidebarSettingsPopover'
+import { Hint } from './Hint'
 import {
   DEFAULT_FILTER,
   FilterPopover,
@@ -3930,13 +3931,22 @@ export function MainView({ onLoggedOut }: Props) {
             />
           )}
           {activeItems && visibleTree.length === 0 && !creating && (
-            <p className="px-5 py-4 text-sm text-text-faint">
-              {activeLoading
-                ? 'Loading tasks…'
-                : isFilterActive(filter) && fullTree.length > 0
-                  ? 'No tasks match the current filter.'
-                  : 'No tasks in this list.'}
-            </p>
+            <div className="px-5 py-4">
+              <p className="text-sm text-text-faint">
+                {activeLoading
+                  ? 'Loading tasks…'
+                  : isFilterActive(filter) && fullTree.length > 0
+                    ? 'No tasks match the current filter.'
+                    : 'No tasks in this list.'}
+              </p>
+              {!activeLoading && fullTree.length === 0 && (
+                <Hint id="tasks.empty-list" variant="card" className="mt-3">
+                  Press <kbd className="font-mono">Ctrl</kbd>+
+                  <kbd className="font-mono">N</kbd> to add a task ·{' '}
+                  <kbd className="font-mono">?</kbd> for all shortcuts.
+                </Hint>
+              )}
+            </div>
           )}
         </div>
       </main>
