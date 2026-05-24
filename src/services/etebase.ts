@@ -23,6 +23,7 @@ import { clearAllContactSnapshots } from './contactsnapshot'
 import { resetCalMemory } from './calstore'
 import { resetContactMemory } from './contactstore'
 import { resetTaskMemory } from './taskstore'
+import { resetSyncStatus } from './syncStatus'
 import { stopAlarmScheduler } from './alarms'
 
 export const DEFAULT_SERVER = 'https://api.etebase.com'
@@ -113,6 +114,7 @@ export async function logout(): Promise<void> {
   resetCalMemory()
   resetContactMemory()
   resetTaskMemory()
+  resetSyncStatus()
   await clearSession()
   await clearAllSnapshots()
   await clearAllCalSnapshots()

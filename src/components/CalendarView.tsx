@@ -40,6 +40,10 @@ import {
 } from '../services/caldate'
 import { loadCalSnapshot, saveCalSnapshot } from '../services/calsnapshot'
 import { getCalMemory, patchCalMemory } from '../services/calstore'
+import {
+  registerSyncAllHandler,
+  setModuleSyncing,
+} from '../services/syncStatus'
 import { MonthGrid } from './calendar/MonthGrid'
 import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
@@ -525,6 +529,21 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
     },
     [syncingUids, syncCalendar, eventsByCal],
   )
+
+  // Push calendar-module sync state into the global SyncStatusPill.
+  useEffect(() => {
+    setModuleSyncing('calendar', syncingUids.size > 0)
+  }, [syncingUids])
+  // Sync-all handler: fan out per-calendar syncs. handleSyncCalendar
+  // dedupes via syncingUids so calling it on an already-syncing uid
+  // is a no-op.
+  useEffect(() => {
+    const syncAll = async () => {
+      const live = calendars ? calendars.filter((c) => !c.isDeleted) : []
+      await Promise.all(live.map((c) => handleSyncCalendar(c.uid)))
+    }
+    return registerSyncAllHandler('calendar', syncAll)
+  }, [calendars, handleSyncCalendar])
 
   const loadAll = useCallback(async () => {
     loadAbort.current?.abort()

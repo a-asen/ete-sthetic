@@ -38,6 +38,10 @@ import {
   rememberLastSelected,
 } from '../services/taskstore'
 import {
+  registerSyncAllHandler,
+  setModuleSyncing,
+} from '../services/syncStatus'
+import {
   DEFAULT_TASK_SORT,
   type CollectionInfo,
   type Priority,
@@ -1684,7 +1688,7 @@ export function MainView({ onLoggedOut }: Props) {
   // Re-sync every list (incremental per-collection stoken). Bounded
   // concurrency; fetchCollection already dedupes in-flight uids and
   // drives loadingUids/syncProgress so the per-row indicators light up.
-  const syncAll = useCallback(() => {
+  const syncAll = useCallback(async () => {
     const uids = (collections ?? [])
       .map((c) => c.uid)
       .filter((uid) => !inFlightRef.current.has(uid))
@@ -1695,8 +1699,16 @@ export function MainView({ onLoggedOut }: Props) {
         await fetchCollection(uids[i++])
       }
     })
-    void Promise.all(workers)
+    await Promise.all(workers)
   }, [collections, fetchCollection])
+
+  // Push tasks-module sync state into the global SyncStatusPill so a
+  // single top-right indicator reflects activity from every module.
+  // Tasks-syncing is just "any per-list fetch in flight."
+  useEffect(() => {
+    setModuleSyncing('tasks', loadingUids.size > 0)
+  }, [loadingUids])
+  useEffect(() => registerSyncAllHandler('tasks', syncAll), [syncAll])
 
   // 1 Hz ticker, only running while the active list has an in-flight sync,
   // so the "Syncing… Ns" label updates without re-rendering the whole app

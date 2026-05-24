@@ -1067,7 +1067,7 @@ the `window.addEventListener('keydown', …)` to capture phase
 handler in the chain and focus stays trapped between Cancel/Confirm
 in both directions.
 
-### Global "Synced Xs ago" status in the top-right — ◑ MVP shipped, syncing/failed/click-to-sync deferred
+### Global "Synced Xs ago" status in the top-right — ✅ done
 **Task.** The design mock shows a small "● Synced 14s ago" line in the
 top-right of the window — a single at-a-glance indicator that the
 whole app is up to date. We already track per-list sync timestamps
@@ -1090,14 +1090,27 @@ support the calendar in the rollup, `CalMemory` gained a
 `lastSyncedAt: Map<string, number>` (was previously only persisted
 to disk in the cal snapshot); `CalendarView` seeds it from the disk
 snapshot on cold load and updates it on every successful sync.
-**Deferred follow-ups.** (1) "Syncing…" mid-sync — needs a global
-in-flight set that each view updates as it syncs. (2) "N failed" in
-the danger colour — needs a global error map similar to the contacts
-module's `errorByBook`. (3) Click-to-sync-all across modules — each
-currently-mounted view would have to expose its `syncAll` to a
-global registry the pill could call into. All three were dropped
-from MVP scope on purpose; the time-only label covers the user's
-original ask ("I like the sync status in the top right").
+**Resolution (follow-up).** All three deferred items shipped in the
+next pass. `syncStatus.ts` gained an in-flight Set, an errors Set,
+and a `Map<ModuleName, () => Promise<void>>` of sync-all handlers,
+all subscribed to via `subscribeSyncStatus(fn)`. Each module's view
+mounts two `useEffect`s — one mirroring its local "anything in
+flight" Set into `setModuleSyncing(m, …)`, and one calling
+`registerSyncAllHandler(m, syncAll)` (cleanup handles unmount).
+Contacts additionally pushes its `errorByBook` size through
+`setModuleSyncFailed('contacts', …)`. The pill now:
+- Renders "Syncing…" with a pulsing dot while anything is in flight.
+- Renders "N failed" in the danger colour when any module has a
+  failure on the books (tooltip lists the failing modules + hints
+  "click to retry").
+- Is clickable: invokes `triggerSyncAll()` which fans out to every
+  registered handler whose module is enabled. Disabled / unmounted
+  modules silently no-op.
+- Falls back to the original "Synced … ago" label when idle.
+Logout calls `resetSyncStatus()` so a re-login starts fresh. Tasks
+& calendar sync-all is "iterate collections, call per-collection
+sync"; contacts is the same; all three reuse existing per-row code,
+no new sync paths.
 
 ### Remember per-list cursor position when switching lists — ✅ done
 **Task.** Today, switching away from a list and back resets the
@@ -1175,6 +1188,51 @@ tasks sidebar (`MainView.tsx`), tasks detail (`DetailPanel.tsx`),
 contacts books + contacts list (`ContactsView.tsx`), and the
 calendar sidebar (`CalendarSidebar.tsx`) — caught the calendar one
 too since it shares the pattern. Inner `w-px` stroke unchanged.
+
+## Backlog (queued 2026-05-24 — batch 2)
+
+### Configurable inactive-zone fade levels (per zone)
+**Task.** Today every module hard-codes its inactive-zone opacities
+(tasks: sidebar 30 / detail varies · contacts: books 30 / list 60 /
+detail 70 after the recent bump). The user wants a setting to dial
+each of the three zones' fade independently — e.g. some prefer
+strongly de-emphasised inactive zones, others want them barely
+faded so they can scan both panes at once.
+**Plan sketch.**
+- Three persisted prefs per module:
+  `ete-sthetic.{tasks|contacts|calendar}.inactiveOpacity.<zone>` as
+  ints (e.g. 30, 60, 100 for "full opacity"). Default to today's
+  hard-codes so existing users see no change.
+- Replace the inline `opacity-30 / 60 / 70` class strings with an
+  inline `style={{ opacity: pct / 100 }}` driven by the pref.
+- UI: a small "Inactive zone fade" subsection in each module's
+  settings popover with three +/-/reset rows (mirror the existing
+  Zoom subsection's `ZoomRow` / Stepper pattern). Range maybe
+  20–100% in 10% steps.
+- One global toggle "Sync fade across modules" so a power user who
+  wants 50% everywhere doesn't have to set it three times per
+  module. Off by default — module-by-module is the safer baseline.
+
+### Completed / total subtask counter on parent rows
+**Task.** Each parent task should optionally show a small "3/8" (or
+similar) counter — completed subtasks vs total subtasks — so the
+user can see progress at a glance without expanding the branch.
+Both halves of the display should be independently toggleable:
+"show completed sub-tasks" + "show total sub-tasks."
+**Plan sketch.**
+- Compute the counts inside `TaskTree`'s row render: walk
+  `node.children` recursively, tallying completed (`status ===
+  'COMPLETED'`) and total. Memoise per node — `useMemo` on `roots`
+  so it doesn't recompute every keystroke.
+- Render the counter to the right of the row title, before the
+  due/priority pills. Style as a faint tabular-nums pill.
+- Two persisted toggles in `SettingsPopover` under a new "Task row"
+  subsection: "Show completed subtask count" + "Show total subtask
+  count." Default both ON. When only one is on, show "3" or "/8"
+  alone (with the slash dropped); when both are off, the counter
+  hides entirely.
+- Skip the counter on leaf tasks (no children) regardless of
+  toggle state — there's nothing to count.
 
 ## Known issues
 

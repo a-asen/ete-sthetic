@@ -18,6 +18,11 @@ import {
   saveContactSnapshot,
 } from '../services/contactsnapshot'
 import { getContactMemory, patchContactMemory } from '../services/contactstore'
+import {
+  registerSyncAllHandler,
+  setModuleSyncFailed,
+  setModuleSyncing,
+} from '../services/syncStatus'
 import { ContactCard, Avatar } from './contacts/ContactCard'
 import { ContactEditor } from './contacts/ContactEditor'
 import { ConfirmModal } from './ConfirmModal'
@@ -549,6 +554,25 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     const id = setInterval(tick, ms)
     return () => clearInterval(id)
   }, [bgSyncMin, addressBooks, activeBook, syncBook])
+
+  // Push contacts-module sync state into the global SyncStatusPill.
+  useEffect(() => {
+    setModuleSyncing('contacts', syncing.size > 0)
+  }, [syncing])
+  useEffect(() => {
+    setModuleSyncFailed('contacts', errorByBook.size > 0)
+  }, [errorByBook])
+  // Sync-all handler: kick a syncBook for every live book. Failures
+  // surface via errorByBook (above); we don't need to re-throw here.
+  useEffect(() => {
+    const syncAll = async () => {
+      const live = addressBooks
+        ? addressBooks.filter((b) => !b.isDeleted)
+        : []
+      await Promise.all(live.map((b) => syncBook(b.uid)))
+    }
+    return registerSyncAllHandler('contacts', syncAll)
+  }, [addressBooks, syncBook])
 
   const activeContacts = activeBook ? contactsByBook.get(activeBook) : undefined
 
