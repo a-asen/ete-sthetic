@@ -2,6 +2,11 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import { LoginScreen } from './components/LoginScreen'
 import { MainView } from './components/MainView'
 import { restoreSession } from './services/etebase'
+import {
+  MODULE_FLAGS_CHANGED_EVENT,
+  readModuleEnabled,
+  type ModuleName,
+} from './services/moduleFlags'
 
 // The calendar and contacts modules are dead weight for a tasks-only
 // session, so each loads on demand the first time the user switches to it.
@@ -17,20 +22,25 @@ const ContactsView = lazy(() =>
 )
 
 type AuthState = 'checking' | 'unauthenticated' | 'authenticated'
-type Module = 'tasks' | 'calendar' | 'contacts'
+
+const MODULE_ORDER: readonly ModuleName[] = ['tasks', 'calendar', 'contacts']
 
 // Slim module switcher (calendar-contacts-plan.md path A, step 2). Rendered
 // as a fixed pill so MainView's full-screen layout is left untouched.
+// Modules disabled via the settings flag aren't rendered here so the
+// switcher shrinks to whatever the user actually uses.
 function ModuleSwitch({
   module,
   onChange,
+  enabled,
 }: {
-  module: Module
-  onChange: (m: Module) => void
+  module: ModuleName
+  onChange: (m: ModuleName) => void
+  enabled: ReadonlySet<ModuleName>
 }) {
   return (
     <div className="fixed bottom-3 left-3 z-50 flex gap-0.5 rounded-lg border border-border bg-surface p-0.5 text-xs shadow-lg">
-      {(['tasks', 'calendar', 'contacts'] as const).map((m) => (
+      {MODULE_ORDER.filter((m) => enabled.has(m)).map((m) => (
         <button
           key={m}
           onClick={() => onChange(m)}
@@ -47,14 +57,33 @@ function ModuleSwitch({
   )
 }
 
+function readEnabledSet(): Set<ModuleName> {
+  return new Set(MODULE_ORDER.filter(readModuleEnabled))
+}
+
 function App() {
   const [auth, setAuth] = useState<AuthState>('checking')
-  const [module, setModule] = useState<Module>('tasks')
+  const [module, setModule] = useState<ModuleName>('tasks')
+  const [enabledModules, setEnabledModules] =
+    useState<Set<ModuleName>>(readEnabledSet)
 
   useEffect(() => {
     restoreSession().then((ok) => {
       setAuth(ok ? 'authenticated' : 'unauthenticated')
     })
+  }, [])
+
+  // Reflect flips made from any module's settings popover. If the
+  // currently-active module gets disabled, fall back to tasks (always
+  // enabled — see moduleFlags.ts's tasks-can't-be-off guard).
+  useEffect(() => {
+    const refresh = () => {
+      const next = readEnabledSet()
+      setEnabledModules(next)
+      setModule((cur) => (next.has(cur) ? cur : 'tasks'))
+    }
+    window.addEventListener(MODULE_FLAGS_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(MODULE_FLAGS_CHANGED_EVENT, refresh)
   }, [])
 
   if (auth === 'checking') {
@@ -73,7 +102,7 @@ function App() {
   return (
     <>
       {module === 'tasks' && <MainView onLoggedOut={onLoggedOut} />}
-      {module === 'calendar' && (
+      {module === 'calendar' && enabledModules.has('calendar') && (
         <Suspense
           fallback={
             <div className="flex h-screen items-center justify-center bg-bg">
@@ -84,7 +113,7 @@ function App() {
           <CalendarView onLoggedOut={onLoggedOut} />
         </Suspense>
       )}
-      {module === 'contacts' && (
+      {module === 'contacts' && enabledModules.has('contacts') && (
         <Suspense
           fallback={
             <div className="flex h-screen items-center justify-center bg-bg">
@@ -95,7 +124,11 @@ function App() {
           <ContactsView onLoggedOut={onLoggedOut} />
         </Suspense>
       )}
-      <ModuleSwitch module={module} onChange={setModule} />
+      <ModuleSwitch
+        module={module}
+        onChange={setModule}
+        enabled={enabledModules}
+      />
     </>
   )
 }

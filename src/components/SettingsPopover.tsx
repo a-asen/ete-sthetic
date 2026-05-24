@@ -5,6 +5,7 @@ import {
   readHintsEnabled,
   setHintsEnabled,
 } from '../services/hints'
+import { ModuleToggles } from './ModuleToggles'
 
 interface Props {
   hideCompleted: boolean
@@ -375,6 +376,8 @@ export function SettingsPopover({
           label="Show usage hints"
         />
       </Row>
+
+      <ModuleToggles />
 
       <div className="mt-1 border-t border-border">
         <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">

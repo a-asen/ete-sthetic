@@ -884,22 +884,31 @@ before-submit was left to the existing trim + `Account.login`
 error path; the inline error banner already surfaces server-side
 failures.
 
-### Disable individual modules
+### Disable individual modules — ✅ done
 **Task.** Some users only want a subset (tasks only, or
 tasks + contacts but no calendar, etc.). Let each module be turned
 off so its switcher button hides and its background sync stops
 running.
-**Plan.**
-- Four booleans `ete-sthetic.modules.{tasks,calendar,contacts,mail}
-  .enabled` (default on). Toggle row per module in a new "Modules"
-  subsection of the global settings popover.
-- `App.tsx` reads the flags and conditionally renders each switcher
-  button + lazy module. The active module stays selected if its flag
-  goes off mid-session — fall back to the first enabled one (or an
-  empty-state if none).
-- Disabled modules don't run their adaptive sync timers (gate the
-  effects in each `*View` on the flag). The on-disk snapshot stays
-  put so re-enabling is instant.
+**Resolution.** New `services/moduleFlags.ts` exposes
+`readModuleEnabled(m)` / `setModuleEnabled(m, on)` keyed on
+`ete-sthetic.modules.<m>.enabled` in localStorage (default ON — only
+explicit `'false'` disables). Flips broadcast a custom
+`MODULE_FLAGS_CHANGED_EVENT` so multiple settings popovers stay in
+sync without prop-drilling — same pattern the hints toggle uses.
+Tasks is *locked on* (defensive no-op in the service + a `locked`
+flag in the UI) so the user can't strand themselves with no home
+module. New `components/ModuleToggles.tsx` renders the "Modules"
+subsection (three toggle rows + a one-liner hint) and is embedded
+in all three settings popovers between Help and Account. `App.tsx`
+holds an `enabledModules: Set<ModuleName>` mirrored from the flags
+via the same event; the bottom-left `ModuleSwitch` filters its
+buttons through the set, and an effect re-pins `module` to `tasks`
+if the active one gets disabled mid-session. The lazy Suspense
+gates for calendar/contacts double-check `enabledModules.has(m)`
+so a disabled view never mounts → its sync timers don't run → no
+extra gating needed inside the views themselves. Snapshots and
+in-memory caches are untouched, so re-enabling a module brings it
+back instantly.
 
 ### Move logout to the settings menu — ✅ done
 **Task.** Logout currently sits at a high-visibility surface

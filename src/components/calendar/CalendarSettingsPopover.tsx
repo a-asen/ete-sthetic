@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { ModuleToggles } from '../ModuleToggles'
 
 type CalSort = 'original' | 'name'
 
@@ -193,6 +194,8 @@ export function CalendarSettingsPopover({
         Per-day overrides come later. A range must cross midnight
         (start later than end) to count.
       </p>
+
+      <ModuleToggles />
 
       <div className="mt-1 border-t border-border">
         <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
