@@ -41,6 +41,7 @@ import {
   registerSyncAllHandler,
   setModuleSyncing,
 } from '../services/syncStatus'
+import { useInactiveOpacities } from '../hooks/useInactiveOpacities'
 import {
   DEFAULT_TASK_SORT,
   type CollectionInfo,
@@ -440,6 +441,7 @@ export function MainView({ onLoggedOut }: Props) {
   // switching back from the calendar module is instant (no spinner, no
   // disk reread). The state-mirror effect below keeps the cache in sync.
   const m0 = getTaskMemory()
+  const inactiveOpacities = useInactiveOpacities()
   const [collections, setCollections] = useState<CollectionInfo[] | null>(
     () => m0.collections,
   )
@@ -3204,12 +3206,14 @@ export function MainView({ onLoggedOut }: Props) {
               ? sidebarFocusedWidth
               : sidebarCollapsedWidth,
           zoom: zoom.sidebar,
+          opacity:
+            focusZone === 'sidebar' ? 1 : inactiveOpacities.sidebar,
         }}
         className={`relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-surface ${
           isResizingSidebar
             ? 'select-none'
             : 'transition-[width,opacity] duration-300 ease-out'
-        } ${focusZone === 'sidebar' ? 'opacity-100' : 'opacity-30'}`}
+        }`}
       >
         {(() => {
           // Single source of truth for whether the sidebar renders the
@@ -3727,10 +3731,11 @@ export function MainView({ onLoggedOut }: Props) {
 
       <main
         data-focus-zone={focusZone}
-        style={{ zoom: zoom.tasks }}
-        className={`relative flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ease-out ${
-          focusZone === 'tasks' ? 'opacity-100' : 'opacity-20'
-        }`}
+        style={{
+          zoom: zoom.tasks,
+          opacity: focusZone === 'tasks' ? 1 : inactiveOpacities.middle,
+        }}
+        className="relative flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ease-out"
         onMouseDown={(e) => {
           // Pull focus to the tasks pane when the user clicks anywhere in
           // the centre column (without preventing the underlying click).

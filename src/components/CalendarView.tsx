@@ -51,6 +51,7 @@ import {
 } from '../services/icsImport'
 import { ImportIcsModal, type ImportPlanEntry } from './calendar/ImportIcsModal'
 import { PasteIcsModal } from './calendar/PasteIcsModal'
+import { ICS_OPEN_EVENT, type IcsOpenDetail } from '../App'
 import { MonthGrid } from './calendar/MonthGrid'
 import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
@@ -548,6 +549,33 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
   useEffect(() => {
     setModuleSyncing('calendar', syncingUids.size > 0)
   }, [syncingUids])
+
+  // OS "Open with → ete-sthetic" handoff. App.tsx switches to the
+  // calendar module and dispatches ICS_OPEN_EVENT with the argv path;
+  // we read the file and open the picker (same modal drag-drop and
+  // paste use). Single source of truth for "an .ics arrived from
+  // anywhere": the ImportIcsModal.
+  useEffect(() => {
+    const onOpen = async (e: Event) => {
+      const detail = (e as CustomEvent<IcsOpenDetail>).detail
+      if (!detail?.path) return
+      try {
+        const text = await readTextFile(detail.path)
+        const candidates = parseIcsCandidates(text)
+        if (candidates.length === 0) {
+          setNotice('No events found in that file')
+          return
+        }
+        setImporting(candidates)
+      } catch (err) {
+        setNotice(
+          `Couldn't open .ics: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    }
+    window.addEventListener(ICS_OPEN_EVENT, onOpen)
+    return () => window.removeEventListener(ICS_OPEN_EVENT, onOpen)
+  }, [])
   // Sync-all handler: fan out per-calendar syncs. handleSyncCalendar
   // dedupes via syncingUids so calling it on an already-syncing uid
   // is a no-op.

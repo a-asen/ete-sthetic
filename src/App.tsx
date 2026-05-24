@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { LoginScreen } from './components/LoginScreen'
 import { MainView } from './components/MainView'
 import { SyncStatusPill } from './components/SyncStatusPill'
@@ -6,8 +7,18 @@ import { restoreSession } from './services/etebase'
 import {
   MODULE_FLAGS_CHANGED_EVENT,
   readModuleEnabled,
+  setModuleEnabled,
   type ModuleName,
 } from './services/moduleFlags'
+
+// Custom event the OS "Open with" → argv path uses to hand a parsed
+// .ics file path to the calendar view. App.tsx invokes the Tauri
+// command on launch, switches to the calendar module, and dispatches
+// this so CalendarView can read the file + open the picker.
+export const ICS_OPEN_EVENT = 'ete-sthetic:ics-file-open'
+export interface IcsOpenDetail {
+  path: string
+}
 
 // The calendar and contacts modules are dead weight for a tasks-only
 // session, so each loads on demand the first time the user switches to it.
@@ -73,6 +84,43 @@ function App() {
       setAuth(ok ? 'authenticated' : 'unauthenticated')
     })
   }, [])
+
+  // OS "Open with → ete-sthetic" handoff. The Tauri Rust side stashes
+  // an .ics argv path in shared state on startup; we drain it via the
+  // take_pending_ics command once the user is authenticated. If the
+  // calendar module is disabled, force-enable it first — the user
+  // explicitly asked to open a calendar file, the alternative is the
+  // path getting silently dropped. Routes to the actual import flow
+  // by dispatching ICS_OPEN_EVENT, which CalendarView listens for.
+  useEffect(() => {
+    if (auth !== 'authenticated') return
+    let done = false
+    invoke<string | null>('take_pending_ics')
+      .then((path) => {
+        if (done || !path) return
+        if (!readModuleEnabled('calendar')) {
+          setModuleEnabled('calendar', true)
+        }
+        setModule('calendar')
+        // Defer one tick so the calendar view has time to mount its
+        // event listener before we fire.
+        requestAnimationFrame(() => {
+          window.dispatchEvent(
+            new CustomEvent<IcsOpenDetail>(ICS_OPEN_EVENT, {
+              detail: { path },
+            }),
+          )
+        })
+      })
+      .catch(() => {
+        // Command isn't registered (dev mode against an older binary,
+        // or non-Tauri build). Silently skip — drag-drop and Paste
+        // invite still cover the use case.
+      })
+    return () => {
+      done = true
+    }
+  }, [auth])
 
   // Reflect flips made from any module's settings popover. If the
   // currently-active module gets disabled, fall back to tasks (always

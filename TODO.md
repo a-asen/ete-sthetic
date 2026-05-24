@@ -802,36 +802,48 @@ Ctrl/Cmd-ArrowLeft is always native word-jump regardless of input
 contents. QuickAdd was already correct (no cancel on empty Ctrl+→,
 no ArrowLeft branch at all).
 
-### Open `.ics` files in ete-sthetic → one-click add to calendar
+### Open `.ics` files in ete-sthetic → one-click add to calendar — ✅ done (needs cargo rebuild + reinstall)
 **Task.** Register ete-sthetic as a handler for `.ics` /
 `text/calendar` files so a double-click anywhere (file manager,
 browser download, "Open with" from a mail client) opens the app
 with an "Add to calendar" prompt instead of dropping the file in
 some other calendar app or doing nothing.
-**Plan.**
-- Tauri side:
-  - Linux: ship a `.desktop` file with
-    `MimeType=text/calendar;` + `%f`/`%U` argv and a handler
-    binary entry. Optional helper for `xdg-mime default` on first
-    run (with the user's consent).
-  - macOS: `Info.plist` `CFBundleDocumentTypes` claiming the
-    `com.apple.ical.ics` UTI.
-  - Windows: registry `HKCR\.ics` + `HKCR\ete-sthetic.ics\shell\
-    open\command` entries written by the installer (or a one-off
-    "Set as default" button in settings).
-- App side: parse the first argv (or the `tauri://file-open`
-  event) for an `.ics` path on launch. Read the file, run it
-  through the same `ical.js` import path the future Mail
-  Accept-invite flow uses, then show a small confirm dialog:
-  "Add 'Sprint planning' to <calendar dropdown>?" → writes the
-  VEVENT via `services/etebase.ts::createCalendarItem` and
-  navigates to the day so the user sees the result.
-- Multi-event `.ics` (full calendar export, not a single invite):
-  prompt "1 event" vs "N events — import all to <calendar>?" so
-  a 500-event export doesn't import silently.
-- If a VEVENT with the same UID already exists, replace it (this
-  is the iTIP UPDATE semantic) rather than duplicate; surface
-  "Updated existing event" in the confirm.
+**Resolution.** Built on top of the quick-add-VEVENT picker so the
+single source of truth for "an .ics arrived from anywhere" stays
+`ImportIcsModal`. Wiring:
+- **Tauri bundle config.** `tauri.conf.json` `bundle.fileAssociations`
+  registers `ics` / `ifb` with `mimeType: text/calendar` and
+  `role: Viewer`. Tauri's bundler emits the matching `.desktop`
+  entry on Linux and `CFBundleDocumentTypes` on macOS at install
+  time; Windows installers gain the registry entries the same way.
+  Only takes effect after a fresh `cargo build` / `tauri build`
+  and reinstall — dev mode (`cargo run`) doesn't register OS-level
+  associations.
+- **Rust argv capture.** `src-tauri/src/lib.rs` parses
+  `std::env::args()` on startup, stashes any path ending in
+  `.ics` in a `Mutex<Option<String>>` exposed via Tauri's `manage`.
+  New `take_pending_ics` command drains the slot exactly once.
+- **JS handoff.** `App.tsx` calls `invoke('take_pending_ics')`
+  after authentication. If a path comes back: force-enables the
+  calendar module if disabled (the user explicitly opened a
+  calendar file), switches the active module to calendar, then
+  dispatches `ICS_OPEN_EVENT` with the path. `CalendarView`
+  listens, reads the file via `readTextFile`, parses with
+  `parseIcsCandidates`, and opens the picker (which already
+  handles 1-event vs N-event labels and UID-based "Updates
+  existing" badges). On dev mode against a binary without the
+  command, the invoke catches and silently no-ops so drag-drop
+  and Paste invite keep working.
+- **Subsequent-launch handoff.** A second double-click while the
+  app is already running currently opens a second instance.
+  `tauri-plugin-single-instance` would let the existing window
+  receive the new argv instead — TODO as a follow-up if it
+  becomes a real pain.
+- **Filesystem scope.** The existing fs allowlist covers `$HOME`,
+  `$DOCUMENT`, `$DESKTOP`, `$DOWNLOAD` — enough for the common
+  cases (mail downloads, attachments). Reads from `/tmp` or
+  other locations error in the picker's notice toast; expand
+  `capabilities/default.json` if it bites in practice.
 
 ### Quick-add VEVENTs from mail invites (without the full Mail module) — ◑ DnD + paste done, OS open-with deferred
 **Task.** Even before the proposed Mail module lands, give users
@@ -936,105 +948,12 @@ each owns its own `handleLogout` that calls `etebase.logout()` then
 module's settings. The sidebar logout button + its containing footer
 div in `MainView` are gone, freeing that real estate.
 
-### Module: Mail (proposed)
-**Task.** A minimal mail client whose **primary job is surfacing
-iTIP invitations** (`.ics` attachments with `METHOD:REQUEST`) so
-they can be accepted straight into the calendar module in one
-click. Reading regular mail is a bonus; rich features
-(threading, search, HTML rendering, attachments beyond `.ics`)
-are explicitly **out of scope for v1**.
-
-**Compatibility.** Standard IMAP (read) + SMTP (send REPLY) so it
-works with any provider that exposes them — Gmail (app password),
-iCloud, Fastmail, self-hosted Dovecot/Postfix, Outlook /
-Office365 (app password or basic IMAP; OAuth is v2). Outlook *the
-desktop client* isn't a server — what we're really matching is
-"any IMAP-reachable mailbox", which Outlook.com mailboxes are.
-
-**Plan (v1 — minimum useful).**
-
-*Storage / transport.*
-- Tauri Rust backend gains two crates: `async-imap` (read) and
-  `lettre` (send). Expose Tauri commands:
-  `mail_login(account_id)`, `mail_list_folders(account_id)`,
-  `mail_fetch_envelopes(account_id, folder, limit, since_uid?)`,
-  `mail_fetch_body(account_id, folder, uid)`,
-  `mail_send(account_id, raw_mime)`,
-  `mail_set_flag(account_id, folder, uid, flag, set)`.
-- Credentials stored in OS keychain via the `keyring` Rust crate
-  (never localStorage). Account metadata (host, port, username,
-  display name) in a JSON file in the app data dir — small enough
-  not to need etebase round-tripping.
-- Frontend `services/mail.ts`: thin wrappers around the Tauri
-  commands; cold-cache snapshot of envelopes per folder
-  (`mailsnapshot.ts`) mirroring `calendarsnapshot.ts`.
-
-*iTIP detection.*
-- When fetching a message body, walk MIME parts for
-  `text/calendar` or `application/ics`. Parse with the `ical.js`
-  already used by the calendar/contacts modules.
-- Tag the envelope in the snapshot: `kind: 'invite' | 'reply' |
-  'cancel' | 'normal'` based on the inner VCALENDAR's METHOD
-  property.
-
-*UI module.*
-- New `MailView.tsx` modelled after `ContactsView`: three-pane
-  layout (accounts/folders sidebar · message list · message
-  detail), per-zone zoom + drag-resize + focus zone, same
-  Ctrl+L/T/E navigation.
-- List header has a filter chip defaulting to **"Invitations"**
-  so the v1 use case is one click away; "All" shows everything.
-- Invite detail pane shows organizer / time / location /
-  description + **Accept / Decline / Tentative** buttons.
-  Accept: writes the VEVENT into the user's default calendar via
-  `services/etebase.ts::createCalendarItem`, updates the
-  invite's PARTSTAT, sends a METHOD:REPLY back to the ORGANIZER
-  via SMTP, and marks the mail `\Seen`.
-- Reuse `Hint`, `ContextMenu`, drag-resize handles, settings
-  popover patterns from the existing modules.
-
-*Auth UX.*
-- Per-account login flow: server (autodetected from email domain
-  via well-known autoconfig endpoints for common providers,
-  fallback to manual host/port + TLS toggle) + username +
-  password / app password.
-- **OAuth (Gmail / Microsoft Identity) is v2.** v1 ships
-  IMAP/SMTP + app passwords only, keeps the surface small, and
-  defers Office365 modern-auth restrictions to that round.
-
-*Settings.*
-- "Mail" subsection in the global settings popover: add /
-  remove accounts, set the **default calendar** that Accept
-  writes to, poll interval (mirrors the contacts adaptive-sync
-  prefs grid: 0/1/5/15/30/60 min active, etc.).
-
-*Out of scope for v1.*
-- Compose (beyond the auto-generated METHOD:REPLY for RSVP),
-  drafts, threading, search, HTML rendering, non-`.ics`
-  attachments, multi-account merged inbox, IMAP IDLE push
-  (polling on the contacts cadence is fine).
-
-*Open questions / risks.*
-- **Keychain on Linux.** The `keyring` crate uses Secret Service
-  / DBus which works on most desktops but not in headless /
-  remote setups. Document fallback: env-var or one-shot
-  passphrase prompt that doesn't persist.
-- **Office365 basic-auth deprecation.** Many orgs disable
-  password-based IMAP. v1 explicitly says "needs an app
-  password; OAuth in v2."
-- **Duplicate VEVENT on Accept.** If the user already imported
-  the `.ics` manually before clicking Accept, the calendar would
-  get two. Mitigation: de-dupe by VEVENT `UID` before insert —
-  iTIP invitations carry the canonical UID, and idempotent
-  inserts already exist in the calendar module's helpers.
-- **Sent-folder write.** SMTP doesn't append to Sent; we'd need
-  to IMAP-APPEND the sent REPLY into the configured Sent folder
-  (autodetect via the IMAP `SPECIAL-USE` extension, fallback to
-  the literal "Sent" name).
-
-**Dependency on the other batch-2 items.** "Disable individual
-modules" is a prerequisite if shipping Mail by default — users
-who never wanted a mail client should be able to turn it off.
+### Module: Mail (proposed) — ➜ moved to Long-term
+Out of the active backlog. Multi-week scope; the existing
+quick-add-VEVENTs flow (drag-drop + paste) already covers the
+80 % use case (one-click invite into the calendar). The full plan
+is preserved verbatim under [Long-term](#long-term) at the bottom
+of this file.
 
 ## Backlog (queued 2026-05-24)
 
@@ -1202,48 +1121,58 @@ too since it shares the pattern. Inner `w-px` stroke unchanged.
 
 ## Backlog (queued 2026-05-24 — batch 2)
 
-### Configurable inactive-zone fade levels (per zone)
+### Configurable inactive-zone fade levels (per zone) — ✅ done
 **Task.** Today every module hard-codes its inactive-zone opacities
 (tasks: sidebar 30 / detail varies · contacts: books 30 / list 60 /
 detail 70 after the recent bump). The user wants a setting to dial
 each of the three zones' fade independently — e.g. some prefer
 strongly de-emphasised inactive zones, others want them barely
 faded so they can scan both panes at once.
-**Plan sketch.**
-- Three persisted prefs per module:
-  `ete-sthetic.{tasks|contacts|calendar}.inactiveOpacity.<zone>` as
-  ints (e.g. 30, 60, 100 for "full opacity"). Default to today's
-  hard-codes so existing users see no change.
-- Replace the inline `opacity-30 / 60 / 70` class strings with an
-  inline `style={{ opacity: pct / 100 }}` driven by the pref.
-- UI: a small "Inactive zone fade" subsection in each module's
-  settings popover with three +/-/reset rows (mirror the existing
-  Zoom subsection's `ZoomRow` / Stepper pattern). Range maybe
-  20–100% in 10% steps.
-- One global toggle "Sync fade across modules" so a power user who
-  wants 50% everywhere doesn't have to set it three times per
-  module. Off by default — module-by-module is the safer baseline.
+**Resolution.** Simplified to three *global* prefs (sidebar /
+middle / detail) applied uniformly to Tasks and Contacts — the
+two modules with focus-zone systems. The original plan called for
+per-module + a "sync across modules" toggle; the simpler model
+covers the same use case with a fraction of the surface area and
+can be split per-module later if the user actually wants it.
+- New `services/inactiveOpacity.ts` keys `ete-sthetic.inactiveOpacity
+  .<sidebar|middle|detail>` in localStorage. Range 20–100 % in 10 %
+  steps. Defaults match the previous hard-codes (30 / 60 / 70).
+- New `hooks/useInactiveOpacities()` returns the three values as
+  0–1 floats and re-renders on the broadcast event.
+- `MainView` (tasks aside + main pane) and `ContactsView` (books,
+  list, detail) replaced their `opacity-N` class strings with an
+  inline `style={{ opacity: active ? 1 : inactiveOpacities.<zone> }}`.
+  `DetailPanel` honours the `detail` pref in the pinned-but-not-
+  focused case (collapsed-strip opacity is a separate visual
+  treatment and intentionally not user-tunable).
+- New `components/InactiveOpacitySettings.tsx` renders the three
+  +/-/reset rows. Embedded in both `SettingsPopover` and
+  `ContactsSettingsPopover` between Help and Modules; flipping a
+  slider in either popover is mirrored everywhere via the
+  `INACTIVE_OPACITY_CHANGED_EVENT`. CalendarView doesn't yet have a
+  focus-zone system, so the prefs no-op there — a follow-up if the
+  calendar module grows one.
 
-### Completed / total subtask counter on parent rows
+### Completed / total subtask counter on parent rows — ✅ done
 **Task.** Each parent task should optionally show a small "3/8" (or
 similar) counter — completed subtasks vs total subtasks — so the
 user can see progress at a glance without expanding the branch.
 Both halves of the display should be independently toggleable:
 "show completed sub-tasks" + "show total sub-tasks."
-**Plan sketch.**
-- Compute the counts inside `TaskTree`'s row render: walk
-  `node.children` recursively, tallying completed (`status ===
-  'COMPLETED'`) and total. Memoise per node — `useMemo` on `roots`
-  so it doesn't recompute every keystroke.
-- Render the counter to the right of the row title, before the
-  due/priority pills. Style as a faint tabular-nums pill.
-- Two persisted toggles in `SettingsPopover` under a new "Task row"
-  subsection: "Show completed subtask count" + "Show total subtask
-  count." Default both ON. When only one is on, show "3" or "/8"
-  alone (with the slash dropped); when both are off, the counter
-  hides entirely.
-- Skip the counter on leaf tasks (no children) regardless of
-  toggle state — there's nothing to count.
+**Resolution.** New `services/taskRowSettings.ts` keys two booleans
+under `ete-sthetic.tasks.row.show{Completed,Total}Count` (default
+both ON) and broadcasts `TASK_ROW_SETTINGS_CHANGED_EVENT` on flip.
+`TaskTree` reads both, plus a `subtaskCounts: Map<uid, {done, total}>`
+memoised on `roots` (single recursive walk; entries only added for
+nodes with children, so the lookup itself doubles as the leaf
+skip). Inside the row render, a small `<span>` between the title
+and the priority/due pills renders "3/8", "3", "/8", or nothing
+depending on the toggle combination. Style is a faint
+`tabular-nums` pill in `bg-surface-2`. Toggles surface in
+`SettingsPopover` under a new "Task row" subsection (between Help
+and Inactive-zone fade); the popover and TaskTree both subscribe
+to the broadcast event so flipping a toggle takes effect without
+a remount.
 
 ## Known issues
 
@@ -1285,3 +1214,110 @@ and fall through to a normal network sync — the "Loading tasks…" line
 clears within 2s no matter what, and `fetchCollection` populates the
 items the same way a manual refresh would. Root cause not pinpointed,
 but the symptom can no longer leave the pane stuck.
+
+## Long-term
+
+Things that aren't on the active roadmap but are tracked here so the
+thinking isn't lost if/when they come back around. Not commitments —
+move an entry back up into the active queue (a "Backlog (queued …)"
+section) if it's actually being scheduled.
+
+### Module: Mail (proposed)
+**Task.** A minimal mail client whose **primary job is surfacing
+iTIP invitations** (`.ics` attachments with `METHOD:REQUEST`) so
+they can be accepted straight into the calendar module in one
+click. Reading regular mail is a bonus; rich features
+(threading, search, HTML rendering, attachments beyond `.ics`)
+are explicitly **out of scope for v1**.
+
+**Compatibility.** Standard IMAP (read) + SMTP (send REPLY) so it
+works with any provider that exposes them — Gmail (app password),
+iCloud, Fastmail, self-hosted Dovecot/Postfix, Outlook /
+Office365 (app password or basic IMAP; OAuth is v2). Outlook *the
+desktop client* isn't a server — what we're really matching is
+"any IMAP-reachable mailbox", which Outlook.com mailboxes are.
+
+**Plan (v1 — minimum useful).**
+
+*Storage / transport.*
+- Tauri Rust backend gains two crates: `async-imap` (read) and
+  `lettre` (send). Expose Tauri commands:
+  `mail_login(account_id)`, `mail_list_folders(account_id)`,
+  `mail_fetch_envelopes(account_id, folder, limit, since_uid?)`,
+  `mail_fetch_body(account_id, folder, uid)`,
+  `mail_send(account_id, raw_mime)`,
+  `mail_set_flag(account_id, folder, uid, flag, set)`.
+- Credentials stored in OS keychain via the `keyring` Rust crate
+  (never localStorage). Account metadata (host, port, username,
+  display name) in a JSON file in the app data dir — small enough
+  not to need etebase round-tripping.
+- Frontend `services/mail.ts`: thin wrappers around the Tauri
+  commands; cold-cache snapshot of envelopes per folder
+  (`mailsnapshot.ts`) mirroring `calendarsnapshot.ts`.
+
+*iTIP detection.*
+- When fetching a message body, walk MIME parts for
+  `text/calendar` or `application/ics`. Parse with the `ical.js`
+  already used by the calendar/contacts modules.
+- Tag the envelope in the snapshot: `kind: 'invite' | 'reply' |
+  'cancel' | 'normal'` based on the inner VCALENDAR's METHOD
+  property.
+
+*UI module.*
+- New `MailView.tsx` modelled after `ContactsView`: three-pane
+  layout (accounts/folders sidebar · message list · message
+  detail), per-zone zoom + drag-resize + focus zone, same
+  Ctrl+L/T/E navigation.
+- List header has a filter chip defaulting to **"Invitations"**
+  so the v1 use case is one click away; "All" shows everything.
+- Invite detail pane shows organizer / time / location /
+  description + **Accept / Decline / Tentative** buttons.
+  Accept: writes the VEVENT into the user's default calendar via
+  `services/etebase.ts::createCalendarItem`, updates the
+  invite's PARTSTAT, sends a METHOD:REPLY back to the ORGANIZER
+  via SMTP, and marks the mail `\Seen`.
+- Reuse `Hint`, `ContextMenu`, drag-resize handles, settings
+  popover patterns from the existing modules.
+
+*Auth UX.*
+- Per-account login flow: server (autodetected from email domain
+  via well-known autoconfig endpoints for common providers,
+  fallback to manual host/port + TLS toggle) + username +
+  password / app password.
+- **OAuth (Gmail / Microsoft Identity) is v2.** v1 ships
+  IMAP/SMTP + app passwords only, keeps the surface small, and
+  defers Office365 modern-auth restrictions to that round.
+
+*Settings.*
+- "Mail" subsection in the global settings popover: add /
+  remove accounts, set the **default calendar** that Accept
+  writes to, poll interval (mirrors the contacts adaptive-sync
+  prefs grid: 0/1/5/15/30/60 min active, etc.).
+
+*Out of scope for v1.*
+- Compose (beyond the auto-generated METHOD:REPLY for RSVP),
+  drafts, threading, search, HTML rendering, non-`.ics`
+  attachments, multi-account merged inbox, IMAP IDLE push
+  (polling on the contacts cadence is fine).
+
+*Open questions / risks.*
+- **Keychain on Linux.** The `keyring` crate uses Secret Service
+  / DBus which works on most desktops but not in headless /
+  remote setups. Document fallback: env-var or one-shot
+  passphrase prompt that doesn't persist.
+- **Office365 basic-auth deprecation.** Many orgs disable
+  password-based IMAP. v1 explicitly says "needs an app
+  password; OAuth in v2."
+- **Duplicate VEVENT on Accept.** If the user already imported
+  the `.ics` manually before clicking Accept, the calendar would
+  get two. Mitigation: de-dupe by VEVENT `UID` before insert —
+  iTIP invitations carry the canonical UID, and the
+  quick-add-VEVENTs picker already implements this de-dup.
+- **Sent-folder write.** SMTP doesn't append to Sent; we'd need
+  to IMAP-APPEND the sent REPLY into the configured Sent folder
+  (autodetect via the IMAP `SPECIAL-USE` extension, fallback to
+  the literal "Sent" name).
+
+**Dependency.** "Disable individual modules" (✅ done) is a
+prerequisite if shipping Mail by default — users who never want a
+mail client should be able to turn it off.

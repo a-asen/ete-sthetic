@@ -9,6 +9,11 @@ import {
 } from 'react'
 import type { Priority, TaskNode } from '../types'
 import { findParentAndSiblings, flattenVisible } from '../services/tree'
+import {
+  TASK_ROW_SETTINGS_CHANGED_EVENT,
+  readShowCompletedSubtaskCount,
+  readShowTotalSubtaskCount,
+} from '../services/taskRowSettings'
 
 function bumpPriority(current: Priority, delta: 1 | -1): Priority {
   // delta 1 = "more important" (toward 1). delta -1 = "less important".
@@ -365,6 +370,46 @@ export function TaskTree({
   // (falls back to the keyboard selection when nothing is hovered).
   const [hoveredUid, setHoveredUid] = useState<string | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
+  // Settings: "show completed subtask count" / "show total subtask count"
+  // on parent rows. Re-read on the broadcast event so a toggle in the
+  // settings popover takes effect without remount.
+  const [showCompletedSub, setShowCompletedSub] = useState(
+    readShowCompletedSubtaskCount,
+  )
+  const [showTotalSub, setShowTotalSub] = useState(
+    readShowTotalSubtaskCount,
+  )
+  useEffect(() => {
+    const refresh = () => {
+      setShowCompletedSub(readShowCompletedSubtaskCount())
+      setShowTotalSub(readShowTotalSubtaskCount())
+    }
+    window.addEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
+    return () =>
+      window.removeEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
+  }, [])
+  // Recursive descendant counts (completed + total) per uid. Skips
+  // leaves (no children → no entry in the map → no counter painted).
+  // Recomputed whenever the tree shape changes; one walk per render
+  // pass at most.
+  const subtaskCounts = useMemo(() => {
+    const map = new Map<string, { done: number; total: number }>()
+    const walk = (n: TaskNode): { done: number; total: number } => {
+      let done = 0
+      let total = 0
+      for (const c of n.children) {
+        total += 1
+        if (c.todo.status === 'COMPLETED') done += 1
+        const inner = walk(c)
+        done += inner.done
+        total += inner.total
+      }
+      if (n.children.length > 0) map.set(n.todo.uid, { done, total })
+      return { done, total }
+    }
+    for (const r of roots) walk(r)
+    return map
+  }, [roots])
 
   useEffect(() => {
     if (editingUid && editInputRef.current) {
@@ -1026,6 +1071,25 @@ export function TaskTree({
                 saving…
               </span>
             )}
+
+            {(() => {
+              if (!showCompletedSub && !showTotalSub) return null
+              const c = subtaskCounts.get(node.todo.uid)
+              if (!c) return null
+              const text = showCompletedSub
+                ? showTotalSub
+                  ? `${c.done}/${c.total}`
+                  : `${c.done}`
+                : `/${c.total}`
+              return (
+                <span
+                  className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-text-faint"
+                  title={`${c.done} of ${c.total} subtasks complete`}
+                >
+                  {text}
+                </span>
+              )
+            })()}
 
             {pLabel && (
               <span

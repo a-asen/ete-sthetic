@@ -10,6 +10,7 @@ import type {
 import type { DateValue, VTodoPatch } from '../services/vtodo'
 import { CalendarPopover } from './CalendarPopover'
 import { ConfirmModal } from './ConfirmModal'
+import { useInactiveOpacities } from '../hooks/useInactiveOpacities'
 
 interface Props {
   task: TaskItem | null
@@ -320,6 +321,7 @@ export function DetailPanel({
   isResizing = false,
   pending = false,
 }: Props) {
+  const inactiveOpacities = useInactiveOpacities()
   // Draft is seeded once per mount. MainView re-keys this component on
   // selected uid change so a different task gets fresh state without an
   // imperative reset effect; in-flight server updates for the same task
@@ -569,11 +571,20 @@ export function DetailPanel({
   // Width: drag-controlled px when expanded, fixed thin strip when
   // collapsed. Class stays w-10 in collapsed mode so we don't conflict
   // with the inline style.
-  const asideClasses = !showFullPanel
-    ? 'w-10 opacity-60'
+  // The collapsed-strip opacity is a fixed treatment unrelated to the
+  // user's inactive-fade pref (the strip is half-hidden by design,
+  // not because the panel is "inactive"). Pinned-but-not-focused
+  // honours the user's `detail` pref so they can tune it via settings.
+  const inactiveOpacityVal = !showFullPanel
+    ? 0.6
     : pinned && !focused
-      ? 'opacity-40 translate-x-1'
-      : 'opacity-100'
+      ? inactiveOpacities.detail
+      : 1
+  const asideClasses = !showFullPanel
+    ? 'w-10'
+    : pinned && !focused
+      ? 'translate-x-1'
+      : ''
   const widthPx = showFullPanel ? (focusedWidth ?? 320) : undefined
 
   return (
@@ -584,6 +595,7 @@ export function DetailPanel({
       }}
       style={{
         zoom,
+        opacity: inactiveOpacityVal,
         ...(widthPx != null ? { width: widthPx } : null),
       }}
       className={`relative flex shrink-0 flex-col overflow-hidden border-l border-border bg-surface ${

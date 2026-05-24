@@ -5,6 +5,7 @@ import {
   setHintsEnabled,
 } from '../services/hints'
 import { ModuleToggles } from './ModuleToggles'
+import { InactiveOpacitySettings } from './InactiveOpacitySettings'
 
 interface Props {
   booksZoomPct: number
@@ -263,6 +264,8 @@ export function ContactsSettingsPopover({
           label="Show usage hints"
         />
       </Row>
+
+      <InactiveOpacitySettings />
 
       <ModuleToggles />
 

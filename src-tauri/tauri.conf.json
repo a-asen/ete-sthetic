@@ -35,6 +35,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["ics", "ifb"],
+        "name": "iCalendar",
+        "description": "iCalendar invitation / feed",
+        "role": "Viewer",
+        "mimeType": "text/calendar"
+      }
+    ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

@@ -23,6 +23,7 @@ import {
   setModuleSyncFailed,
   setModuleSyncing,
 } from '../services/syncStatus'
+import { useInactiveOpacities } from '../hooks/useInactiveOpacities'
 import { ContactCard, Avatar } from './contacts/ContactCard'
 import { ContactEditor } from './contacts/ContactEditor'
 import { ConfirmModal } from './ConfirmModal'
@@ -175,6 +176,7 @@ interface ContactsViewProps {
 }
 
 export function ContactsView({ onLoggedOut }: ContactsViewProps) {
+  const inactiveOpacities = useInactiveOpacities()
   // Seeded synchronously from the process-lifetime cache so a module
   // switch and back is instant (no flash, no spinner).
   const [addressBooks, setAddressBooks] = useState<CollectionInfo[] | null>(
@@ -947,12 +949,16 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
       {/* ---- Address books ---- */}
       <aside
         onMouseDown={() => setFocusZone('books')}
-        style={{ width: booksWidth, zoom: zoom.books }}
+        style={{
+          width: booksWidth,
+          zoom: zoom.books,
+          opacity: focusZone === 'books' ? 1 : inactiveOpacities.sidebar,
+        }}
         className={`relative flex shrink-0 flex-col border-r border-border bg-surface ${
           isResizingBooks
             ? 'select-none'
             : 'transition-opacity duration-300 ease-out'
-        } ${focusZone === 'books' ? 'opacity-100' : 'opacity-30'}`}
+        }`}
       >
         <div className="flex items-center justify-between px-3 py-3">
           <span className="text-xs font-semibold uppercase tracking-wider text-text-faint">
@@ -1139,12 +1145,16 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
       {/* ---- Contact list ---- */}
       <div
         onMouseDown={() => setFocusZone('list')}
-        style={{ width: listWidth, zoom: zoom.list }}
+        style={{
+          width: listWidth,
+          zoom: zoom.list,
+          opacity: focusZone === 'list' ? 1 : inactiveOpacities.middle,
+        }}
         className={`relative flex shrink-0 flex-col border-r border-border bg-surface ${
           isResizingList
             ? 'select-none'
             : 'transition-opacity duration-300 ease-out'
-        } ${focusZone === 'list' ? 'opacity-100' : 'opacity-60'}`}
+        }`}
       >
         <div className="flex items-center gap-2 px-3 py-3">
           <input
@@ -1360,10 +1370,11 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
       {/* ---- Detail / editor ---- */}
       <section
         onMouseDown={() => setFocusZone('detail')}
-        style={{ zoom: zoom.detail }}
-        className={`flex min-w-0 flex-1 flex-col bg-bg transition-opacity duration-300 ease-out ${
-          focusZone === 'detail' ? 'opacity-100' : 'opacity-70'
-        }`}
+        style={{
+          zoom: zoom.detail,
+          opacity: focusZone === 'detail' ? 1 : inactiveOpacities.detail,
+        }}
+        className="flex min-w-0 flex-1 flex-col bg-bg transition-opacity duration-300 ease-out"
       >
         {error && (
           <div className="flex items-center justify-between gap-2 border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-text-muted">

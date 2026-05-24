@@ -6,6 +6,14 @@ import {
   setHintsEnabled,
 } from '../services/hints'
 import { ModuleToggles } from './ModuleToggles'
+import { InactiveOpacitySettings } from './InactiveOpacitySettings'
+import {
+  TASK_ROW_SETTINGS_CHANGED_EVENT,
+  readShowCompletedSubtaskCount,
+  readShowTotalSubtaskCount,
+  setShowCompletedSubtaskCount,
+  setShowTotalSubtaskCount,
+} from '../services/taskRowSettings'
 
 interface Props {
   hideCompleted: boolean
@@ -201,12 +209,29 @@ export function SettingsPopover({
   const ref = useRef<HTMLDivElement>(null)
   const [hex, setHex] = useState(accent ?? '#2f8a6c')
   const [hintsOn, setHintsOn] = useState(readHintsEnabled)
+  const [showDoneCount, setShowDoneCount] = useState(
+    readShowCompletedSubtaskCount,
+  )
+  const [showTotalCount, setShowTotalCount] = useState(
+    readShowTotalSubtaskCount,
+  )
   // Reflect changes made from the contacts settings popover (or any
   // future surface that flips hints).
   useEffect(() => {
     const refresh = () => setHintsOn(readHintsEnabled())
     window.addEventListener(HINTS_CHANGED_EVENT, refresh)
     return () => window.removeEventListener(HINTS_CHANGED_EVENT, refresh)
+  }, [])
+  // Mirror row-setting flips so the toggles stay in sync if changed
+  // from another surface (none today, but the contract is consistent).
+  useEffect(() => {
+    const refresh = () => {
+      setShowDoneCount(readShowCompletedSubtaskCount())
+      setShowTotalCount(readShowTotalSubtaskCount())
+    }
+    window.addEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
+    return () =>
+      window.removeEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
   }, [])
 
   useEffect(() => {
@@ -376,6 +401,26 @@ export function SettingsPopover({
           label="Show usage hints"
         />
       </Row>
+
+      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+        Task row
+      </p>
+      <Row label="Show completed subtask count">
+        <Toggle
+          on={showDoneCount}
+          onClick={() => setShowCompletedSubtaskCount(!showDoneCount)}
+          label="Show completed subtask count"
+        />
+      </Row>
+      <Row label="Show total subtask count">
+        <Toggle
+          on={showTotalCount}
+          onClick={() => setShowTotalSubtaskCount(!showTotalCount)}
+          label="Show total subtask count"
+        />
+      </Row>
+
+      <InactiveOpacitySettings />
 
       <ModuleToggles />
 
