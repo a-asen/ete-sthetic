@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 interface SortOpt {
   value: string
@@ -15,6 +16,7 @@ interface Props {
   showDeleted: boolean
   onToggleShowDeleted: () => void
   onClose: () => void
+  anchorRef: React.RefObject<HTMLElement | null>
 }
 
 // Settings for the list (sidebar) view — the low-frequency controls
@@ -30,8 +32,31 @@ export function SidebarSettingsPopover({
   showDeleted,
   onToggleShowDeleted,
   onClose,
+  anchorRef,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
+  // Anchor below the gear button, right-aligned with it, then clamped
+  // into the viewport so it never disappears off-screen when the
+  // sidebar is narrow.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current
+    const el = ref.current
+    if (!anchor || !el) return
+    const a = anchor.getBoundingClientRect()
+    const { width, height } = el.getBoundingClientRect()
+    const pad = 8
+    const gap = 4
+    const desiredLeft = a.right - width
+    const left = Math.max(
+      pad,
+      Math.min(desiredLeft, window.innerWidth - width - pad),
+    )
+    const desiredTop = a.bottom + gap
+    const top = Math.min(desiredTop, window.innerHeight - height - pad)
+    setPos({ top, left })
+  }, [anchorRef])
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -93,12 +118,17 @@ export function SidebarSettingsPopover({
     onToggleShowDeleted,
   ])
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       role="dialog"
       aria-label="List settings popover"
-      className="absolute right-0 top-6 z-30 w-60 rounded-md border border-border bg-surface p-2 shadow-xl"
+      style={{
+        top: pos?.top ?? -9999,
+        left: pos?.left ?? -9999,
+        visibility: pos ? 'visible' : 'hidden',
+      }}
+      className="fixed z-50 w-60 rounded-md border border-border bg-surface p-2 shadow-xl"
     >
       <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
         Sort lists
@@ -151,6 +181,7 @@ export function SidebarSettingsPopover({
           Tombstones from other clients (read-only cached items).
         </p>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

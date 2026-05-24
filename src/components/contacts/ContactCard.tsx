@@ -1,6 +1,19 @@
 import { useState } from 'react'
 import type { VCard, VCardAddress } from '../../types'
 
+// Normalise a vCard BDAY value for display. Accepts the common shapes the
+// parser preserves verbatim: vCard 3.0 `YYYY-MM-DD`, vCard 4.0 `YYYYMMDD`,
+// and the year-omitted `--MM-DD` / `--MMDD` partial form. Returns the raw
+// value untouched if it doesn't match (e.g. a free-form `circa 1990`).
+function formatBirthday(raw: string): string {
+  const s = raw.trim()
+  let m = s.match(/^(\d{4})-?(\d{2})-?(\d{2})$/)
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`
+  m = s.match(/^--(\d{2})-?(\d{2})$/)
+  if (m) return `${m[1]}-${m[2]}`
+  return s
+}
+
 // Initials for the avatar fallback — first letter of the first two words.
 function initialsOf(fn: string): string {
   const words = fn.trim().split(/\s+/).filter(Boolean)
@@ -200,7 +213,9 @@ export function ContactCard({ card, pending, onEdit, onDelete }: Props) {
         {card.birthday && (
           <section>
             <p className={labelClass}>Birthday</p>
-            <p className="mt-1 select-text text-text">{card.birthday}</p>
+            <p className="mt-1 select-text text-text">
+              {formatBirthday(card.birthday)}
+            </p>
           </section>
         )}
 

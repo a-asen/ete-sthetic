@@ -81,8 +81,12 @@ export function ConfirmModal({
         onConfirm()
       }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    // Capture phase so the focus trap wins over any inner element's
+    // keydown handling (in particular, the browser's native Tab/Shift+Tab
+    // focus move runs as the default action of this event — calling
+    // preventDefault first stops focus from escaping the dialog).
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
   }, [onCancel, onConfirm, onDismiss])
 
   return (

@@ -27,7 +27,7 @@ import { Hint } from './Hint'
 type Mode = 'view' | 'edit' | 'create'
 type ContactsFocusZone = 'books' | 'list' | 'detail'
 
-const FOCUS_ZONE_KEY = 'ete-stethic.contacts.focusZone'
+const FOCUS_ZONE_KEY = 'ete-sthetic.contacts.focusZone'
 
 function readFocusZone(): ContactsFocusZone {
   try {
@@ -43,9 +43,9 @@ const ZOOM_MIN = 0.6
 const ZOOM_MAX = 2
 const ZOOM_STEP = 0.1
 const ZOOM_KEY: Record<ContactsFocusZone, string> = {
-  books: 'ete-stethic.contacts.zoom.books',
-  list: 'ete-stethic.contacts.zoom.list',
-  detail: 'ete-stethic.contacts.zoom.detail',
+  books: 'ete-sthetic.contacts.zoom.books',
+  list: 'ete-sthetic.contacts.zoom.list',
+  detail: 'ete-sthetic.contacts.zoom.detail',
 }
 
 function clampZoom(n: number): number {
@@ -71,8 +71,8 @@ function writeZoom(zone: ContactsFocusZone, value: number) {
   }
 }
 
-const BOOKS_WIDTH_KEY = 'ete-stethic.contacts.booksWidth'
-const LIST_WIDTH_KEY = 'ete-stethic.contacts.listWidth'
+const BOOKS_WIDTH_KEY = 'ete-sthetic.contacts.booksWidth'
+const LIST_WIDTH_KEY = 'ete-sthetic.contacts.listWidth'
 const BOOKS_MIN_WIDTH = 140
 const BOOKS_MAX_WIDTH = 360
 const BOOKS_DEFAULT_WIDTH = 208 // matches the legacy w-52
@@ -104,9 +104,9 @@ function writePaneWidth(key: string, value: number) {
 // tasks module: the active book refreshes frequently, other books much
 // less often, switching to a book kicks a delta sync only if its
 // snapshot is older than the freshness window.
-const CONTACTS_ACTIVE_SYNC_KEY = 'ete-stethic.contacts.activeSyncMin'
-const CONTACTS_BG_SYNC_KEY = 'ete-stethic.contacts.bgSyncMin'
-const CONTACTS_SWITCH_FRESH_KEY = 'ete-stethic.contacts.switchFreshMin'
+const CONTACTS_ACTIVE_SYNC_KEY = 'ete-sthetic.contacts.activeSyncMin'
+const CONTACTS_BG_SYNC_KEY = 'ete-sthetic.contacts.bgSyncMin'
+const CONTACTS_SWITCH_FRESH_KEY = 'ete-sthetic.contacts.switchFreshMin'
 const CONTACTS_ACTIVE_SYNC_OPTIONS = [0, 1, 5, 15, 30, 60] as const
 const CONTACTS_BG_SYNC_OPTIONS = [0, 30, 60, 240, 720, 1440] as const
 const CONTACTS_SWITCH_FRESH_OPTIONS = [0, 15, 30, 60, 240] as const
@@ -791,6 +791,19 @@ export function ContactsView() {
         startCreate()
         return
       }
+      // Ctrl/Cmd+F → focus the contact-list search bar. Honored from any
+      // zone (mirrors the tasks module's filter shortcut) and overrides
+      // the browser's native find dialog.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        (e.key === 'f' || e.key === 'F')
+      ) {
+        e.preventDefault()
+        searchRef.current?.focus()
+        searchRef.current?.select()
+        return
+      }
       // Zone meta-navigation. Ctrl+L / Ctrl+T / Ctrl+E jump straight to
       // a zone; Ctrl+←/→ step through them. Honored even from text
       // fields except Ctrl+←/→, which yield to native word-jump there.
@@ -1077,7 +1090,7 @@ export function ContactsView() {
             e.stopPropagation()
             handleBooksResizeStart(e)
           }}
-          className="group absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize"
+          className="group absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize"
         >
           <div
             className={`mx-auto h-full w-px transition-colors ${
@@ -1097,7 +1110,7 @@ export function ContactsView() {
           isResizingList
             ? 'select-none'
             : 'transition-opacity duration-300 ease-out'
-        } ${focusZone === 'list' ? 'opacity-100' : 'opacity-30'}`}
+        } ${focusZone === 'list' ? 'opacity-100' : 'opacity-60'}`}
       >
         <div className="flex items-center gap-2 px-3 py-3">
           <input
@@ -1297,7 +1310,7 @@ export function ContactsView() {
             e.stopPropagation()
             handleListResizeStart(e)
           }}
-          className="group absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize"
+          className="group absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize"
         >
           <div
             className={`mx-auto h-full w-px transition-colors ${
@@ -1314,7 +1327,7 @@ export function ContactsView() {
         onMouseDown={() => setFocusZone('detail')}
         style={{ zoom: zoom.detail }}
         className={`flex min-w-0 flex-1 flex-col bg-bg transition-opacity duration-300 ease-out ${
-          focusZone === 'detail' ? 'opacity-100' : 'opacity-40'
+          focusZone === 'detail' ? 'opacity-100' : 'opacity-70'
         }`}
       >
         {error && (

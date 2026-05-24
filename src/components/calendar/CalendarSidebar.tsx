@@ -98,7 +98,7 @@ export function CalendarSidebar({
         aria-orientation="vertical"
         aria-label="Resize calendar sidebar"
         title="Drag to resize"
-        className="group absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize"
+        className="group absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize"
       >
         <div className="ml-auto h-full w-px bg-transparent transition-colors group-hover:bg-accent/40" />
       </div>

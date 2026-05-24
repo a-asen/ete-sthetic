@@ -78,19 +78,19 @@ interface Props {
   onLoggedOut: () => void
 }
 
-const HIDE_COMPLETED_KEY = 'ete-stethic.hideCompleted'
-const DETAIL_PINNED_KEY = 'ete-stethic.detailPanelPinned'
-const SHOW_DELETED_LISTS_KEY = 'ete-stethic.showDeletedLists'
-const SIDEBAR_SORT_KEY = 'ete-stethic.sidebarSort'
-const PHONE_PRIORITY_KEY = 'ete-stethic.phoneFriendlyPriority'
+const HIDE_COMPLETED_KEY = 'ete-sthetic.hideCompleted'
+const DETAIL_PINNED_KEY = 'ete-sthetic.detailPanelPinned'
+const SHOW_DELETED_LISTS_KEY = 'ete-sthetic.showDeletedLists'
+const SIDEBAR_SORT_KEY = 'ete-sthetic.sidebarSort'
+const PHONE_PRIORITY_KEY = 'ete-sthetic.phoneFriendlyPriority'
 
 // Adaptive sync settings (all in minutes; 0 = off/manual). The active
 // list refreshes frequently; other lists much less often; switching to
 // a list kicks a background sync only if it's older than the freshness
 // window.
-const ACTIVE_SYNC_KEY = 'ete-stethic.activeSyncMin'
-const BG_SYNC_KEY = 'ete-stethic.bgSyncMin'
-const SWITCH_FRESH_KEY = 'ete-stethic.switchFreshMin'
+const ACTIVE_SYNC_KEY = 'ete-sthetic.activeSyncMin'
+const BG_SYNC_KEY = 'ete-sthetic.bgSyncMin'
+const SWITCH_FRESH_KEY = 'ete-sthetic.switchFreshMin'
 const ACTIVE_SYNC_OPTIONS = [0, 1, 5, 15, 30, 60] as const
 const BG_SYNC_OPTIONS = [0, 30, 60, 240, 720, 1440] as const
 const SWITCH_FRESH_OPTIONS = [0, 15, 30, 60, 240] as const
@@ -241,9 +241,9 @@ function writeSidebarSort(v: SidebarSortSpec) {
     // not fatal
   }
 }
-const SIDEBAR_FOCUSED_WIDTH_KEY = 'ete-stethic.sidebarFocusedWidth'
-const SIDEBAR_COLLAPSED_WIDTH_KEY = 'ete-stethic.sidebarCollapsedWidth'
-const DETAIL_FOCUSED_WIDTH_KEY = 'ete-stethic.detailFocusedWidth'
+const SIDEBAR_FOCUSED_WIDTH_KEY = 'ete-sthetic.sidebarFocusedWidth'
+const SIDEBAR_COLLAPSED_WIDTH_KEY = 'ete-sthetic.sidebarCollapsedWidth'
+const DETAIL_FOCUSED_WIDTH_KEY = 'ete-sthetic.detailFocusedWidth'
 // Detail panel resize bounds. Default matches the prior w-80 (320 px).
 const DETAIL_MIN_WIDTH = 240
 const DETAIL_MAX_WIDTH = 720
@@ -399,9 +399,9 @@ const ZOOM_MIN = 0.6
 const ZOOM_MAX = 2
 const ZOOM_STEP = 0.1
 const ZOOM_KEY: Record<ZoomZone, string> = {
-  sidebar: 'ete-stethic.zoom.sidebar',
-  tasks: 'ete-stethic.zoom.tasks',
-  details: 'ete-stethic.zoom.details',
+  sidebar: 'ete-sthetic.zoom.sidebar',
+  tasks: 'ete-sthetic.zoom.tasks',
+  details: 'ete-sthetic.zoom.details',
 }
 
 function clampZoom(n: number): number {
@@ -464,6 +464,7 @@ export function MainView({ onLoggedOut }: Props) {
   const newListRef = useRef<HTMLInputElement>(null)
   const renameListRef = useRef<HTMLInputElement>(null)
   const quickAddRef = useRef<HTMLInputElement>(null)
+  const sidebarSettingsBtnRef = useRef<HTMLButtonElement>(null)
   // Guards against the create-list input firing twice (Enter then the
   // unmount blur), which was creating duplicate lists.
   const creatingListBusyRef = useRef(false)
@@ -706,6 +707,7 @@ export function MainView({ onLoggedOut }: Props) {
   const handleSidebarResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
+      e.stopPropagation()
       const sidebarFocused = focusZone === 'sidebar'
       const startX = e.clientX
       const startWidth = sidebarFocused
@@ -3324,6 +3326,7 @@ export function MainView({ onLoggedOut }: Props) {
                         </div>
                       )}
                       <button
+                        ref={sidebarSettingsBtnRef}
                         type="button"
                         onClick={() =>
                           setSidebarSettingsOpen((o) => !o)
@@ -3367,6 +3370,7 @@ export function MainView({ onLoggedOut }: Props) {
                           showDeleted={showDeletedLists}
                           onToggleShowDeleted={toggleShowDeletedLists}
                           onClose={() => setSidebarSettingsOpen(false)}
+                          anchorRef={sidebarSettingsBtnRef}
                         />
                       )}
                     </div>
@@ -3703,7 +3707,7 @@ export function MainView({ onLoggedOut }: Props) {
               : 'Resize sidebar (collapsed width)'
           }
           onMouseDown={handleSidebarResizeStart}
-          className="group absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize"
+          className="group absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize"
         >
           <div
             className={`mx-auto h-full w-px transition-colors ${

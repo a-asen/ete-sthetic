@@ -1,6 +1,6 @@
 # TODO
 
-Roadmap / backlog for ete-stethic. Newest asks at the top.
+Roadmap / backlog for ete-sthetic. Newest asks at the top.
 See also: [`docs/task-item-options.md`](docs/task-item-options.md) (VTODO field
 coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contacts-plan.md)
 (unified-client plan).
@@ -450,9 +450,9 @@ at the UI — e.g. `/` to search, `n` to create, `g t` / `g c` / `g k`
 for module switching, `Ctrl+Enter` for the detail panel, etc.
 **Resolution.** New `services/hints.ts` + `components/Hint.tsx`. The
 service exposes `readHintsEnabled` / `setHintsEnabled` (global on/off
-under `ete-stethic.hints.enabled`, default on) and `dismissHint(id)` /
+under `ete-sthetic.hints.enabled`, default on) and `dismissHint(id)` /
 `isHintDismissed(id)` (per-hint under
-`ete-stethic.hints.dismissed.<id>`). Both fire a custom
+`ete-sthetic.hints.dismissed.<id>`). Both fire a custom
 `HINTS_CHANGED_EVENT` on `window` so subscribers update without
 prop-drilling state. The `<Hint id="...">` component renders nothing
 when either layer is off, otherwise wraps its children with a
@@ -531,7 +531,7 @@ refresh button. Match the tasks module's adaptive cadence: the active
 book on a fast interval, other books on a slow one, opening a book
 triggers a delta sync only if its snapshot is older than a freshness
 window. Configurable from a contacts settings popover.
-**Resolution.** Three persisted prefs (`ete-stethic.contacts.{active,
+**Resolution.** Three persisted prefs (`ete-sthetic.contacts.{active,
 bg,switchFresh}SyncMin`) with the same option grids the tasks module
 uses (active `0,1,5,15,30,60`min · other `0,30,60,240,720,1440`min
 · freshness `0,15,30,60,240`min) and the same defaults (5 / 240 / 60).
@@ -586,7 +586,7 @@ factor — including the contact list itself — and each should be a
 labelled +/-/reset row in a contacts settings popover (mirroring the
 matching tasks-pane request under the 2026-05-23 polish block).
 **Resolution.** Three independent zoom factors per zone (books / list /
-detail), persisted under `ete-stethic.contacts.zoom.<zone>`, applied
+detail), persisted under `ete-sthetic.contacts.zoom.<zone>`, applied
 via CSS `zoom` on each pane. `Ctrl/Cmd +/-/0` while the corresponding
 zone is focused steps / resets that zone's factor (honored even from
 text inputs, like the tasks module). Drag-to-resize handles sit on
@@ -608,7 +608,7 @@ out-of-focus zones should fade like they do in the tasks module. Today
 the contacts view has no `focusZone` concept and all three panes stay
 fully opaque regardless.
 **Resolution.** Added `ContactsFocusZone = 'books' | 'list' | 'detail'`
-to `ContactsView`. State persists under `ete-stethic.contacts.focusZone`
+to `ContactsView`. State persists under `ete-sthetic.contacts.focusZone`
 so a module switch or remount lands where the user left off. The same
 Ctrl-prefixed shortcuts the tasks module uses now work here:
 `Ctrl+L`/`Ctrl+T`/`Ctrl+E` jump directly to a zone, `Ctrl+→` and
@@ -708,7 +708,7 @@ zone's factor, and surface the current `tasks` zoom as a labelled
 **Resolution.** Audited — both halves of the request were already
 shipped:
 - **Independence verified.** Each zone has its own `zoom.<zone>` state
-  slice, its own `ete-stethic.zoom.<zone>` localStorage key, and the
+  slice, its own `ete-sthetic.zoom.<zone>` localStorage key, and the
   Ctrl+/-/0 handler in `MainView` only touches `zoom[focusZone]`. The
   tasks zone applies its factor to `<main>` exclusively
   ([MainView.tsx:3595](src/components/MainView.tsx#L3595)); the
@@ -802,8 +802,8 @@ meta-nav should only fire once writing is done.
 - Mirror the fix in the sidebar / detail inline-create inputs if
   they have the same bug.
 
-### Open `.ics` files in ete-stethic → one-click add to calendar
-**Task.** Register ete-stethic as a handler for `.ics` /
+### Open `.ics` files in ete-sthetic → one-click add to calendar
+**Task.** Register ete-sthetic as a handler for `.ics` /
 `text/calendar` files so a double-click anywhere (file manager,
 browser download, "Open with" from a mail client) opens the app
 with an "Add to calendar" prompt instead of dropping the file in
@@ -816,7 +816,7 @@ some other calendar app or doing nothing.
     run (with the user's consent).
   - macOS: `Info.plist` `CFBundleDocumentTypes` claiming the
     `com.apple.ical.ics` UTI.
-  - Windows: registry `HKCR\.ics` + `HKCR\ete-stethic.ics\shell\
+  - Windows: registry `HKCR\.ics` + `HKCR\ete-sthetic.ics\shell\
     open\command` entries written by the installer (or a one-off
     "Set as default" button in settings).
 - App side: parse the first argv (or the `tauri://file-open`
@@ -859,14 +859,14 @@ independently of the Mail module:
   inserts).
 
 ### Custom Etebase server URL
-**Task.** Let users point ete-stethic at their own Etebase server
+**Task.** Let users point ete-sthetic at their own Etebase server
 instead of the hard-coded default (self-hosted Etebase forks /
 non-etebase.com deployments).
 **Plan.**
 - Add a "Server" field to the login screen (already the natural
   surface — users hit it before any URL is needed). Default is the
   current hard-coded host shown as a placeholder.
-- Persist under `ete-stethic.etebase.serverUrl`; read it in
+- Persist under `ete-sthetic.etebase.serverUrl`; read it in
   `services/etebase.ts` instead of the constant when constructing
   `Account.login` / `Account.signup`.
 - Validate `URL` parsing + `http(s)` scheme client-side before
@@ -880,7 +880,7 @@ tasks + contacts but no calendar, etc.). Let each module be turned
 off so its switcher button hides and its background sync stops
 running.
 **Plan.**
-- Four booleans `ete-stethic.modules.{tasks,calendar,contacts,mail}
+- Four booleans `ete-sthetic.modules.{tasks,calendar,contacts,mail}
   .enabled` (default on). Toggle row per module in a new "Modules"
   subsection of the global settings popover.
 - `App.tsx` reads the flags and conditionally renders each switcher
@@ -1003,6 +1003,119 @@ desktop client* isn't a server — what we're really matching is
 **Dependency on the other batch-2 items.** "Disable individual
 modules" is a prerequisite if shipping Mail by default — users
 who never wanted a mail client should be able to turn it off.
+
+## Backlog (queued 2026-05-24)
+
+### Moved/indented task: highlight follows to the parent when the row is hidden
+**Task.** When a task is reparented (Alt+→ indent, Alt+↑/↓ cross-branch
+reparent, drag/move-pick into a collapsed branch) and the moved row
+ends up hidden — destination parent is collapsed, or the moved item
+is now a child under a collapsed ancestor — the selection silently
+drops because `selectedTaskUid` points at an invisible row. Instead,
+the highlight should walk up to the nearest *visible* ancestor (the
+new parent, or its visible ancestor) so the user still has a clear
+"this is where it went" anchor and arrow-nav has a sensible home.
+
+### Shift+Tab in the confirm modal escapes instead of cycling — ✅ done
+**Task.** `ConfirmModal` traps `Tab` between Cancel and Confirm, but
+`Shift+Tab` exits the modal entirely (focus lands somewhere behind
+it). It should mirror `Tab` — cycle backward between the two buttons.
+Also covered: `←/→` already cycle, so this is purely the reverse-Tab
+case in the keydown handler.
+**Resolution.** The toggle logic already covered both directions
+(`e.key === 'Tab'` matches Shift+Tab too, and with two buttons "toggle
+= cycle"), but the listener was registered in the bubble phase so
+the browser's native Tab focus-move (the keydown's default action)
+could win on platforms where focus advances mid-dispatch. Switched
+the `window.addEventListener('keydown', …)` to capture phase
+(`{ capture: true }`) so `preventDefault` runs before any other
+handler in the chain and focus stays trapped between Cancel/Confirm
+in both directions.
+
+### Global "Synced Xs ago" status in the top-right
+**Task.** The design mock shows a small "● Synced 14s ago" line in the
+top-right of the window — a single at-a-glance indicator that the
+whole app is up to date. We already track per-list sync timestamps
+(`lastSuccessfulSyncAt` in taskstore / `lastSyncedAt` in
+ContactMemory) and per-list spinners; this would be the global rollup.
+**Plan sketch.**
+- Pick the *oldest* successful sync across all visible collections
+  (tasks lists + calendars + address books) → that's the "synced N
+  ago" age. If anything is currently syncing, show "Syncing…" instead;
+  if anything failed since its last success, show "N failed" in the
+  danger colour with a tooltip pointing at the offending sidebar row.
+- Mounts in the top toolbar (window-level, not per-module) so it's
+  the same widget whether the user is on Tasks / Calendar / Contacts.
+- Updates the relative time on a 30s tick (use the same pattern as
+  the contacts header subtitle, but relative — "14s ago" / "3m ago"
+  — rather than absolute "HH:MM"). Hovering shows the absolute
+  timestamp.
+- Clicking the indicator triggers a sync-all across every module
+  (reuse the existing `syncAll()` in tasks; mirror in calendar /
+  contacts).
+
+### Remember per-list cursor position when switching lists
+**Task.** Today, switching away from a list and back resets the
+selection (typically to the first task). Persist the
+`selectedTaskUid` per collection so returning to e.g. "Dailies"
+lands on the row the user was last on. Forget the entry if that uid
+no longer exists in the list (deleted / moved away) — fall back to
+the first task in that case. Probably a `Map<collectionUid, uid>`
+in `MainView` state, persisted to localStorage under
+`ete-sthetic.tasks.lastSelected`.
+
+## Contacts polish (queued 2026-05-24)
+
+### BDAY rendered as raw `YYYYMMDD` — ✅ done
+**Task.** The contact card shows `BIRTHDAY 19991022` — the raw vCard
+`BDAY` value (`YYYYMMDD`, no separators) is being printed as-is.
+Format it the same way other dates are shown elsewhere in the app
+(e.g. `1999-10-22` or `22 Oct 1999`). Likely a `formatVcardDate`
+helper in `services/vcard.ts` or inline in `ContactsView.tsx` where
+BDAY is rendered. Be tolerant of vCard 3.0 `YYYY-MM-DD` *and*
+vCard 4.0 `YYYYMMDD` / partial dates (`--MM-DD` for "month + day,
+no year") — the parser already preserves the raw value, the display
+just needs to normalise it.
+
+### Ctrl+F focuses the contacts search bar — ✅ done
+**Task.** The tasks module's `Ctrl+F` focuses the filter input; the
+contacts module should mirror this and focus the contact-list search
+bar. Today `Ctrl+F` either does nothing or hits the browser find
+dialog. Add a keydown handler in `ContactsView` that calls
+`preventDefault` + focuses the search input ref (the `/` shortcut
+already does this — Ctrl+F just needs to share the path).
+**Resolution.** New handler in `ContactsView`'s keydown effect that
+catches `(Ctrl|Cmd)+F`, calls `preventDefault`, focuses the
+`searchRef`, and selects its current text (so the user can replace
+the filter in one keystroke). Honored even from inside text fields
+so jumping back to the search bar from the editor works.
+
+### Detail / contact-list fade too aggressive when not focused — ✅ done
+**Task.** Today the inactive-zone fade in contacts is `opacity-30`
+(books / list) and `opacity-40` (detail) — the same numbers the
+tasks module uses. The contacts panes contain dense text (emails,
+phones, addresses) where 30 % is too washed-out to read while
+keyboard-driving from another zone. Bump the inactive opacities
+up a notch — try `opacity-60` for the list and `opacity-70` for
+the detail card, keeping books at 30 since it's a low-information
+strip. Apply the same easing already on the class.
+**Resolution.** Contact list `opacity-30 → opacity-60`; detail
+`opacity-40 → opacity-70`; books left at `opacity-30` per the plan
+(it's a thin strip of book names, not dense content).
+
+### Bigger resize-handle hit area — ✅ done
+**Task.** The drag-to-resize edges between contact panes (and the
+sidebar in tasks) are `w-1.5` (6 px) wide, which is fiddly to grab
+with a mouse. Bump the hit area to `w-2.5` or `w-3` (10–12 px) so
+it's easier to find, while keeping the *visible* line a single
+1 px stroke (the inner `<div className="w-px ...">` stays). Apply
+to all four handles: tasks-sidebar, contacts-books, contacts-list,
+and the detail panel's left edge.
+**Resolution.** `w-1.5 → w-2.5` (6 → 10 px) across all five sites:
+tasks sidebar (`MainView.tsx`), tasks detail (`DetailPanel.tsx`),
+contacts books + contacts list (`ContactsView.tsx`), and the
+calendar sidebar (`CalendarSidebar.tsx`) — caught the calendar one
+too since it shares the pattern. Inner `w-px` stroke unchanged.
 
 ## Known issues
 
