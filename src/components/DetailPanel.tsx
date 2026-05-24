@@ -612,7 +612,7 @@ export function DetailPanel({
           aria-orientation="vertical"
           aria-label="Resize detail panel"
           title="Drag to resize"
-          className="group absolute inset-y-0 left-0 z-10 w-2.5 cursor-ew-resize"
+          className="group absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize"
         >
           <div className="h-full w-px bg-transparent transition-colors group-hover:bg-accent/40" />
         </div>

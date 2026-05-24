@@ -1174,6 +1174,200 @@ and Inactive-zone fade); the popover and TaskTree both subscribe
 to the broadcast event so flipping a toggle takes effect without
 a remount.
 
+## Backlog (queued 2026-05-24 — batch 3)
+
+Test-pass after the "do the three easy/medium" round surfaced this
+batch. Some items are calendar polish that hasn't had a polish pass
+yet; others are contacts feature gaps; one is a UI nit on the
+resize-handle work.
+
+### Resize-handle hit area pinched the sidebar counts column — ✅ done
+**Task.** Bumping the resize-handle hit area from `w-1.5` (6 px) →
+`w-2.5` (10 px) was a usability win for grabbing the edge, but the
+sidebar list rows render a counts indicator (`…` while loading,
+then the open-count) flush with the row's right edge — and the
+new wider handle visually overlapped the last 2 px of that column.
+User prefers a slightly smaller handle to a layout change.
+**Resolution.** Handles shrunk to `w-2` (8 px) across the four
+sites (`MainView` sidebar, `DetailPanel` left edge, contacts books
+& list, `CalendarSidebar`). Still meaningfully bigger than the
+original 6 px, but the counts column gets its 2 px of breathing
+room back.
+
+### Move the global Sync pill out of the top-right
+**Task.** The top-right is busy real estate — window controls live
+there and the new `SyncStatusPill` competes with them visually. The
+user suggests relocating to the centre-top of the active module's
+header, next to the title and the open/total count. The calendar
+header is busy in the top-right too (view buttons, sync badge);
+the same centre-top placement would fit there.
+**Plan sketch.**
+- Make `SyncStatusPill` render `inline` (no `position: fixed`),
+  and have each module's view embed it in its own header. Tasks:
+  beside `${active.name} N open · M total`. Calendar: beside the
+  current-week / day-range label. Contacts: beside the contact
+  count subtitle.
+- App-level mount of the pill goes away; each view imports it.
+- Hover/click behaviour unchanged. Only the layout slot moves.
+
+### Calendar: sort the calendars sidebar
+**Task.** The sidebar lists calendars in server order today. Add a
+sort mechanism mirroring the tasks sidebar (sort + reverse), but
+keep the options minimal — name + reverse only is enough, since
+calendars don't have counts to sort by.
+**Plan sketch.**
+- Extend the existing `CalendarSettingsPopover` "Sort calendars"
+  block (already has an order select + reverse toggle — wait,
+  these already exist!). Audit whether the user just hasn't
+  discovered them, or whether the implementation is broken. If
+  the latter, fix; if the former, surface the toggle more
+  prominently (e.g. a sidebar-header gear like the tasks
+  sidebar's).
+
+### Calendar: subscribe to external / ICS-stream calendars
+**Task.** Public calendars (public holidays, sports schedules,
+sprint cadences) are usually published as a remote ICS URL the
+user wants to subscribe to read-only. Tasks today only knows
+about etebase-backed calendars.
+**Plan sketch.**
+- Per subscription: URL, friendly name, colour, refresh interval.
+  Stored in etebase as a special "subscription" item type, or in
+  localStorage if etebase doesn't model this cleanly.
+- Periodic background fetch via Tauri's `http` plugin (frontend
+  `fetch` is CORS-blocked for most ICS endpoints).
+- Parse via `splitIcs` + `parseVEvent` (same path quick-add uses).
+  Render in the calendar grid with a "subscription" badge.
+- Read-only: no Accept/Decline, no edits, no sync-back.
+- A "+ Add subscription" entry in the calendar sidebar.
+
+### Calendar: create new calendars from the app
+**Task.** Tasks has "+ New list"; calendar doesn't. Adding a new
+local calendar today requires another EteSync client (Etesync web,
+phone app, …).
+**Plan sketch.**
+- Mirror the tasks-sidebar "+ New list" affordance: header `+`
+  button → inline name input → `createCalendar(name)` in
+  `services/etebase.ts` (need to add) → optimistic placeholder
+  with a "syncing…" badge until the server confirms (same pattern
+  as task lists).
+- Reuse the colour-picker popover already built for task lists.
+
+### Calendar: find/toggle hidden calendars
+**Task.** Hiding a calendar today is via the checkbox in the
+sidebar — but if the user has many calendars, finding one to
+toggle is tedious. Want a quick "show all / hide all / search by
+name" affordance.
+**Plan sketch.**
+- Header bar in the calendar sidebar with three controls: "show
+  all", "hide all", and a small filter input. Filter narrows the
+  visible rows in the sidebar by name (typeahead).
+- The eye / checkbox UI on each row already exists; this only
+  adds discovery affordances.
+
+### Calendar: sidebar calendar names truncate too aggressively
+**Task.** The left-panel calendar row labels are heavily truncated
+(see screenshot: "Opencl…", "Inves…", "0_IMP…", "Birthd…",
+"Scho…", ".c_UiT_…"). They should span to the full right edge of
+the sidebar before clipping.
+**Plan sketch.**
+- The truncation comes from the colour-checkbox + star + name
+  row layout. Inspect `CalendarSidebar.tsx`'s row render: a
+  `max-w-[Npx]` or fixed `w-N` on the name span is probably
+  the culprit. Replace with `min-w-0 flex-1 truncate` so the
+  name takes whatever space is left.
+- Verify the name still truncates instead of breaking the row
+  layout when very long.
+
+### Calendar event composer: Ctrl/Shift modifiers on time / date arrows
+**Task.** When editing the start/end fields of a new (or existing)
+event, ↑/↓ should bump the focused unit. With modifiers, jump by a
+larger step so the user isn't stuck at 1-unit-per-press:
+- **Time (HH:MM)**: Shift = ±5 min, Ctrl = ±15 min.
+- **Day**: Shift = ±3 days, Ctrl = ±7 days.
+- **Month**: Shift = ±3 months, Ctrl = ±6 months.
+- **Year**: Shift = ±2 years, Ctrl = ±5 years.
+**Plan sketch.**
+- The composer fields are native `<input type=date|time>` today,
+  which means we don't have control over arrow behaviour — the
+  browser owns it. To implement the modifiers we'd need a custom
+  date / time picker (or capture `keydown` on the input, swallow
+  it with `preventDefault`, and `dispatchEvent` a synthetic
+  change with the bigger delta).
+- Easier path: build a tiny segmented date+time editor
+  (HH:MM:SS, DD-MM-YYYY) where each segment is a focusable span
+  with explicit keydown handling. Reuse the calendar popover for
+  date pick + a clock popover for time pick on click.
+
+### Calendar: recurring events
+**Task.** Today the composer doesn't expose RRULE / EXDATE — every
+event is one-off. The user wants real recurrence (daily, weekly,
+monthly, yearly, custom).
+**Plan sketch.**
+- Composer gains a "Repeats" dropdown: None / Daily / Weekly /
+  Monthly / Yearly / Custom.
+- For Custom, expose RRULE fields (FREQ, INTERVAL, BYDAY, COUNT,
+  UNTIL). vevent.ts already round-trips RRULE on existing
+  events (`buildVEvent` preserves it); the gap is composer UI.
+- For edits to one occurrence of a recurring series, reuse the
+  existing detach / "this & future" prompt the calendar already
+  has for drag-resize on recurring events.
+
+### Contacts: Ctrl+F should also focus the list zone, not just the search input
+**Task.** Earlier polish made Ctrl+F focus the search input. The
+follow-up: also set `focusZone` to 'list' so the inactive-zone
+fade lifts off the contact list (currently the search input
+focuses but the list pane stays at the inactive opacity).
+**Plan sketch.**
+- In `ContactsView`'s Ctrl/Cmd+F handler, add `setFocusZone('list')`
+  before / after the `searchRef.current?.focus()`. One line.
+
+### Contacts: full vCard editor parity
+**Task.** Today the editor covers `FN / N / ORG / TITLE / emails /
+phones / URLs / addresses / BDAY / NOTE / categories`. The user
+wants the full default vCard surface — photo upload + region
+crop, IM handles, anniversaries, related-name links, etc.
+**Plan sketch.**
+- **Photo**: file picker → resize to a reasonable max (256 px
+  long edge) → base64-encode as vCard 4.0 `PHOTO:data:image/...`.
+  Add a crop/focus selector before the encode step (canvas
+  drag + scroll-to-zoom; persist crop region so re-uploading
+  the same image is one click).
+- **Anniversary** (`ANNIVERSARY` per RFC 6350).
+- **Nickname** (`NICKNAME`).
+- **Related** (`RELATED;TYPE=spouse:Jane Smith`).
+- Each new field follows the same parser/serializer pattern
+  `services/vcard.ts` already uses for the existing fields.
+
+### Contacts: app-specific identifier fields (Discord, Slack, …)
+**Task.** vCard 3.0 has `X-AIM`, `X-SKYPE`, etc., for legacy IM
+identifiers; vCard 4.0 standardised `IMPP` (instant messaging URI)
+covering `xmpp:`, `aim:`, `irc:`, etc. For modern apps without a
+URI scheme (Discord, Slack), the convention is custom `X-` props
+or `IMPP` with a `tel:`-style placeholder.
+**Plan sketch.**
+- Editor adds a "Messaging / handles" repeating block: each row
+  has a service dropdown (Discord, Slack, Telegram, Signal,
+  Matrix, XMPP, IRC, Skype, custom) + handle string.
+- Serialise as `X-SOCIALPROFILE;TYPE=discord:handle#1234` or the
+  `IMPP` form when the service has a registered URI scheme.
+- Round-trip cleanly with the existing X-* passthrough in
+  `services/vcard.ts` so other clients don't lose the field.
+
+### Contacts: sort the address books AND the contact list (both with reverse)
+**Task.** Tasks has a sidebar sort + reverse toggle; contacts
+should mirror it for **both** the address-books column AND the
+contact-list column. Sort axes for each:
+- **Books**: name only (no counts that vary).
+- **Contacts**: name (FN) / first name / last name / recently
+  added / recently modified, with a reverse toggle.
+**Plan sketch.**
+- Mirror `SidebarSettingsPopover` for books (small gear in the
+  books-pane header).
+- The contact list already has a "+" / sync header; add a sort
+  control there (gear or inline select).
+- Persist under `ete-sthetic.contacts.{books,list}.{sort,reverse}`
+  keys.
+
 ## Known issues
 
 Things that have been observed misbehaving but haven't been root-caused

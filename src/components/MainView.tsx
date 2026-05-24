@@ -3717,7 +3717,7 @@ export function MainView({ onLoggedOut }: Props) {
               : 'Resize sidebar (collapsed width)'
           }
           onMouseDown={handleSidebarResizeStart}
-          className="group absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize"
+          className="group absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize"
         >
           <div
             className={`mx-auto h-full w-px transition-colors ${
