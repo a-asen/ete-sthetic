@@ -32,7 +32,11 @@ import {
   saveCollectionsList,
   saveSnapshot,
 } from '../services/snapshots'
-import { getTaskMemory, patchTaskMemory } from '../services/taskstore'
+import {
+  getTaskMemory,
+  patchTaskMemory,
+  rememberLastSelected,
+} from '../services/taskstore'
 import {
   DEFAULT_TASK_SORT,
   type CollectionInfo,
@@ -1938,6 +1942,25 @@ export function MainView({ onLoggedOut }: Props) {
     })
   }, [visibleTree])
 
+  // Per-collection cursor memory. When the user switches lists, restore
+  // the last task they had selected in the new list; while they're
+  // working in a list, mirror every selection change into the persisted
+  // map so the next switch can recall it.
+  const prevActiveUidRef = useRef<string | null>(m0.activeUid)
+  useEffect(() => {
+    if (!activeUid) return
+    if (prevActiveUidRef.current === activeUid) return
+    prevActiveUidRef.current = activeUid
+    const saved = getTaskMemory().lastSelectedByCollection.get(activeUid)
+    if (saved) setSelectedTaskUid(saved)
+  }, [activeUid])
+  useEffect(() => {
+    if (!activeUid) return
+    if (prevActiveUidRef.current !== activeUid) return
+    if (!selectedTaskUid) return
+    rememberLastSelected(activeUid, selectedTaskUid)
+  }, [activeUid, selectedTaskUid])
+
   const refreshCollections = useCallback(() => {
     setCollectionsRefreshKey((k) => k + 1)
   }, [])
@@ -3663,35 +3686,6 @@ export function MainView({ onLoggedOut }: Props) {
                   )
                 })}
               </div>
-              <div className="border-t border-border px-2 py-2">
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  title={showFull ? undefined : 'Sign out'}
-                  aria-label="Sign out"
-                  className={`text-xs text-text-faint hover:text-text-muted ${
-                    showFull ? '' : 'flex w-full justify-center'
-                  }`}
-                >
-                  {showFull ? (
-                    'Sign out'
-                  ) : (
-                    <svg
-                      viewBox="0 0 16 16"
-                      className="h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden
-                    >
-                      <path d="M6.5 2.5h-3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3" />
-                      <path d="M10 5l3 3-3 3M6 8h7" />
-                    </svg>
-                  )}
-                </button>
-              </div>
             </>
           )
         })()}
@@ -3969,6 +3963,7 @@ export function MainView({ onLoggedOut }: Props) {
                   switchFreshMin={switchFreshMin}
                   switchFreshOptions={SWITCH_FRESH_OPTIONS}
                   onSetSwitchFresh={setSwitchFreshMin}
+                  onLogout={handleLogout}
                   onClose={() => setSettingsOpen(false)}
                 />
               )}

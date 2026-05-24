@@ -780,27 +780,27 @@ toolbar sync-all button light up (per-row + aggregate count).
 
 ## Backlog (queued 2026-05-23 — batch 2)
 
-### Ctrl+←/→ should not exit an in-progress task name
+### Ctrl+←/→ should not exit an in-progress task name — ✅ done
 **Task.** After `Ctrl+N` opens the inline new-task input, pressing
 `Ctrl+←` or `Ctrl+→` while typing the name jumps the focus zone
 (meta-nav) instead of staying inside the input. The user should
 have to commit (`Enter`) or cancel (`Esc`) the create first; zone
 meta-nav should only fire once writing is done.
-**Plan.**
-- Existing keybindings effect already guards Ctrl+←/→ with an
-  `inTextField` check (HTMLInputElement / HTMLTextAreaElement) —
-  if the symptom is real, the inline-create input may not be
-  matching that check (contenteditable? wrapper div catching the
-  event before bubbling?), or a different path is firing the
-  zone change. First step is to repro and confirm where the event
-  actually lands.
-- If it's the input element type, broaden the gate (also match
-  `[role="textbox"]` / `contenteditable`).
-- If it's the inline-create specifically, swallow Ctrl+arrow in
-  `InlineCreate`'s own keydown handler with `stopPropagation` so
-  it never reaches the global listener while a draft is open.
-- Mirror the fix in the sidebar / detail inline-create inputs if
-  they have the same bug.
+**Resolution.** Root cause wasn't the global `inTextField` check —
+that was already correctly catching `HTMLInputElement` and bailing
+out. The culprit was `InlineCreate`'s own keydown handler in
+[`TaskTree.tsx`](src/components/TaskTree.tsx):
+- The Ctrl+→ commit-and-follow branch fell through to `onCancel()`
+  when the input was empty, destroying the draft.
+- The bare ArrowLeft branch had no modifier guard, so
+  Ctrl+ArrowLeft on an empty input also triggered `onCancel()`.
+Both made the input vanish + selection shift, which read as a zone
+jump from the user's seat. Fix: Ctrl+→ no-ops on an empty input
+(lets native word-jump handle it instead of cancelling), and the
+ArrowLeft cancel branch now gates on `!e.ctrlKey && !e.metaKey` so
+Ctrl/Cmd-ArrowLeft is always native word-jump regardless of input
+contents. QuickAdd was already correct (no cancel on empty Ctrl+→,
+no ArrowLeft branch at all).
 
 ### Open `.ics` files in ete-sthetic → one-click add to calendar
 **Task.** Register ete-sthetic as a handler for `.ics` /
@@ -891,18 +891,20 @@ running.
   effects in each `*View` on the flag). The on-disk snapshot stays
   put so re-enabling is instant.
 
-### Move logout to the settings menu
+### Move logout to the settings menu — ✅ done
 **Task.** Logout currently sits at a high-visibility surface
 (bottom-left of the sidebar). Move it into the settings popover so
 the persistent sidebar real estate goes to navigation only.
-**Plan.**
-- Remove the logout button from `MainView`'s sidebar footer.
-- Add a "Sign out" row to `SettingsPopover` under a new "Account"
-  subsection (room there for future per-account settings — server
-  URL switch, account name, etc.). `onLoggedOut` is already wired
-  through props; just plumb it to the popover instead.
-- Mirror in `ContactsSettingsPopover` / calendar settings so logout
-  is reachable from any module's settings.
+**Resolution.** `onLoggedOut` is now passed through `App.tsx` to all
+three module views (`MainView` / `CalendarView` / `ContactsView`);
+each owns its own `handleLogout` that calls `etebase.logout()` then
+`onLoggedOut()`. All three settings popovers
+(`SettingsPopover` / `ContactsSettingsPopover` /
+`CalendarSettingsPopover`) gained an `onLogout` prop and render an
+"Account" subsection (separator + uppercase header) with a full-width
+"Sign out" button at the bottom — so logout is reachable from any
+module's settings. The sidebar logout button + its containing footer
+div in `MainView` are gone, freeing that real estate.
 
 ### Module: Mail (proposed)
 **Task.** A minimal mail client whose **primary job is surfacing
@@ -1054,7 +1056,7 @@ ContactMemory) and per-list spinners; this would be the global rollup.
   (reuse the existing `syncAll()` in tasks; mirror in calendar /
   contacts).
 
-### Remember per-list cursor position when switching lists
+### Remember per-list cursor position when switching lists — ✅ done
 **Task.** Today, switching away from a list and back resets the
 selection (typically to the first task). Persist the
 `selectedTaskUid` per collection so returning to e.g. "Dailies"
@@ -1063,6 +1065,20 @@ no longer exists in the list (deleted / moved away) — fall back to
 the first task in that case. Probably a `Map<collectionUid, uid>`
 in `MainView` state, persisted to localStorage under
 `ete-sthetic.tasks.lastSelected`.
+**Resolution.** Added `lastSelectedByCollection: Map<string, string>`
+to `TaskMemory` (`taskstore.ts`), persisted to localStorage under
+`ete-sthetic.tasks.lastSelected` (JSON-serialised
+`Object.fromEntries`). New `rememberLastSelected(colUid, taskUid)`
+helper flushes the in-memory map + storage on each save; `null`
+forgets the entry. `MainView` adds two effects gated on a
+`prevActiveUidRef`: on `activeUid` change, restore the saved
+selection from the map; on `selectedTaskUid` change while
+`activeUid` is stable, persist the current selection. The save
+effect skips null selections so a deleted-task-then-list-switch
+doesn't wipe out the saved position. Stale uids (task deleted in
+another session) fall through to the existing `focusTasks` validation
+which already falls back to the first visible task. `resetTaskMemory`
+clears both the in-memory map and the localStorage key on logout.
 
 ## Contacts polish (queued 2026-05-24)
 

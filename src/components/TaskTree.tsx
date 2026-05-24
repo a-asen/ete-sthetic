@@ -159,15 +159,20 @@ function InlineCreate({
     ) {
       // Commit this (sub)task and follow it into details. stopPropagation
       // so the global Ctrl+→ handler doesn't also fire (it would open the
-      // *parent's* detail since selection is still the parent).
-      e.preventDefault()
-      e.stopPropagation()
+      // *parent's* detail since selection is still the parent). On an
+      // empty input, fall through to native word-jump instead of
+      // cancelling — Ctrl+← / Ctrl+→ should never destroy an
+      // in-progress draft.
       const value = inputRef.current?.value.trim() ?? ''
-      if (value) onConfirmAndOpen(value)
-      else onCancel()
-    } else if (e.key === 'ArrowLeft') {
-      // ArrowLeft on an empty input cancels (mirrors ArrowRight to start).
-      // With any text in the field, this is a normal cursor move.
+      if (value) {
+        e.preventDefault()
+        e.stopPropagation()
+        onConfirmAndOpen(value)
+      }
+    } else if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey) {
+      // Bare ArrowLeft on an empty input cancels (mirrors ArrowRight to
+      // start). With any text in the field, this is a normal cursor move.
+      // Ctrl/Cmd+ArrowLeft is native word-jump and must never cancel.
       const input = e.currentTarget
       if (input.value.length === 0) {
         e.preventDefault()

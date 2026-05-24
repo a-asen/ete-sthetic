@@ -33,6 +33,7 @@ interface Props {
   onSetNightWeekday: (v: NightRange) => void
   nightWeekend: NightRange
   onSetNightWeekend: (v: NightRange) => void
+  onLogout: () => void
   onClose: () => void
 }
 
@@ -61,6 +62,7 @@ export function CalendarSettingsPopover({
   onSetNightWeekday,
   nightWeekend,
   onSetNightWeekend,
+  onLogout,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -191,6 +193,19 @@ export function CalendarSettingsPopover({
         Per-day overrides come later. A range must cross midnight
         (start later than end) to count.
       </p>
+
+      <div className="mt-1 border-t border-border">
+        <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+          Account
+        </p>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="block w-full px-3 py-2 text-left text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+        >
+          Sign out
+        </button>
+      </div>
     </div>
   )
 }

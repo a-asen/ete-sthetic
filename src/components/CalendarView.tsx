@@ -7,6 +7,7 @@ import {
   forceUpdateEvent,
   listCalendars,
   listEventItems,
+  logout,
   moveEventToCollection,
   replaceEventRaw,
   toggleComplete,
@@ -173,7 +174,11 @@ const VIEWS: { id: CalView; label: string }[] = [
 
 const ACCENT = 'var(--color-accent)'
 
-export function CalendarView() {
+interface CalendarViewProps {
+  onLoggedOut: () => void
+}
+
+export function CalendarView({ onLoggedOut }: CalendarViewProps) {
   // Seed all state from the process-lifetime memory cache, so switching
   // back into the calendar is instant (no spinner, no refetch).
   const m0 = getCalMemory()
@@ -256,6 +261,11 @@ export function CalendarView() {
     })
   }, [])
   const [settingsOpen, setSettingsOpen] = useState(false)
+
+  async function handleLogout() {
+    await logout()
+    onLoggedOut()
+  }
 
   // Per-calendar sort.
   type CalSort = 'original' | 'name'
@@ -1428,6 +1438,7 @@ export function CalendarView() {
                 onSetNightWeekday={setNightWeekday}
                 nightWeekend={nightWeekend}
                 onSetNightWeekend={setNightWeekend}
+                onLogout={handleLogout}
                 onClose={() => setSettingsOpen(false)}
               />
             )}

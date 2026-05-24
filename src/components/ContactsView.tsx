@@ -7,6 +7,7 @@ import {
   deleteContact,
   listAddressBooks,
   listContactItems,
+  logout,
   updateCollectionMeta,
   updateContact,
   type ContactSyncResult,
@@ -164,7 +165,11 @@ function sortContacts(contacts: ContactItem[]): ContactItem[] {
   )
 }
 
-export function ContactsView() {
+interface ContactsViewProps {
+  onLoggedOut: () => void
+}
+
+export function ContactsView({ onLoggedOut }: ContactsViewProps) {
   // Seeded synchronously from the process-lifetime cache so a module
   // switch and back is instant (no flash, no spinner).
   const [addressBooks, setAddressBooks] = useState<CollectionInfo[] | null>(
@@ -250,6 +255,11 @@ export function ContactsView() {
 
   // Settings popover toggle.
   const [settingsOpen, setSettingsOpen] = useState(false)
+
+  async function handleLogout() {
+    await logout()
+    onLoggedOut()
+  }
 
   // Adaptive-sync cadence. Active book refreshes on a fast cadence,
   // other books on a slow one, and switching to a book triggers a
@@ -1180,6 +1190,7 @@ export function ContactsView() {
                 switchFreshMin={switchFreshMin}
                 switchFreshOptions={CONTACTS_SWITCH_FRESH_OPTIONS}
                 onSetSwitchFresh={setSwitchFreshMin}
+                onLogout={handleLogout}
                 onClose={() => setSettingsOpen(false)}
               />
             )}

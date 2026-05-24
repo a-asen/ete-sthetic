@@ -21,6 +21,7 @@ interface Props {
   switchFreshMin: number
   switchFreshOptions: readonly number[]
   onSetSwitchFresh: (min: number) => void
+  onLogout: () => void
   onClose: () => void
 }
 
@@ -175,6 +176,7 @@ export function ContactsSettingsPopover({
   switchFreshMin,
   switchFreshOptions,
   onSetSwitchFresh,
+  onLogout,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -260,6 +262,19 @@ export function ContactsSettingsPopover({
           label="Show usage hints"
         />
       </Row>
+
+      <div className="mt-1 border-t border-border">
+        <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+          Account
+        </p>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="block w-full px-3 py-2 text-left text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+        >
+          Sign out
+        </button>
+      </div>
     </div>
   )
 }

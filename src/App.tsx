@@ -69,11 +69,10 @@ function App() {
     return <LoginScreen onAuthenticated={() => setAuth('authenticated')} />
   }
 
+  const onLoggedOut = () => setAuth('unauthenticated')
   return (
     <>
-      {module === 'tasks' && (
-        <MainView onLoggedOut={() => setAuth('unauthenticated')} />
-      )}
+      {module === 'tasks' && <MainView onLoggedOut={onLoggedOut} />}
       {module === 'calendar' && (
         <Suspense
           fallback={
@@ -82,7 +81,7 @@ function App() {
             </div>
           }
         >
-          <CalendarView />
+          <CalendarView onLoggedOut={onLoggedOut} />
         </Suspense>
       )}
       {module === 'contacts' && (
@@ -93,7 +92,7 @@ function App() {
             </div>
           }
         >
-          <ContactsView />
+          <ContactsView onLoggedOut={onLoggedOut} />
         </Suspense>
       )}
       <ModuleSwitch module={module} onChange={setModule} />
