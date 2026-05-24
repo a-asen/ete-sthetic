@@ -5,11 +5,41 @@ interface Props {
   onAuthenticated: () => void
 }
 
+// Persists across logouts so a user who pointed at a self-hosted server
+// doesn't have to re-type the URL each time. Stored in localStorage (not
+// the session Tauri Store) precisely because we want it to outlive a
+// logout that wipes the session.
+const SERVER_PREF_KEY = 'ete-sthetic.etebase.serverUrl'
+
+function readSavedServer(): string {
+  try {
+    const raw = localStorage.getItem(SERVER_PREF_KEY)
+    return raw && raw.trim() ? raw : DEFAULT_SERVER
+  } catch {
+    return DEFAULT_SERVER
+  }
+}
+
+function writeSavedServer(url: string): void {
+  try {
+    if (url === DEFAULT_SERVER) localStorage.removeItem(SERVER_PREF_KEY)
+    else localStorage.setItem(SERVER_PREF_KEY, url)
+  } catch {
+    // Quota or disabled storage — silently drop; the value will just
+    // default again on next login, which is annoying but not broken.
+  }
+}
+
 export function LoginScreen({ onAuthenticated }: Props) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [server, setServer] = useState(DEFAULT_SERVER)
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const initialServer = readSavedServer()
+  const [server, setServer] = useState(initialServer)
+  // Auto-expand the disclosure when a non-default server is saved so the
+  // user can see (and edit) the URL they're about to authenticate with.
+  const [showAdvanced, setShowAdvanced] = useState(
+    initialServer !== DEFAULT_SERVER,
+  )
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -18,8 +48,10 @@ export function LoginScreen({ onAuthenticated }: Props) {
     if (submitting) return
     setError(null)
     setSubmitting(true)
+    const chosen = server.trim() || DEFAULT_SERVER
     try {
-      await login(username.trim(), password, server.trim() || DEFAULT_SERVER)
+      await login(username.trim(), password, chosen)
+      writeSavedServer(chosen)
       onAuthenticated()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')

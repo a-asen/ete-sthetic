@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react'
 import type { Priority, TaskNode } from '../types'
-import { flattenVisible } from '../services/tree'
+import { findParentAndSiblings, flattenVisible } from '../services/tree'
 
 function bumpPriority(current: Priority, delta: 1 | -1): Priority {
   // delta 1 = "more important" (toward 1). delta -1 = "less important".
@@ -396,6 +396,32 @@ export function TaskTree({
   }, [creatingParent])
 
   const visible = useMemo(() => flattenVisible(roots, expanded), [roots, expanded])
+
+  // Keep the selection on something the user can actually see. If the
+  // selected uid drops out of `visible` (typical cases: reparented into
+  // a collapsed branch via Alt+→ / Alt+arrow / move-pick / drag, or a
+  // parent above it was collapsed), walk up the tree to the nearest
+  // visible ancestor and select that instead — so arrow-nav has a
+  // sensible home and the user has a "this is where it went" anchor.
+  // If the selected uid isn't anywhere in `roots` (filtered out by
+  // MainView's hide-completed / search), do nothing; that's a separate
+  // problem handled by `focusTasks` when the user enters the zone.
+  useEffect(() => {
+    if (!selected) return
+    const visibleUids = new Set(visible.map((n) => n.todo.uid))
+    if (visibleUids.has(selected)) return
+    let cursor = selected
+    // Cycle guard: buildTree already breaks cycles, but be defensive.
+    for (let i = 0; i < 64; i++) {
+      const loc = findParentAndSiblings(roots, cursor)
+      if (!loc || !loc.parent) return
+      cursor = loc.parent.todo.uid
+      if (visibleUids.has(cursor)) {
+        setSelected(cursor)
+        return
+      }
+    }
+  }, [selected, visible, roots, setSelected])
 
   // When selection changes — or when the tree becomes the active zone
   // again after a trip through the sidebar / detail panel — focus the row

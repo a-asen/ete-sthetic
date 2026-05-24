@@ -858,21 +858,31 @@ independently of the Mail module:
   the same way (an invite UPDATE replaces; a fresh REQUEST
   inserts).
 
-### Custom Etebase server URL
+### Custom Etebase server URL — ✅ done
 **Task.** Let users point ete-sthetic at their own Etebase server
 instead of the hard-coded default (self-hosted Etebase forks /
 non-etebase.com deployments).
-**Plan.**
-- Add a "Server" field to the login screen (already the natural
-  surface — users hit it before any URL is needed). Default is the
-  current hard-coded host shown as a placeholder.
-- Persist under `ete-sthetic.etebase.serverUrl`; read it in
-  `services/etebase.ts` instead of the constant when constructing
-  `Account.login` / `Account.signup`.
-- Validate `URL` parsing + `http(s)` scheme client-side before
-  submit; surface server errors inline on auth failure.
-- One-time migration: if no key is set, write the current default
-  on first login so existing users see it pre-filled.
+**Resolution.** Most of the plumbing already existed — `LoginScreen`
+had a "+ Custom server" disclosure and `etebase.ts` exported
+`DEFAULT_SERVER` + accepted a `server` argument to `login()`. Two
+things were missing:
+- The chosen URL was only persisted inside the session blob
+  (`store.ts`'s Tauri Store), which is wiped on logout. So a
+  self-hoster signing in to their box, signing out, and signing
+  back in saw the URL reset to the hard-coded default.
+- Saved URL wasn't read back into the LoginScreen on mount.
+Fixed by adding a separate `ete-sthetic.etebase.serverUrl` key in
+`localStorage` (lives outside the session Tauri Store so it
+*outlives* logout). `LoginScreen` reads it via `readSavedServer()`
+on first render and seeds both the `server` state AND
+`showAdvanced` (auto-expands the disclosure when a non-default
+URL is saved, so the user sees which host they're about to
+authenticate against). On successful login, `writeSavedServer()`
+persists the chosen URL — or removes the key when the user reverts
+to the default, so localStorage doesn't accumulate cruft. Validate-
+before-submit was left to the existing trim + `Account.login`
+error path; the inline error banner already surfaces server-side
+failures.
 
 ### Disable individual modules
 **Task.** Some users only want a subset (tasks only, or
@@ -1008,7 +1018,7 @@ who never wanted a mail client should be able to turn it off.
 
 ## Backlog (queued 2026-05-24)
 
-### Moved/indented task: highlight follows to the parent when the row is hidden
+### Moved/indented task: highlight follows to the parent when the row is hidden — ✅ done
 **Task.** When a task is reparented (Alt+→ indent, Alt+↑/↓ cross-branch
 reparent, drag/move-pick into a collapsed branch) and the moved row
 ends up hidden — destination parent is collapsed, or the moved item
@@ -1017,6 +1027,20 @@ drops because `selectedTaskUid` points at an invisible row. Instead,
 the highlight should walk up to the nearest *visible* ancestor (the
 new parent, or its visible ancestor) so the user still has a clear
 "this is where it went" anchor and arrow-nav has a sensible home.
+**Resolution.** Added a `useEffect` in
+[`TaskTree.tsx`](src/components/TaskTree.tsx) that watches
+`[selected, visible, roots]`. When `selected` is set but isn't in
+`visible` (the flatten-with-expand output), it walks up the `roots`
+tree via `findParentAndSiblings` and selects the nearest ancestor
+that IS in `visible`. Cycle-safe (64-step cap; `buildTree` already
+breaks cycles but the guard is cheap insurance). Lives inside
+TaskTree because the expand state (the actual "what's hidden")
+isn't accessible to MainView. If the selected uid isn't anywhere
+in `roots` (filtered out entirely, or genuinely deleted), the
+effect bails — that case is already handled by `focusTasks` when
+the user re-enters the zone (falls back to first visible task).
+Covers all reparent flows (Alt+→ indent, Alt+↑/↓, drag-to-list,
+move-pick) at once, without each call site having to know.
 
 ### Shift+Tab in the confirm modal escapes instead of cycling — ✅ done
 **Task.** `ConfirmModal` traps `Tab` between Cancel and Confirm, but
