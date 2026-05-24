@@ -102,7 +102,7 @@ export function SyncStatusPill() {
       title={tooltip}
       aria-label={tooltip}
       aria-live="polite"
-      className={`pointer-events-auto fixed right-3 top-3 z-40 flex items-center gap-1.5 rounded-full border border-border bg-surface/95 px-2.5 py-1 text-[11px] shadow-sm backdrop-blur-sm transition-colors hover:border-border-strong disabled:cursor-not-allowed ${textColor}`}
+      className={`pointer-events-auto fixed left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-2.5 py-1 text-[11px] shadow-sm backdrop-blur-sm transition-colors hover:border-border-strong disabled:cursor-not-allowed ${textColor}`}
     >
       <span
         aria-hidden

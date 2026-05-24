@@ -1194,21 +1194,26 @@ sites (`MainView` sidebar, `DetailPanel` left edge, contacts books
 original 6 px, but the counts column gets its 2 px of breathing
 room back.
 
-### Move the global Sync pill out of the top-right
+### Move the global Sync pill out of the top-right — ◑ moved to top-center, full per-header embed deferred
 **Task.** The top-right is busy real estate — window controls live
 there and the new `SyncStatusPill` competes with them visually. The
 user suggests relocating to the centre-top of the active module's
 header, next to the title and the open/total count. The calendar
 header is busy in the top-right too (view buttons, sync badge);
 the same centre-top placement would fit there.
-**Plan sketch.**
-- Make `SyncStatusPill` render `inline` (no `position: fixed`),
-  and have each module's view embed it in its own header. Tasks:
-  beside `${active.name} N open · M total`. Calendar: beside the
-  current-week / day-range label. Contacts: beside the contact
-  count subtitle.
-- App-level mount of the pill goes away; each view imports it.
-- Hover/click behaviour unchanged. Only the layout slot moves.
+**Resolution (interim).** Shipped the smaller change: pill now
+renders at `fixed top-3 left-1/2 -translate-x-1/2` instead of
+`right-3 top-3`, so it sits centred along the top edge clear of
+the window controls and each module's busy top-right cluster.
+This keeps the wiring as-is (App-level mount, no per-module
+embed) but removes the visual competition the user flagged.
+**Deferred.** The full per-module-header embed — pill inline next
+to "0_Daily 4 open · 2700" or the calendar's week-range — is a
+follow-up if the centre-top placement still feels redundant with
+the per-list "Syncing… N items" badge that already lives next to
+the task title. Touching every module's header is meaningfully
+more invasive than the single-line move, so we defer until
+needed.
 
 ### Calendar: sort the calendars sidebar
 **Task.** The sidebar lists calendars in server order today. Add a
