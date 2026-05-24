@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { LoginScreen } from './components/LoginScreen'
 import { MainView } from './components/MainView'
+import { SyncStatusPill } from './components/SyncStatusPill'
 import { restoreSession } from './services/etebase'
 import {
   MODULE_FLAGS_CHANGED_EVENT,
@@ -129,6 +130,7 @@ function App() {
         onChange={setModule}
         enabled={enabledModules}
       />
+      <SyncStatusPill />
     </>
   )
 }

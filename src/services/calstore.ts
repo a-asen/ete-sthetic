@@ -14,6 +14,11 @@ export interface CalMemory {
   calendars: CollectionInfo[] | null
   eventsByCal: Map<string, EventItem[]>
   stokenByCal: Map<string, string>
+  // Last successful sync timestamp per calendar uid. Lets the global
+  // sync-status indicator read calendar freshness without re-mounting
+  // CalendarView. Populated from the disk snapshot's lastSyncedAt on
+  // load and bumped on every successful sync.
+  lastSyncedAt: Map<string, number>
   hidden: Set<string>
   view: CalView
   anchorMs: number
@@ -29,6 +34,7 @@ const mem: CalMemory = {
   calendars: null,
   eventsByCal: new Map(),
   stokenByCal: new Map(),
+  lastSyncedAt: new Map(),
   hidden: new Set(),
   view: 'month',
   anchorMs: Date.now(),
@@ -51,6 +57,7 @@ export function resetCalMemory(): void {
   mem.calendars = null
   mem.eventsByCal = new Map()
   mem.stokenByCal = new Map()
+  mem.lastSyncedAt = new Map()
   mem.hidden = new Set()
   mem.view = 'month'
   mem.anchorMs = Date.now()

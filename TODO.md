@@ -1067,27 +1067,37 @@ the `window.addEventListener('keydown', …)` to capture phase
 handler in the chain and focus stays trapped between Cancel/Confirm
 in both directions.
 
-### Global "Synced Xs ago" status in the top-right
+### Global "Synced Xs ago" status in the top-right — ◑ MVP shipped, syncing/failed/click-to-sync deferred
 **Task.** The design mock shows a small "● Synced 14s ago" line in the
 top-right of the window — a single at-a-glance indicator that the
 whole app is up to date. We already track per-list sync timestamps
 (`lastSuccessfulSyncAt` in taskstore / `lastSyncedAt` in
 ContactMemory) and per-list spinners; this would be the global rollup.
-**Plan sketch.**
-- Pick the *oldest* successful sync across all visible collections
-  (tasks lists + calendars + address books) → that's the "synced N
-  ago" age. If anything is currently syncing, show "Syncing…" instead;
-  if anything failed since its last success, show "N failed" in the
-  danger colour with a tooltip pointing at the offending sidebar row.
-- Mounts in the top toolbar (window-level, not per-module) so it's
-  the same widget whether the user is on Tasks / Calendar / Contacts.
-- Updates the relative time on a 30s tick (use the same pattern as
-  the contacts header subtitle, but relative — "14s ago" / "3m ago"
-  — rather than absolute "HH:MM"). Hovering shows the absolute
-  timestamp.
-- Clicking the indicator triggers a sync-all across every module
-  (reuse the existing `syncAll()` in tasks; mirror in calendar /
-  contacts).
+**Resolution (MVP).** New `services/syncStatus.ts` exposes
+`getSyncStatus()` which reads the *oldest* `lastSyncedAt` across all
+collections in every enabled module (returns null when no data —
+fresh login / pre-first-sync). `formatSyncAge(ts, now)` buckets it as
+"Just synced" / "Synced Ns ago" / "Synced Nm ago" / "Synced Nh ago"
+/ "Synced <date>". New `components/SyncStatusPill.tsx` is a fixed
+top-right pill with an accent dot + the label; hover shows the
+absolute timestamp; self-ticks on a 30 s cadence and also refreshes
+on window focus (so a laptop coming out of sleep doesn't show a
+stale label). Listens to `MODULE_FLAGS_CHANGED_EVENT` so disabling
+a module drops its timestamps from the rollup immediately. Mounted
+at the App level in `App.tsx` next to the `ModuleSwitch`, so the
+same widget appears regardless of which module is active. To
+support the calendar in the rollup, `CalMemory` gained a
+`lastSyncedAt: Map<string, number>` (was previously only persisted
+to disk in the cal snapshot); `CalendarView` seeds it from the disk
+snapshot on cold load and updates it on every successful sync.
+**Deferred follow-ups.** (1) "Syncing…" mid-sync — needs a global
+in-flight set that each view updates as it syncs. (2) "N failed" in
+the danger colour — needs a global error map similar to the contacts
+module's `errorByBook`. (3) Click-to-sync-all across modules — each
+currently-mounted view would have to expose its `syncAll` to a
+global registry the pill could call into. All three were dropped
+from MVP scope on purpose; the time-only label covers the user's
+original ask ("I like the sync status in the top right").
 
 ### Remember per-list cursor position when switching lists — ✅ done
 **Task.** Today, switching away from a list and back resets the

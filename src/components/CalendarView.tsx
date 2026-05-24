@@ -457,6 +457,10 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
           fromStoken = snap.stoken
           const seeded = [...acc.values()]
           setEventsByCal((prev) => new Map(prev).set(uid, seeded))
+          // Seed the in-memory freshness map from disk so the global
+          // sync-status indicator reflects calendar age even if the
+          // calendar view hasn't run a network sync this session yet.
+          getCalMemory().lastSyncedAt.set(uid, snap.lastSyncedAt)
         }
       }
       const res = await listEventItems(uid, {
@@ -482,12 +486,14 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
       }
       setEventsByCal((prev) => new Map(prev).set(uid, finalList))
       stokenRef.current.set(uid, res.stoken)
+      const now = Date.now()
+      getCalMemory().lastSyncedAt.set(uid, now)
       await saveCalSnapshot({
         version: 1,
         uid,
         events: finalList,
         stoken: res.stoken,
-        lastSyncedAt: Date.now(),
+        lastSyncedAt: now,
       })
     },
     [],
