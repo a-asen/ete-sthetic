@@ -1,7 +1,7 @@
 # Task item options — coverage worksheet
 
 This is the full picture of what a VTODO *can* carry (RFC 5545 §3.6.2) vs. what
-ete-stethic does with it today. Use the **Want?** / **Notes** columns to mark
+ete-sthetic does with it today. Use the **Want?** / **Notes** columns to mark
 what's worth building — that's the input I'll turn into TODO items.
 
 Legend:

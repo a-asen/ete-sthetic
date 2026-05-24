@@ -3,7 +3,7 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 const SESSION_KEY = 'etebase.session'
 const SERVER_KEY = 'etebase.server'
 
-export const store = new LazyStore('ete-stethic.json', {
+export const store = new LazyStore('ete-sthetic.json', {
   defaults: {},
   autoSave: true,
 })

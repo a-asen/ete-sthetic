@@ -8,9 +8,9 @@
 // fires on `window`, so toggling the setting or dismissing a hint
 // updates instantly across the app without prop-drilling state.
 
-const HINTS_ENABLED_KEY = 'ete-stethic.hints.enabled'
-const HINTS_DISMISSED_PREFIX = 'ete-stethic.hints.dismissed.'
-export const HINTS_CHANGED_EVENT = 'ete-stethic:hints-changed'
+const HINTS_ENABLED_KEY = 'ete-sthetic.hints.enabled'
+const HINTS_DISMISSED_PREFIX = 'ete-sthetic.hints.dismissed.'
+export const HINTS_CHANGED_EVENT = 'ete-sthetic:hints-changed'
 
 export function readHintsEnabled(): boolean {
   try {

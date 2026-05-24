@@ -18,7 +18,7 @@ const NAV_INPUT_TYPES = new Set([
 // same window's reloads but a fresh launch shows the hint again. A more
 // durable opt-out belongs in a future settings toggle (see the "Hint
 // opt-out" TODO).
-const DISMISS_KEY = 'ete-stethic.editIndicatorDismissed'
+const DISMISS_KEY = 'ete-sthetic.editIndicatorDismissed'
 
 function readDismissed(): boolean {
   try {

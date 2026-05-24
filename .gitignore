@@ -28,3 +28,4 @@ dist-ssr
 
 # Local working materials (screenshots, scratchpads)
 _resources/
+.rmt.conf

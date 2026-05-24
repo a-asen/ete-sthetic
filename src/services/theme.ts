@@ -3,7 +3,7 @@
 
 export type Theme = 'dark' | 'light'
 
-const STORAGE_KEY = 'ete-stethic.theme'
+const STORAGE_KEY = 'ete-sthetic.theme'
 
 export function readStoredTheme(): Theme {
   try {
@@ -38,7 +38,7 @@ export function applyStoredTheme(): Theme {
 // null = use the theme default). Applied as inline custom properties on
 // <html>, which beat the stylesheet's :root / [data-theme] values.
 
-const ACCENT_KEY = 'ete-stethic.accent'
+const ACCENT_KEY = 'ete-sthetic.accent'
 
 export function readStoredAccent(): string | null {
   try {

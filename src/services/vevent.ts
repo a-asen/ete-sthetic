@@ -160,7 +160,7 @@ export function parseVEvent(raw: string): VEvent | null {
   }
 }
 
-const PRODID = '-//ete-stethic//EN'
+const PRODID = '-//ete-sthetic//EN'
 
 function icalUtcNow(): ICAL.Time {
   return ICAL.Time.fromJSDate(new Date(), true)

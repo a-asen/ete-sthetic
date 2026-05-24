@@ -233,7 +233,7 @@ export function parseVTodo(raw: string): VTodo | null {
   }
 }
 
-const PRODID = '-//ete-stethic//EN'
+const PRODID = '-//ete-sthetic//EN'
 
 // Build an ICAL.Time for "now" in UTC. Passing strings to
 // updatePropertyWithValue triggers ical.js's strict date-time parser; using

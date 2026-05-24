@@ -1,8 +1,8 @@
-# ete-stethic
+# ete-sthetic
 
 A small, aesthetic desktop client for [EteSync](https://www.etesync.com/).
 Built because Thunderbird and the EteSync web client both flatten the
-parent/child task hierarchy and look dated. ete-stethic renders the tree
+parent/child task hierarchy and look dated. ete-sthetic renders the tree
 faithfully, leans keyboard-first, and tries to stay out of the way.
 
 It started as a tasks-only viewer and grew into a unified client covering

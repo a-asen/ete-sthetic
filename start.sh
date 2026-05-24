@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch ete-stethic in Tauri dev mode (vite + tauri, hot reload).
+# Launch ete-sthetic in Tauri dev mode (vite + tauri, hot reload).
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -22,5 +22,5 @@ if [[ "$LIMIT" -lt 1024 ]]; then
   echo
 fi
 
-echo "▶  starting ete-stethic on http://localhost:${PORT}"
+echo "▶  starting ete-sthetic on http://localhost:${PORT}"
 exec npm run tauri dev -- --config "{\"build\":{\"devUrl\":\"http://localhost:${PORT}\"}}"

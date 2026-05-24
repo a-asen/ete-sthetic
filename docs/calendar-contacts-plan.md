@@ -1,6 +1,6 @@
 # Plan: unified EteSync client (calendar + contacts)
 
-Goal: extend ete-stethic from a tasks-only client into one window that also
+Goal: extend ete-sthetic from a tasks-only client into one window that also
 handles **calendars (VEVENT)** and **contacts (vCard)** — the original
 motivation (one nice client instead of juggling Thunderbird/web per data type).
 

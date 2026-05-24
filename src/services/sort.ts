@@ -83,7 +83,7 @@ export function comparatorFor(
   }
 }
 
-const SORT_KEY_PREFIX = 'ete-stethic.taskSort.'
+const SORT_KEY_PREFIX = 'ete-sthetic.taskSort.'
 
 export function readTaskSort(uid: string): TaskSortSpec {
   try {

@@ -6,7 +6,7 @@ import type { EventItem } from '../types'
 // RFC 5545 file and import splits a file back into per-event VCALENDARs
 // that createEventRaw can ingest.
 
-const PRODID = '-//ete-stethic//EN'
+const PRODID = '-//ete-sthetic//EN'
 
 function newVCalendar(): ICAL.Component {
   const cal = new ICAL.Component(['vcalendar', [], []])

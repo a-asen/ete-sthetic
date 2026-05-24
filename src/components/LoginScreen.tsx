@@ -37,7 +37,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
       >
         <header className="space-y-1 text-center">
           <h1 className="text-xl font-medium tracking-tight text-text">
-            ete-stethic
+            ete-sthetic
           </h1>
           <p className="text-xs text-text-faint">Sign in to your EteSync account</p>
         </header>
