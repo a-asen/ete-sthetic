@@ -44,6 +44,13 @@ import {
   registerSyncAllHandler,
   setModuleSyncing,
 } from '../services/syncStatus'
+import {
+  isIcsFile,
+  parseIcsCandidates,
+  type IcsImportCandidate,
+} from '../services/icsImport'
+import { ImportIcsModal, type ImportPlanEntry } from './calendar/ImportIcsModal'
+import { PasteIcsModal } from './calendar/PasteIcsModal'
 import { MonthGrid } from './calendar/MonthGrid'
 import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
@@ -398,6 +405,13 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
     | null
   >(null)
   const [creating, setCreating] = useState(false)
+  // Quick-add VEVENT flows: drag-drop / paste / (future) OS open-with.
+  // `importing` holds the parsed candidates while the picker is open;
+  // `pastingIcs` toggles the paste textarea modal. Drag-drop fills
+  // `importing` directly; paste flows into it via the picker.
+  const [importing, setImporting] = useState<IcsImportCandidate[] | null>(null)
+  const [pastingIcs, setPastingIcs] = useState(false)
+  const [icsDragHover, setIcsDragHover] = useState(false)
   const [createErr, setCreateErr] = useState<string | null>(null)
   const [conflict, setConflict] = useState<{
     calUid: string
@@ -711,6 +725,49 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
       } finally {
         ioBusy.current = false
       }
+    },
+    [eventsByCal, syncCalendar],
+  )
+
+  // Quick-add commit: writes each candidate from the drag-drop /
+  // paste flows into the target calendar, replacing existing items
+  // when the UID already lives there (iTIP UPDATE semantics) and
+  // inserting otherwise.
+  const handleImportCandidates = useCallback(
+    async (target: string, plan: ImportPlanEntry[]): Promise<void> => {
+      let ok = 0
+      let failed = 0
+      for (const entry of plan) {
+        try {
+          if (entry.replacesItemUid) {
+            await replaceEventRaw(
+              target,
+              entry.replacesItemUid,
+              entry.candidate.raw,
+            )
+          } else {
+            await createEventRaw(target, entry.candidate.raw)
+          }
+          ok++
+        } catch {
+          failed++
+        }
+      }
+      try {
+        await syncCalendar(
+          target,
+          new AbortController().signal,
+          eventsByCal.get(target) ?? [],
+        )
+      } catch {
+        // A failed resync only delays visibility until the next sync.
+      }
+      setNotice(
+        failed === 0
+          ? `Imported ${ok} event${ok === 1 ? '' : 's'}`
+          : `Imported ${ok}, ${failed} failed`,
+      )
+      setImporting(null)
     },
     [eventsByCal, syncCalendar],
   )
@@ -1315,8 +1372,52 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
     )
   }
 
+  const handleIcsDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!icsDragHover) setIcsDragHover(true)
+  }
+
+  const handleIcsDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget === e.target) setIcsDragHover(false)
+  }
+
+  const handleIcsDrop = async (e: React.DragEvent) => {
+    setIcsDragHover(false)
+    const file = [...e.dataTransfer.files].find(isIcsFile)
+    if (!file) return
+    e.preventDefault()
+    try {
+      const text = await file.text()
+      const candidates = parseIcsCandidates(text)
+      if (candidates.length === 0) {
+        setNotice('No events found in that file')
+        return
+      }
+      setImporting(candidates)
+    } catch (err) {
+      setNotice(
+        `Couldn't read .ics: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
   return (
-    <div className="flex h-screen bg-bg text-text">
+    <div
+      className="relative flex h-screen bg-bg text-text"
+      onDragOver={handleIcsDragOver}
+      onDragLeave={handleIcsDragLeave}
+      onDrop={handleIcsDrop}
+    >
+      {icsDragHover && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-accent bg-accent-soft/40 text-sm font-medium text-accent"
+        >
+          Drop .ics to import
+        </div>
+      )}
       <CalendarSidebar
         key={`${anchor.getFullYear()}-${anchor.getMonth()}`}
         anchor={anchor}
@@ -1373,6 +1474,13 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
               className="ml-1 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90"
             >
               + New
+            </button>
+            <button
+              onClick={() => setPastingIcs(true)}
+              title="Paste an .ics / VCALENDAR block to import (Ctrl+V into the dialog)"
+              className="ml-1 rounded-md border border-border px-2.5 py-1 text-xs text-text-muted hover:bg-surface-2"
+            >
+              Paste invite
             </button>
             <input
               type="date"
@@ -1523,6 +1631,29 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
         )}
       </div>
 
+      {pastingIcs && (
+        <PasteIcsModal
+          onCancel={() => setPastingIcs(false)}
+          onParsed={(candidates) => {
+            setPastingIcs(false)
+            setImporting(candidates)
+          }}
+        />
+      )}
+      {importing && calendars && calendars.length > 0 && (
+        <ImportIcsModal
+          candidates={importing}
+          calendars={calendars}
+          eventsByCal={eventsByCal}
+          defaultCalendarUid={
+            // Default to the first non-hidden calendar so the user can
+            // just hit Enter to import into "their" calendar.
+            calendars.find((c) => !hidden.has(c.uid) && !c.isDeleted)?.uid
+          }
+          onCancel={() => setImporting(null)}
+          onConfirm={handleImportCandidates}
+        />
+      )}
       {composer && calendars && calendars.length > 0 && (
         <EventComposer
           date={

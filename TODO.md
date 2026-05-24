@@ -833,30 +833,41 @@ some other calendar app or doing nothing.
   is the iTIP UPDATE semantic) rather than duplicate; surface
   "Updated existing event" in the confirm.
 
-### Quick-add VEVENTs from mail invites (without the full Mail module)
+### Quick-add VEVENTs from mail invites (without the full Mail module) — ◑ DnD + paste done, OS open-with deferred
 **Task.** Even before the proposed Mail module lands, give users
 a fast path to drop an invite into the calendar from whatever
 mail client they're already using. Mail invites are by far the
 most common source of VEVENTs and worth a shortcut today.
-**Plan.** Three lightweight surfaces, any of which can land
-independently of the Mail module:
-- **Drag-and-drop target.** The calendar view becomes a drop
-  target for `.ics` files (HTML5 DnD `dataTransfer.files`).
-  Reuses the same import path as the `.ics` association above.
-- **Paste-to-import.** A "Paste invite (.ics)" item in the
-  calendar new-event popover that opens a textarea — paste the
-  raw VCALENDAR block (right-click → "View source" in most mail
-  clients, or copy from the `.ics` attachment), Import button
-  parses and writes. Cheaper than DnD for headless / SSH'd
-  Linux setups.
-- **OS share / "Open with" handler.** Falls out of the
-  `.ics`-association work above for free on macOS/Linux; on
-  Windows the installer entry covers it.
-- All three converge on the same import helper
-  (`services/icsImport.ts`?) so the Mail module's Accept-invite
-  flow can reuse it 1:1 when that lands. De-dupe on VEVENT UID
-  the same way (an invite UPDATE replaces; a fresh REQUEST
-  inserts).
+**Resolution.** Two of the three surfaces shipped, both feeding a
+shared `services/icsImport.ts` helper (`parseIcsCandidates` +
+`isIcsFile`) so the future Mail-module Accept-invite flow can reuse
+the same parse/de-dup/picker path 1:1.
+- **Drag-and-drop target.** `CalendarView`'s outer flex container
+  takes `onDragOver` / `onDragLeave` / `onDrop`. While a drag is
+  hovering, a full-pane "Drop .ics to import" overlay appears
+  (`icsDragHover` state). On drop the first .ics file is read via
+  `File.text()`, parsed by `parseIcsCandidates`, and the candidates
+  are passed to the picker modal. Empty / unparseable files surface
+  a notice toast rather than silently failing.
+- **Paste-to-import.** A new "Paste invite" button next to "+ New"
+  opens `PasteIcsModal` — a focused textarea that live-parses on
+  every keystroke and shows a "N events ready to import" hint
+  underneath. The Continue button hands the candidates to the
+  picker (same path drag-drop uses).
+- **Picker (`ImportIcsModal`).** Lists every candidate with its
+  summary + parsed start, walks `eventsByCal` for UID matches and
+  badges those rows "Updates existing" (iTIP UPDATE), exposes a
+  calendar dropdown (defaults to the first non-hidden, non-deleted
+  calendar), and a "N new · M updated" tally. `onConfirm` calls
+  `replaceEventRaw` for existing UIDs and `createEventRaw` for
+  fresh ones, then resyncs the target calendar so the new rows
+  paint without waiting for the next adaptive tick.
+**Deferred.** The OS share / "Open with" handler still lives under
+the separate "Open `.ics` files" entry — that work registers the
+app as a `text/calendar` handler at the Tauri / OS layer and
+parses the path out of argv on launch. When it lands, it reuses
+this same `parseIcsCandidates` + picker flow, so it's purely a
+plumbing-on-launch task at that point.
 
 ### Custom Etebase server URL — ✅ done
 **Task.** Let users point ete-sthetic at their own Etebase server
