@@ -188,6 +188,9 @@ export interface NewVEventArgs {
   allDay: boolean
   description?: string
   location?: string
+  // RRULE body (without the "RRULE:" prefix), e.g. "FREQ=WEEKLY".
+  // Undefined / empty string = non-recurring.
+  rrule?: string
 }
 
 // Build a fresh VCALENDAR + VEVENT for a new event. For all-day events
@@ -215,6 +218,10 @@ export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
   if (args.location) {
     vevent.updatePropertyWithValue('location', args.location)
   }
+  if (args.rrule) {
+    // RRULE expects a structured value; ICAL.js can parse the string.
+    vevent.updatePropertyWithValue('rrule', ICAL.Recur.fromString(args.rrule))
+  }
 
   cal.addSubcomponent(vevent)
   return { uid, raw: cal.toString() }
@@ -228,6 +235,10 @@ export interface VEventPatch {
   // '' or null clears; undefined leaves untouched.
   description?: string | null
   location?: string | null
+  // RRULE body. '' or null removes the RRULE; undefined leaves
+  // whatever the source had untouched (so a non-RRULE-aware edit
+  // never accidentally drops the recurrence).
+  rrule?: string | null
 }
 
 // Update an existing raw VEVENT. Preserves unknown properties (RRULE,
@@ -262,6 +273,11 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
   if (patch.location !== undefined) {
     if (!patch.location) vevent.removeAllProperties('location')
     else vevent.updatePropertyWithValue('location', patch.location)
+  }
+  if (patch.rrule !== undefined) {
+    if (!patch.rrule) vevent.removeAllProperties('rrule')
+    else
+      vevent.updatePropertyWithValue('rrule', ICAL.Recur.fromString(patch.rrule))
   }
 
   vevent.updatePropertyWithValue('last-modified', icalUtcNow())

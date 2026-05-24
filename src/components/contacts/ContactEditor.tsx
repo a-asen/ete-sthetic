@@ -10,6 +10,26 @@ const EMAIL_TYPES = ['', 'home', 'work', 'other']
 const PHONE_TYPES = ['', 'cell', 'home', 'work', 'fax', 'other']
 const URL_TYPES = ['', 'home', 'work', 'other']
 const ADDR_TYPES = ['', 'home', 'work', 'other']
+// Curated service list for the messaging dropdown. Order chosen to
+// keep the most-common modern apps near the top; `''` is the "no
+// service set" option (renders as "—" via TypeSelect). An unrecognised
+// service from a third-party card is automatically appended by
+// TypeSelect so an edit can't drop it.
+const MESSAGING_TYPES = [
+  '',
+  'discord',
+  'slack',
+  'telegram',
+  'signal',
+  'matrix',
+  'xmpp',
+  'irc',
+  'skype',
+  'aim',
+  'icq',
+  'jabber',
+  'other',
+]
 
 function cloneCard(c: VCard): VCard {
   return {
@@ -18,6 +38,7 @@ function cloneCard(c: VCard): VCard {
     emails: c.emails.map((e) => ({ ...e })),
     phones: c.phones.map((p) => ({ ...p })),
     urls: c.urls.map((u) => ({ ...u })),
+    messaging: c.messaging.map((m) => ({ ...m })),
     addresses: c.addresses.map((a) => ({ ...a })),
     categories: [...c.categories],
   }
@@ -255,6 +276,7 @@ export function ContactEditor({
       emails: draft.emails.filter((e) => e.value.trim()),
       phones: draft.phones.filter((p) => p.value.trim()),
       urls: draft.urls.filter((u) => u.value.trim()),
+      messaging: draft.messaging.filter((m) => m.value.trim()),
       categories,
     })
   }
@@ -340,6 +362,14 @@ export function ContactEditor({
           inputType="url"
           placeholder="https://example.com"
           onChange={(v) => set('urls', v)}
+        />
+        <FieldListEditor
+          label="Messaging"
+          fields={draft.messaging}
+          types={MESSAGING_TYPES}
+          inputType="text"
+          placeholder="user#1234 / @handle / xmpp:user@host"
+          onChange={(v) => set('messaging', v)}
         />
         <AddressListEditor
           addresses={draft.addresses}

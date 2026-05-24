@@ -22,7 +22,12 @@ interface ContentLine {
 }
 
 // Properties this module generates itself on serialize; preserved-line
-// copying skips them so they're never written twice.
+// copying skips them so they're never written twice. IMPP is modeled
+// (so the editor can surface app-specific handles like Discord); the
+// vCard 4.0 spec sibling X-SOCIALPROFILE is recognised on parse and
+// merged into the same `messaging` slot, then re-emitted as IMPP — a
+// minor lossy step for cards that originally used X-SOCIALPROFILE,
+// but the data survives.
 const MODELED = new Set([
   'BEGIN',
   'END',
@@ -35,6 +40,8 @@ const MODELED = new Set([
   'EMAIL',
   'TEL',
   'URL',
+  'IMPP',
+  'X-SOCIALPROFILE',
   'ADR',
   'BDAY',
   'NOTE',
@@ -243,6 +250,7 @@ export function emptyVCard(): VCard {
     emails: [],
     phones: [],
     urls: [],
+    messaging: [],
     addresses: [],
     birthday: '',
     note: '',
@@ -323,6 +331,23 @@ export function parseVCard(raw: string): VCard | null {
       case 'URL': {
         const v = unescapeText(line.value).trim()
         if (v) card.urls.push({ value: v, type: pickType(line) })
+        break
+      }
+      case 'IMPP':
+      case 'X-SOCIALPROFILE': {
+        const v = unescapeText(line.value).trim()
+        if (!v) break
+        // Service name comes from the TYPE param when present (modern
+        // apps lack a URI scheme so this is the load-bearing signal),
+        // falling back to the URI scheme for `xmpp:` / `aim:` /
+        // `matrix:` etc. — both vCard 3.0 and 4.0 in the wild use the
+        // scheme form too.
+        let svc = pickType(line)
+        if (!svc) {
+          const m = v.match(/^([a-z][a-z0-9+.-]*):/i)
+          if (m) svc = m[1].toLowerCase()
+        }
+        card.messaging.push({ value: v, type: svc })
         break
       }
       case 'ADR': {
@@ -450,6 +475,9 @@ export function serializeVCard(card: VCard, preserveFrom?: string): string {
   }
   for (const u of card.urls) {
     if (u.value) out.push(`URL${typeParam(u.type)}:${escapeText(u.value)}`)
+  }
+  for (const m of card.messaging) {
+    if (m.value) out.push(`IMPP${typeParam(m.type)}:${escapeText(m.value)}`)
   }
   for (const a of card.addresses) {
     if (!hasAddr(a)) continue

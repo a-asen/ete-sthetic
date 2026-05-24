@@ -210,6 +210,22 @@ export function ContactCard({ card, pending, onEdit, onDelete }: Props) {
           </section>
         )}
 
+        {card.messaging.length > 0 && (
+          <section>
+            <p className={labelClass}>Messaging</p>
+            <ul className="mt-1 space-y-1">
+              {card.messaging.map((m, i) => (
+                <li key={i} className="flex items-center gap-2">
+                  <span className="select-text break-all text-text">
+                    {m.value}
+                  </span>
+                  <TypeBadge type={m.type} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {card.birthday && (
           <section>
             <p className={labelClass}>Birthday</p>

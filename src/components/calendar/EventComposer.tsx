@@ -18,6 +18,82 @@ function fromInputs(date: string, time: string): Date {
   return new Date(y, (mo ?? 1) - 1, d ?? 1, h ?? 0, mi ?? 0, 0, 0)
 }
 
+// Bump an "HH:MM" string by a positive or negative minute delta. Wraps
+// inside [00:00, 24:00). Returns the original value if it doesn't parse.
+function bumpTime(value: string, deltaMin: number): string {
+  const m = value.match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return value
+  const total = Number(m[1]) * 60 + Number(m[2]) + deltaMin
+  const wrapped = ((total % 1440) + 1440) % 1440
+  return `${pad(Math.floor(wrapped / 60))}:${pad(wrapped % 60)}`
+}
+
+// Bump a "YYYY-MM-DD" string by N days, respecting month/year rollover.
+function bumpDate(value: string, deltaDays: number): string {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return value
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  d.setDate(d.getDate() + deltaDays)
+  return toDateInput(d)
+}
+
+// Larger-step modifier handlers for the date/time inputs. The native
+// arrow-key default already does ±1 (minute or day); Shift / Ctrl+Cmd
+// take over for bigger jumps. Keeps the native input — no custom
+// segmented editor yet — so month / year jumps are still ±1 month and
+// only fire on the segment the browser currently has focused.
+function handleTimeArrowMods(
+  e: React.KeyboardEvent<HTMLInputElement>,
+  value: string,
+  onChange: (v: string) => void,
+): void {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+  if (!e.shiftKey && !e.ctrlKey && !e.metaKey) return
+  if (!value) return
+  e.preventDefault()
+  const step = e.ctrlKey || e.metaKey ? 15 : 5
+  const sign = e.key === 'ArrowUp' ? 1 : -1
+  onChange(bumpTime(value, sign * step))
+}
+
+function handleDateArrowMods(
+  e: React.KeyboardEvent<HTMLInputElement>,
+  value: string,
+  onChange: (v: string) => void,
+): void {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+  if (!e.shiftKey && !e.ctrlKey && !e.metaKey) return
+  if (!value) return
+  e.preventDefault()
+  const step = e.ctrlKey || e.metaKey ? 7 : 3
+  const sign = e.key === 'ArrowUp' ? 1 : -1
+  onChange(bumpDate(value, sign * step))
+}
+
+// Recurrence presets surfaced by the composer's "Repeats" dropdown.
+// "Custom" is selectable only when the source event already has an
+// RRULE more complex than the bare presets (BYDAY / INTERVAL / COUNT
+// / UNTIL) — picking it preserves the original; picking any other
+// option overwrites the RRULE with the matching FREQ string or
+// removes it.
+type RepeatPreset =
+  | 'none'
+  | 'daily'
+  | 'weekly'
+  | 'monthly'
+  | 'yearly'
+  | 'custom'
+
+function detectPreset(rrule?: string): RepeatPreset {
+  if (!rrule) return 'none'
+  const normalized = rrule.trim().toUpperCase().replace(/\s+/g, '')
+  if (normalized === 'FREQ=DAILY') return 'daily'
+  if (normalized === 'FREQ=WEEKLY') return 'weekly'
+  if (normalized === 'FREQ=MONTHLY') return 'monthly'
+  if (normalized === 'FREQ=YEARLY') return 'yearly'
+  return 'custom'
+}
+
 export function EventComposer({
   date,
   defaultHour,
@@ -79,6 +155,14 @@ export function EventComposer({
   const [endTime, setEndTime] = useState(toTimeInput(end0))
   const [location, setLocation] = useState(ev?.location ?? '')
   const [description, setDescription] = useState(ev?.description ?? '')
+  const [repeat, setRepeat] = useState<RepeatPreset>(() =>
+    detectPreset(ev?.rrule),
+  )
+  // True when the source event's RRULE is more complex than a preset
+  // (BYDAY, INTERVAL, COUNT, UNTIL, etc.). The dropdown surfaces a
+  // "Custom" option that's only selectable while we still hold the
+  // original RRULE — picking any other option will replace it.
+  const sourceHadCustomRrule = detectPreset(ev?.rrule) === 'custom'
   const [localErr, setLocalErr] = useState<string | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
 
@@ -113,6 +197,21 @@ export function EventComposer({
       return
     }
     setLocalErr(null)
+    // Translate the "Repeats" dropdown back into an RRULE string. On
+    // create, we either emit an RRULE or omit the field. On edit, the
+    // patch field uses null to mean "remove" and undefined to mean
+    // "leave whatever was there alone" — that's what lets the user
+    // keep a complex BYDAY/COUNT RRULE the dropdown can't represent
+    // (Custom stays selected, we send undefined, vevent.ts skips the
+    // property entirely).
+    const presetToRrule: Record<RepeatPreset, string | null | undefined> = {
+      none: null,
+      daily: 'FREQ=DAILY',
+      weekly: 'FREQ=WEEKLY',
+      monthly: 'FREQ=MONTHLY',
+      yearly: 'FREQ=YEARLY',
+      custom: undefined,
+    }
     if (editing && onUpdate) {
       onUpdate(
         {
@@ -122,6 +221,7 @@ export function EventComposer({
           allDay,
           location: location.trim() || null,
           description: description.trim() || null,
+          rrule: presetToRrule[repeat],
         },
         calUid,
       )
@@ -133,6 +233,7 @@ export function EventComposer({
         allDay,
         location: location.trim() || undefined,
         description: description.trim() || undefined,
+        rrule: presetToRrule[repeat] ?? undefined,
       })
     }
   }
@@ -212,6 +313,10 @@ export function EventComposer({
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
+                onKeyDown={(e) =>
+                  handleDateArrowMods(e, startDate, setStartDate)
+                }
+                title="Shift+↑/↓ jumps 3 days · Ctrl/Cmd+↑/↓ jumps 7 days"
                 className={field}
               />
               {!allDay && (
@@ -219,6 +324,10 @@ export function EventComposer({
                   type="time"
                   value={startTime}
                   onChange={(e) => setStartTime(e.target.value)}
+                  onKeyDown={(e) =>
+                    handleTimeArrowMods(e, startTime, setStartTime)
+                  }
+                  title="Shift+↑/↓ jumps 5 min · Ctrl/Cmd+↑/↓ jumps 15 min"
                   className={`${field} mt-1`}
                 />
               )}
@@ -229,6 +338,10 @@ export function EventComposer({
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
+                onKeyDown={(e) =>
+                  handleDateArrowMods(e, endDate, setEndDate)
+                }
+                title="Shift+↑/↓ jumps 3 days · Ctrl/Cmd+↑/↓ jumps 7 days"
                 className={field}
               />
               {!allDay && (
@@ -236,11 +349,34 @@ export function EventComposer({
                   type="time"
                   value={endTime}
                   onChange={(e) => setEndTime(e.target.value)}
+                  onKeyDown={(e) =>
+                    handleTimeArrowMods(e, endTime, setEndTime)
+                  }
+                  title="Shift+↑/↓ jumps 5 min · Ctrl/Cmd+↑/↓ jumps 15 min"
                   className={`${field} mt-1`}
                 />
               )}
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-xs text-text-muted">
+            <span className="shrink-0">Repeats</span>
+            <select
+              value={repeat}
+              onChange={(e) => setRepeat(e.target.value as RepeatPreset)}
+              aria-label="Repeat frequency"
+              className={field}
+            >
+              <option value="none">Does not repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+              {sourceHadCustomRrule && (
+                <option value="custom">Custom (preserved)</option>
+              )}
+            </select>
+          </label>
 
           <input
             value={location}

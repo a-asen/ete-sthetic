@@ -1300,7 +1300,7 @@ the name with very little. The name truncated to fit the leftover.
   buttons gets keyboard focus. The name now fills almost the full
   sidebar width when the user isn't pointing at the row.
 
-### Calendar event composer: Ctrl/Shift modifiers on time / date arrows
+### Calendar event composer: Ctrl/Shift modifiers on time / date arrows — ◑ time + day done, month/year deferred
 **Task.** When editing the start/end fields of a new (or existing)
 event, ↑/↓ should bump the focused unit. With modifiers, jump by a
 larger step so the user isn't stuck at 1-unit-per-press:
@@ -1308,31 +1308,49 @@ larger step so the user isn't stuck at 1-unit-per-press:
 - **Day**: Shift = ±3 days, Ctrl = ±7 days.
 - **Month**: Shift = ±3 months, Ctrl = ±6 months.
 - **Year**: Shift = ±2 years, Ctrl = ±5 years.
-**Plan sketch.**
-- The composer fields are native `<input type=date|time>` today,
-  which means we don't have control over arrow behaviour — the
-  browser owns it. To implement the modifiers we'd need a custom
-  date / time picker (or capture `keydown` on the input, swallow
-  it with `preventDefault`, and `dispatchEvent` a synthetic
-  change with the bigger delta).
-- Easier path: build a tiny segmented date+time editor
-  (HH:MM:SS, DD-MM-YYYY) where each segment is a focusable span
-  with explicit keydown handling. Reuse the calendar popover for
-  date pick + a clock popover for time pick on click.
+**Resolution.** Kept the native `<input type=date|time>` (no custom
+segmented editor) and intercepted Shift / Ctrl+arrows on keydown:
+- `bumpTime(value, deltaMin)` updates the input's value by the
+  requested minutes, wrapping at midnight.
+- `bumpDate(value, deltaDays)` walks the date, respecting
+  month/year rollover.
+- `handleTimeArrowMods` / `handleDateArrowMods` apply the deltas
+  on Shift (5min / 3days) and Ctrl/Cmd (15min / 7days). Bare
+  arrows still hit the browser default ±1 min / ±1 day.
+- The four input sites (start/end date+time) gained `onKeyDown`
+  hooks + a tooltip documenting the steps.
+**Deferred (month / year jumps).** The browser doesn't tell us
+which segment of `<input type=date>` is focused, so we can't
+target month-only or year-only jumps without a segmented editor.
+Filed as a follow-up if the user finds Shift+↑/↓ on the day
+isn't enough.
 
-### Calendar: recurring events
+### Calendar: recurring events — ◑ preset RRULE done, custom-RRULE UI deferred
 **Task.** Today the composer doesn't expose RRULE / EXDATE — every
 event is one-off. The user wants real recurrence (daily, weekly,
 monthly, yearly, custom).
-**Plan sketch.**
-- Composer gains a "Repeats" dropdown: None / Daily / Weekly /
-  Monthly / Yearly / Custom.
-- For Custom, expose RRULE fields (FREQ, INTERVAL, BYDAY, COUNT,
-  UNTIL). vevent.ts already round-trips RRULE on existing
-  events (`buildVEvent` preserves it); the gap is composer UI.
-- For edits to one occurrence of a recurring series, reuse the
-  existing detach / "this & future" prompt the calendar already
-  has for drag-resize on recurring events.
+**Resolution.** Shipped the preset half of the feature:
+- `NewVEventArgs` and `VEventPatch` gained an `rrule?: string`
+  field. `buildVEvent` writes it via
+  `ICAL.Recur.fromString(rrule)`; `updateVEvent` writes when
+  defined (string → set, null → remove, undefined → leave alone
+  so an edit can't accidentally drop a complex RRULE).
+- Composer gained a "Repeats" dropdown: Does not repeat / Daily /
+  Weekly / Monthly / Yearly. `detectPreset(ev.rrule)` matches the
+  source against the bare FREQ presets on mount; complex RRULEs
+  (BYDAY / COUNT / UNTIL / INTERVAL) surface a sixth
+  "Custom (preserved)" option that keeps the original by passing
+  `rrule: undefined` to the patch path.
+- On save, the dropdown maps to `FREQ=DAILY` etc. (or null to
+  remove). Recurring events render in the grid via the existing
+  ical.js expansion path — no changes needed there.
+**Deferred.** A full custom-RRULE editor (BYDAY pickers, COUNT /
+UNTIL, INTERVAL > 1) — power-user territory. For now Custom is
+read-only; you keep the existing RRULE or swap to one of the
+presets. The most common use case (set a recurring weekly /
+monthly event) works without it. Per-occurrence detach (the
+"this and future" prompt for editing one instance of a series)
+also stays out of scope — flagged for the next iteration.
 
 ### Contacts: Ctrl+F should also focus the list zone, not just the search input — ✅ done
 **Task.** Earlier polish made Ctrl+F focus the search input. The
@@ -1362,20 +1380,26 @@ crop, IM handles, anniversaries, related-name links, etc.
 - Each new field follows the same parser/serializer pattern
   `services/vcard.ts` already uses for the existing fields.
 
-### Contacts: app-specific identifier fields (Discord, Slack, …)
+### Contacts: app-specific identifier fields (Discord, Slack, …) — ✅ done
 **Task.** vCard 3.0 has `X-AIM`, `X-SKYPE`, etc., for legacy IM
 identifiers; vCard 4.0 standardised `IMPP` (instant messaging URI)
 covering `xmpp:`, `aim:`, `irc:`, etc. For modern apps without a
 URI scheme (Discord, Slack), the convention is custom `X-` props
 or `IMPP` with a `tel:`-style placeholder.
-**Plan sketch.**
-- Editor adds a "Messaging / handles" repeating block: each row
-  has a service dropdown (Discord, Slack, Telegram, Signal,
-  Matrix, XMPP, IRC, Skype, custom) + handle string.
-- Serialise as `X-SOCIALPROFILE;TYPE=discord:handle#1234` or the
-  `IMPP` form when the service has a registered URI scheme.
-- Round-trip cleanly with the existing X-* passthrough in
-  `services/vcard.ts` so other clients don't lose the field.
+**Resolution.** Added a first-class `messaging: VCardField[]` slot
+to the `VCard` type. `services/vcard.ts` parses **both** IMPP and
+X-SOCIALPROFILE into this slot (so cards from other clients
+round-trip); on serialise everything emits as IMPP — minor lossy
+conversion for X-SOCIALPROFILE sources, but the data survives.
+Service token comes from the TYPE param when present, falling
+back to the URI scheme prefix (`xmpp:`, `matrix:`, `aim:`, …) when
+not. ContactEditor adds a new "Messaging" `FieldListEditor` row
+with a curated service dropdown (Discord, Slack, Telegram, Signal,
+Matrix, XMPP, IRC, Skype, AIM, ICQ, Jabber, other) — unknown
+services in third-party cards are preserved by `TypeSelect`'s
+unrecognised-value handling. ContactCard renders an extra
+"Messaging" section in view mode listing each handle with its
+service badge.
 
 ### Contacts: sort the address books AND the contact list (both with reverse) — ◑ done minus "recently added/modified"
 **Task.** Tasks has a sidebar sort + reverse toggle; contacts

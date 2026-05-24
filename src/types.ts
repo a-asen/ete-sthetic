@@ -173,6 +173,12 @@ export interface VCard {
   emails: VCardField[]
   phones: VCardField[]
   urls: VCardField[]
+  // App-specific handles / instant-messaging identifiers. Serialised as
+  // RFC 6350 IMPP lines (with TYPE=service for the app), parsed from
+  // both IMPP and X-SOCIALPROFILE so cards from other clients
+  // round-trip. `type` carries the service name (e.g. "discord",
+  // "slack", "matrix"); `value` is the handle / URI.
+  messaging: VCardField[]
   addresses: VCardAddress[]
   // Raw BDAY value (e.g. "1990-05-15" or "19900515"), '' if none.
   birthday: string
