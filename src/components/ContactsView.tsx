@@ -165,10 +165,70 @@ function liveBooks(books: CollectionInfo[]): CollectionInfo[] {
   return books.filter((b) => !b.isDeleted)
 }
 
-function sortContacts(contacts: ContactItem[]): ContactItem[] {
-  return [...contacts].sort((a, b) =>
-    a.card.fn.localeCompare(b.card.fn, undefined, { sensitivity: 'base' }),
+export type ContactSortAxis = 'fn' | 'given' | 'family'
+
+function sortKey(c: ContactItem, axis: ContactSortAxis): string {
+  if (axis === 'given') return c.card.name.given || c.card.fn
+  if (axis === 'family') return c.card.name.family || c.card.fn
+  return c.card.fn
+}
+
+function sortContacts(
+  contacts: ContactItem[],
+  axis: ContactSortAxis = 'fn',
+  reverse = false,
+): ContactItem[] {
+  const cmp = (a: ContactItem, b: ContactItem) =>
+    sortKey(a, axis).localeCompare(sortKey(b, axis), undefined, {
+      sensitivity: 'base',
+    })
+  const arr = [...contacts].sort(cmp)
+  return reverse ? arr.reverse() : arr
+}
+
+function sortBooks(
+  books: CollectionInfo[],
+  reverse = false,
+): CollectionInfo[] {
+  const arr = [...books].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
   )
+  return reverse ? arr.reverse() : arr
+}
+
+const BOOKS_SORT_REV_KEY = 'ete-sthetic.contacts.booksSort.reverse'
+const CONTACTS_SORT_AXIS_KEY = 'ete-sthetic.contacts.contactsSort.axis'
+const CONTACTS_SORT_REV_KEY = 'ete-sthetic.contacts.contactsSort.reverse'
+
+function readBoolPref(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === 'true'
+  } catch {
+    return false
+  }
+}
+function writeBoolPref(key: string, v: boolean): void {
+  try {
+    localStorage.setItem(key, v ? 'true' : 'false')
+  } catch {
+    // best-effort
+  }
+}
+function readSortAxisPref(): ContactSortAxis {
+  try {
+    const v = localStorage.getItem(CONTACTS_SORT_AXIS_KEY)
+    if (v === 'given' || v === 'family' || v === 'fn') return v
+  } catch {
+    // ignore
+  }
+  return 'fn'
+}
+function writeSortAxisPref(v: ContactSortAxis): void {
+  try {
+    localStorage.setItem(CONTACTS_SORT_AXIS_KEY, v)
+  } catch {
+    // best-effort
+  }
 }
 
 interface ContactsViewProps {
@@ -214,6 +274,29 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
   const [errorByBook, setErrorByBook] = useState<Map<string, string>>(
     () => new Map(),
   )
+  // Sort prefs for the books column and the contact list. Books gets
+  // a reverse toggle only (name is the only useful axis); contacts
+  // gets axis (FN / given / family) + reverse.
+  const [booksSortReverse, setBooksSortReverseState] = useState(() =>
+    readBoolPref(BOOKS_SORT_REV_KEY),
+  )
+  const setBooksSortReverse = useCallback((v: boolean) => {
+    setBooksSortReverseState(v)
+    writeBoolPref(BOOKS_SORT_REV_KEY, v)
+  }, [])
+  const [contactsSortAxis, setContactsSortAxisState] =
+    useState<ContactSortAxis>(() => readSortAxisPref())
+  const setContactsSortAxis = useCallback((v: ContactSortAxis) => {
+    setContactsSortAxisState(v)
+    writeSortAxisPref(v)
+  }, [])
+  const [contactsSortReverse, setContactsSortReverseState] = useState(() =>
+    readBoolPref(CONTACTS_SORT_REV_KEY),
+  )
+  const setContactsSortReverse = useCallback((v: boolean) => {
+    setContactsSortReverseState(v)
+    writeBoolPref(CONTACTS_SORT_REV_KEY, v)
+  }, [])
   const [booksLoading, setBooksLoading] = useState(
     () => getContactMemory().addressBooks == null,
   )
@@ -442,7 +525,8 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
       setSelectedUid((prev) =>
         prev && merged.some((c) => c.itemUid === prev)
           ? prev
-          : (sortContacts(merged)[0]?.itemUid ?? null),
+          : (sortContacts(merged, contactsSortAxis, contactsSortReverse)[0]
+              ?.itemUid ?? null),
       )
       setLastSyncedAt((prev) => new Map(prev).set(uid, Date.now()))
       setError(null)
@@ -579,12 +663,19 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
   const activeContacts = activeBook ? contactsByBook.get(activeBook) : undefined
 
   const books = useMemo(
-    () => (addressBooks ? liveBooks(addressBooks) : []),
-    [addressBooks],
+    () =>
+      addressBooks
+        ? sortBooks(liveBooks(addressBooks), booksSortReverse)
+        : [],
+    [addressBooks, booksSortReverse],
   )
 
   const filtered = useMemo(() => {
-    const all = sortContacts(activeContacts ?? [])
+    const all = sortContacts(
+      activeContacts ?? [],
+      contactsSortAxis,
+      contactsSortReverse,
+    )
     const q = search.trim().toLowerCase()
     if (!q) return all
     return all.filter((it) => {
@@ -597,7 +688,7 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
         c.categories.some((cat) => cat.toLowerCase().includes(q))
       )
     })
-  }, [activeContacts, search])
+  }, [activeContacts, search, contactsSortAxis, contactsSortReverse])
 
   const selectedItem = useMemo(
     () =>
@@ -827,15 +918,19 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
         startCreate()
         return
       }
-      // Ctrl/Cmd+F → focus the contact-list search bar. Honored from any
-      // zone (mirrors the tasks module's filter shortcut) and overrides
-      // the browser's native find dialog.
+      // Ctrl/Cmd+F → focus the contact-list search bar AND lift the
+      // contact-list zone (the search input lives inside the list pane,
+      // so we want the inactive-fade to come off it too — otherwise
+      // jumping back to search from the editor leaves the list visually
+      // dimmed). Honored from any zone, overrides the browser's
+      // native find dialog.
       if (
         (e.ctrlKey || e.metaKey) &&
         !e.altKey &&
         (e.key === 'f' || e.key === 'F')
       ) {
         e.preventDefault()
+        setFocusZone('list')
         searchRef.current?.focus()
         searchRef.current?.select()
         return
@@ -1224,6 +1319,16 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
                 switchFreshMin={switchFreshMin}
                 switchFreshOptions={CONTACTS_SWITCH_FRESH_OPTIONS}
                 onSetSwitchFresh={setSwitchFreshMin}
+                booksSortReverse={booksSortReverse}
+                onToggleBooksSortReverse={() =>
+                  setBooksSortReverse(!booksSortReverse)
+                }
+                contactsSortAxis={contactsSortAxis}
+                onSetContactsSortAxis={setContactsSortAxis}
+                contactsSortReverse={contactsSortReverse}
+                onToggleContactsSortReverse={() =>
+                  setContactsSortReverse(!contactsSortReverse)
+                }
                 onLogout={handleLogout}
                 onClose={() => setSettingsOpen(false)}
               />

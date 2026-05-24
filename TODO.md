@@ -1215,19 +1215,18 @@ the task title. Touching every module's header is meaningfully
 more invasive than the single-line move, so we defer until
 needed.
 
-### Calendar: sort the calendars sidebar
+### Calendar: sort the calendars sidebar — ✅ already implemented
 **Task.** The sidebar lists calendars in server order today. Add a
 sort mechanism mirroring the tasks sidebar (sort + reverse), but
 keep the options minimal — name + reverse only is enough, since
 calendars don't have counts to sort by.
-**Plan sketch.**
-- Extend the existing `CalendarSettingsPopover` "Sort calendars"
-  block (already has an order select + reverse toggle — wait,
-  these already exist!). Audit whether the user just hasn't
-  discovered them, or whether the implementation is broken. If
-  the latter, fix; if the former, surface the toggle more
-  prominently (e.g. a sidebar-header gear like the tasks
-  sidebar's).
+**Resolution.** Audit: this already exists. `CalendarView` has
+`calSort` (`'original' | 'name'`) and `calSortReverse` state, both
+persisted under `cal.sortBy` / `cal.sortReverse`. The
+`CalendarSettingsPopover` has a "Sort calendars" block with an
+"Order" dropdown ("As listed" / "Name (A–Z)") and a "Reverse"
+toggle. Discoverability gap, not a missing feature — the user
+just hadn't opened the calendar settings gear.
 
 ### Calendar: subscribe to external / ICS-stream calendars
 **Task.** Public calendars (public holidays, sports schedules,
@@ -1245,43 +1244,61 @@ about etebase-backed calendars.
 - Read-only: no Accept/Decline, no edits, no sync-back.
 - A "+ Add subscription" entry in the calendar sidebar.
 
-### Calendar: create new calendars from the app
+### Calendar: create new calendars from the app — ✅ done
 **Task.** Tasks has "+ New list"; calendar doesn't. Adding a new
 local calendar today requires another EteSync client (Etesync web,
 phone app, …).
-**Plan sketch.**
-- Mirror the tasks-sidebar "+ New list" affordance: header `+`
-  button → inline name input → `createCalendar(name)` in
-  `services/etebase.ts` (need to add) → optimistic placeholder
-  with a "syncing…" badge until the server confirms (same pattern
-  as task lists).
-- Reuse the colour-picker popover already built for task lists.
+**Resolution.** New `createCalendar(name, opts)` wrapper in
+`services/etebase.ts` (delegates to the existing
+`createCollection` with `CALENDAR_COLLECTION_TYPE` — symmetric
+with `createAddressBook`). `CalendarSidebar` gained a "+" button
+next to the "Calendars" header label that opens an inline name
+input (focuses on mount, Enter commits, Esc / empty-blur cancels).
+On commit, `CalendarView.handleCreateCalendar` calls the helper
+then refreshes the list via `listCalendars()` — no optimistic
+placeholder for now to match the calendar module's existing
+simpler model (tasks does the optimistic dance, calendar doesn't
+have the same scaffolding yet). Failures surface in the existing
+notice toast. Colour picker is a follow-up; the new row uses the
+etebase default until the user opens the calendar in another
+client to pick one.
 
-### Calendar: find/toggle hidden calendars
+### Calendar: find/toggle hidden calendars — ✅ done
 **Task.** Hiding a calendar today is via the checkbox in the
 sidebar — but if the user has many calendars, finding one to
 toggle is tedious. Want a quick "show all / hide all / search by
 name" affordance.
-**Plan sketch.**
-- Header bar in the calendar sidebar with three controls: "show
-  all", "hide all", and a small filter input. Filter narrows the
-  visible rows in the sidebar by name (typeahead).
-- The eye / checkbox UI on each row already exists; this only
-  adds discovery affordances.
+**Resolution.** `CalendarSidebar` gained a small control block
+below the "Calendars" header (only rendered when there's at
+least one calendar): a typeahead filter input (substring,
+case-insensitive) and a "Show all" / "Hide all" pair of text
+buttons. The filter narrows the rendered list as the user types;
+the buttons clear or fully populate the `hidden` set via two new
+handlers on `CalendarView` (`showAllCalendars` /
+`hideAllCalendars`). Per-row checkbox semantics are unchanged.
 
-### Calendar: sidebar calendar names truncate too aggressively
+### Calendar: sidebar calendar names truncate too aggressively — ✅ done
 **Task.** The left-panel calendar row labels are heavily truncated
 (see screenshot: "Opencl…", "Inves…", "0_IMP…", "Birthd…",
 "Scho…", ".c_UiT_…"). They should span to the full right edge of
 the sidebar before clipping.
-**Plan sketch.**
-- The truncation comes from the colour-checkbox + star + name
-  row layout. Inspect `CalendarSidebar.tsx`'s row render: a
-  `max-w-[Npx]` or fixed `w-N` on the name span is probably
-  the culprit. Replace with `min-w-0 flex-1 truncate` so the
-  name takes whatever space is left.
-- Verify the name still truncates instead of breaking the row
-  layout when very long.
+**Root cause.** The name span DID have `truncate min-w-0 flex-1`,
+so it tried to take whatever space was left. The culprit was the
+hover-action cluster: five inline buttons (sync, rename, default
+star, import, export) each `shrink-0` and `opacity-0` — they
+reserved ~120 px of layout space *even when invisible*, leaving
+the name with very little. The name truncated to fit the leftover.
+**Resolution.** Re-grouped the row into:
+- The colour checkbox + name (always visible, fills as before).
+- A status block beside the name: spinner *when syncing*, ★ *when
+  default* — these are status, not actions, so they're always
+  shown when set and take no space otherwise.
+- A `<div className="hidden group-hover:flex group-focus-within:flex">`
+  hover-action cluster holding the four toggle-able buttons (sync,
+  rename, set-default-toggle, import, export). Hidden entirely
+  (no reserved width) until the row is hovered or one of its
+  buttons gets keyboard focus. The name now fills almost the full
+  sidebar width when the user isn't pointing at the row.
 
 ### Calendar event composer: Ctrl/Shift modifiers on time / date arrows
 **Task.** When editing the start/end fields of a new (or existing)
@@ -1317,14 +1334,16 @@ monthly, yearly, custom).
   existing detach / "this & future" prompt the calendar already
   has for drag-resize on recurring events.
 
-### Contacts: Ctrl+F should also focus the list zone, not just the search input
+### Contacts: Ctrl+F should also focus the list zone, not just the search input — ✅ done
 **Task.** Earlier polish made Ctrl+F focus the search input. The
 follow-up: also set `focusZone` to 'list' so the inactive-zone
 fade lifts off the contact list (currently the search input
 focuses but the list pane stays at the inactive opacity).
-**Plan sketch.**
-- In `ContactsView`'s Ctrl/Cmd+F handler, add `setFocusZone('list')`
-  before / after the `searchRef.current?.focus()`. One line.
+**Resolution.** `ContactsView`'s Ctrl/Cmd+F handler now calls
+`setFocusZone('list')` before `searchRef.current?.focus()`. The
+inactive-fade lifts off the contact list pane immediately, the
+search input gets focus + selected text, and the user can keep
+arrow-navigating after typing without a second key combo.
 
 ### Contacts: full vCard editor parity
 **Task.** Today the editor covers `FN / N / ORG / TITLE / emails /
@@ -1358,20 +1377,28 @@ or `IMPP` with a `tel:`-style placeholder.
 - Round-trip cleanly with the existing X-* passthrough in
   `services/vcard.ts` so other clients don't lose the field.
 
-### Contacts: sort the address books AND the contact list (both with reverse)
+### Contacts: sort the address books AND the contact list (both with reverse) — ◑ done minus "recently added/modified"
 **Task.** Tasks has a sidebar sort + reverse toggle; contacts
 should mirror it for **both** the address-books column AND the
 contact-list column. Sort axes for each:
 - **Books**: name only (no counts that vary).
 - **Contacts**: name (FN) / first name / last name / recently
   added / recently modified, with a reverse toggle.
-**Plan sketch.**
-- Mirror `SidebarSettingsPopover` for books (small gear in the
-  books-pane header).
-- The contact list already has a "+" / sync header; add a sort
-  control there (gear or inline select).
-- Persist under `ete-sthetic.contacts.{books,list}.{sort,reverse}`
-  keys.
+**Resolution.** Sort state lives in `ContactsView` and persists
+via localStorage:
+- `ete-sthetic.contacts.booksSort.reverse` (boolean).
+- `ete-sthetic.contacts.contactsSort.axis` (`'fn' | 'given' | 'family'`).
+- `ete-sthetic.contacts.contactsSort.reverse` (boolean).
+Shipped through `ContactsSettingsPopover` as a new "Sort"
+subsection with three rows: Books · reverse (toggle), Contacts ·
+by (dropdown), Contacts · reverse (toggle). The books-pane
+`useMemo` runs `sortBooks(liveBooks(addressBooks), reverse)`; the
+contact-list `filtered` `useMemo` runs `sortContacts(...,
+axis, reverse)` before filtering by search.
+**Deferred.** "Recently added" / "recently modified" axes require
+threading the etebase `mtime` through `ContactItem` (today it's
+not on the type). Skipped to keep this batch contained — file
+when the user actually needs it.
 
 ## Known issues
 

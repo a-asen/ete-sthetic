@@ -25,6 +25,9 @@ export function CalendarSidebar({
   onImportCalendar,
   onRenameCalendar,
   onSyncCalendar,
+  onCreateCalendar,
+  onShowAllCalendars,
+  onHideAllCalendars,
   syncingUids,
   showWeekNum,
   defaultCalUid,
@@ -46,6 +49,9 @@ export function CalendarSidebar({
   onImportCalendar: (uid: string) => void
   onRenameCalendar: (uid: string, name: string) => void
   onSyncCalendar: (uid: string) => void
+  onCreateCalendar: (name: string) => void
+  onShowAllCalendars: () => void
+  onHideAllCalendars: () => void
   syncingUids: ReadonlySet<string>
   showWeekNum: boolean
   defaultCalUid: string
@@ -66,6 +72,20 @@ export function CalendarSidebar({
   useEffect(() => {
     if (renamingUid) renameRef.current?.select()
   }, [renamingUid])
+
+  // Inline "+ New" for creating a calendar from the sidebar (mirrors
+  // the tasks sidebar's affordance). When true, a name input appears
+  // at the top of the calendar list; Enter commits via
+  // onCreateCalendar, Esc / blur on empty cancels.
+  const [creatingNew, setCreatingNew] = useState(false)
+  const createRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (creatingNew) createRef.current?.focus()
+  }, [creatingNew])
+
+  // Typeahead filter for the calendar list. Stays empty by default; on
+  // typing, only matching rows render. Case-insensitive substring.
+  const [filter, setFilter] = useState('')
 
   const commitRename = (uid: string) => {
     const v = renameRef.current?.value.trim() ?? ''
@@ -185,13 +205,87 @@ export function CalendarSidebar({
 
       {/* Calendar list */}
       <div className="flex-1 overflow-y-auto p-3 pb-16">
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-faint">
-          Calendars
+        <div className="mb-2 flex items-center justify-between gap-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-text-faint">
+            Calendars
+          </span>
+          <button
+            type="button"
+            onClick={() => setCreatingNew(true)}
+            title="New calendar"
+            aria-label="New calendar"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-[12px] leading-none text-text-faint hover:border-border-strong hover:text-text-muted"
+          >
+            +
+          </button>
         </div>
+        {calendars && calendars.length > 0 && (
+          <div className="mb-2 space-y-1">
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter…"
+              aria-label="Filter calendars"
+              className="w-full rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-text outline-none placeholder:text-text-faint focus:border-border-strong"
+            />
+            <div className="flex items-center justify-between text-[10px] text-text-faint">
+              <button
+                type="button"
+                onClick={onShowAllCalendars}
+                title="Show every calendar"
+                className="rounded px-1 py-0.5 hover:bg-surface-2 hover:text-text-muted"
+              >
+                Show all
+              </button>
+              <button
+                type="button"
+                onClick={onHideAllCalendars}
+                title="Hide every calendar"
+                className="rounded px-1 py-0.5 hover:bg-surface-2 hover:text-text-muted"
+              >
+                Hide all
+              </button>
+            </div>
+          </div>
+        )}
+        {creatingNew && (
+          <div className="mb-1 rounded-md border border-accent/60 bg-bg p-1.5">
+            <input
+              ref={createRef}
+              type="text"
+              placeholder="Calendar name"
+              aria-label="New calendar name"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const v = createRef.current?.value.trim() ?? ''
+                  if (v) onCreateCalendar(v)
+                  setCreatingNew(false)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setCreatingNew(false)
+                }
+              }}
+              onBlur={() => {
+                const v = createRef.current?.value.trim() ?? ''
+                if (v) onCreateCalendar(v)
+                setCreatingNew(false)
+              }}
+              className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm text-text outline-none focus:border-accent/40"
+            />
+          </div>
+        )}
         {calendars === null && (
           <div className="text-xs text-text-faint">Loading…</div>
         )}
-        {calendars?.map((c) => {
+        {calendars
+          ?.filter(
+            (c) =>
+              !filter.trim() ||
+              c.name.toLowerCase().includes(filter.trim().toLowerCase()),
+          )
+          .map((c) => {
           const on = !hidden.has(c.uid)
           const isDefault = c.uid === defaultCalUid
           return (
@@ -271,7 +365,7 @@ export function CalendarSidebar({
                   </span>
                 )}
               </label>
-              {syncingUids.has(c.uid) ? (
+              {syncingUids.has(c.uid) && (
                 <span
                   className="shrink-0 px-1 text-text-faint"
                   aria-label="Syncing"
@@ -290,73 +384,87 @@ export function CalendarSidebar({
                     <path d="M13.5 2.5v3h-3" />
                   </svg>
                 </span>
-              ) : (
+              )}
+              {/* Default-calendar indicator. Always shown when set,
+                  since it's status not action — the toggle lives in
+                  the hover cluster below. */}
+              {isDefault && (
+                <span
+                  aria-hidden
+                  title="Default calendar for new events"
+                  className="shrink-0 px-1 text-accent"
+                >
+                  ★
+                </span>
+              )}
+              {/* Per-row action cluster. Hidden entirely (no reserved
+                  layout space) until the row is hovered or one of its
+                  buttons gets keyboard focus — otherwise the cluster
+                  ate ~120 px and the calendar name had to truncate
+                  very aggressively. */}
+              <div className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+                {!syncingUids.has(c.uid) && (
+                  <button
+                    type="button"
+                    onClick={() => onSyncCalendar(c.uid)}
+                    title="Sync this calendar now"
+                    aria-label={`Sync ${c.name}`}
+                    className="rounded px-1 text-text-faint hover:bg-surface"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      className="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      aria-hidden
+                    >
+                      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+                      <path d="M13.5 2.5v3h-3" />
+                    </svg>
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => onSyncCalendar(c.uid)}
-                  title="Sync this calendar now"
-                  aria-label={`Sync ${c.name}`}
-                  className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
+                  onClick={() => setRenamingUid(c.uid)}
+                  title="Rename calendar"
+                  aria-label={`Rename ${c.name}`}
+                  className="rounded px-1 text-text-faint hover:bg-surface"
                 >
-                  <svg
-                    viewBox="0 0 16 16"
-                    className="h-3 w-3"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    aria-hidden
-                  >
-                    <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
-                    <path d="M13.5 2.5v3h-3" />
-                  </svg>
+                  ✎
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setRenamingUid(c.uid)}
-                title="Rename calendar"
-                aria-label={`Rename ${c.name}`}
-                className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                onClick={() => onSetDefaultCal(c.uid)}
-                title={
-                  isDefault
-                    ? 'New events default to this calendar'
-                    : 'Make this the default calendar for new events'
-                }
-                aria-label={`Make ${c.name} the default calendar for new events`}
-                aria-pressed={isDefault}
-                className={`shrink-0 rounded px-1 hover:bg-surface ${
-                  isDefault
-                    ? 'text-accent'
-                    : 'text-text-faint opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
-                }`}
-              >
-                {isDefault ? '★' : '☆'}
-              </button>
-              <button
-                type="button"
-                onClick={() => onImportCalendar(c.uid)}
-                title="Import .ics into this calendar"
-                aria-label={`Import into ${c.name}`}
-                className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                ↧
-              </button>
-              <button
-                type="button"
-                onClick={() => onExportCalendar(c.uid)}
-                title="Export this calendar to .ics"
-                aria-label={`Export ${c.name}`}
-                className="shrink-0 rounded px-1 text-text-faint opacity-0 hover:bg-surface focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                ↥
-              </button>
+                {!isDefault && (
+                  <button
+                    type="button"
+                    onClick={() => onSetDefaultCal(c.uid)}
+                    title="Make this the default calendar for new events"
+                    aria-label={`Make ${c.name} the default calendar for new events`}
+                    aria-pressed={false}
+                    className="rounded px-1 text-text-faint hover:bg-surface"
+                  >
+                    ☆
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onImportCalendar(c.uid)}
+                  title="Import .ics into this calendar"
+                  aria-label={`Import into ${c.name}`}
+                  className="rounded px-1 text-text-faint hover:bg-surface"
+                >
+                  ↧
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onExportCalendar(c.uid)}
+                  title="Export this calendar to .ics"
+                  aria-label={`Export ${c.name}`}
+                  className="rounded px-1 text-text-faint hover:bg-surface"
+                >
+                  ↥
+                </button>
+              </div>
             </div>
           )
         })}

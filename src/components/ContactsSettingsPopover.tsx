@@ -7,6 +7,8 @@ import {
 import { ModuleToggles } from './ModuleToggles'
 import { InactiveOpacitySettings } from './InactiveOpacitySettings'
 
+type ContactSortAxis = 'fn' | 'given' | 'family'
+
 interface Props {
   booksZoomPct: number
   onBooksZoom: (delta: number | 'reset') => void
@@ -23,6 +25,14 @@ interface Props {
   switchFreshMin: number
   switchFreshOptions: readonly number[]
   onSetSwitchFresh: (min: number) => void
+  // Books column sorts by name only — only the reverse toggle is
+  // exposed. Contact list gets axis + reverse.
+  booksSortReverse: boolean
+  onToggleBooksSortReverse: () => void
+  contactsSortAxis: ContactSortAxis
+  onSetContactsSortAxis: (axis: ContactSortAxis) => void
+  contactsSortReverse: boolean
+  onToggleContactsSortReverse: () => void
   onLogout: () => void
   onClose: () => void
 }
@@ -178,6 +188,12 @@ export function ContactsSettingsPopover({
   switchFreshMin,
   switchFreshOptions,
   onSetSwitchFresh,
+  booksSortReverse,
+  onToggleBooksSortReverse,
+  contactsSortAxis,
+  onSetContactsSortAxis,
+  contactsSortReverse,
+  onToggleContactsSortReverse,
   onLogout,
   onClose,
 }: Props) {
@@ -253,6 +269,38 @@ export function ContactsSettingsPopover({
         onChange={onSetSwitchFresh}
         labelFn={freshLabel}
       />
+
+      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+        Sort
+      </p>
+      <Row label="Books · reverse">
+        <Toggle
+          on={booksSortReverse}
+          onClick={onToggleBooksSortReverse}
+          label="Reverse address-book order"
+        />
+      </Row>
+      <Row label="Contacts · by">
+        <select
+          value={contactsSortAxis}
+          onChange={(e) =>
+            onSetContactsSortAxis(e.target.value as ContactSortAxis)
+          }
+          aria-label="Sort contacts by"
+          className="rounded-md border border-border bg-surface-2 px-1.5 py-1 text-xs text-text outline-none focus:border-border-strong"
+        >
+          <option value="fn">Display name</option>
+          <option value="given">First name</option>
+          <option value="family">Last name</option>
+        </select>
+      </Row>
+      <Row label="Contacts · reverse">
+        <Toggle
+          on={contactsSortReverse}
+          onClick={onToggleContactsSortReverse}
+          label="Reverse contact order"
+        />
+      </Row>
 
       <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
         Help

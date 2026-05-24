@@ -858,6 +858,16 @@ export function createAddressBook(
   return createCollection(name, opts, CONTACT_COLLECTION_TYPE)
 }
 
+// Thin wrapper for symmetry with createAddressBook / the tasks
+// createCollection path. Lets CalendarView surface a "+ New calendar"
+// affordance without having to know the etebase collection-type string.
+export function createCalendar(
+  name: string,
+  opts: { description?: string; color?: string } = {},
+): Promise<CollectionInfo> {
+  return createCollection(name, opts, CALENDAR_COLLECTION_TYPE)
+}
+
 // Mirror of listTaskItems / listEventItems for vCard. Same incremental
 // sync / batching / abort shape.
 export async function listContactItems(

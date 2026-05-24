@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   EventConflictError,
+  createCalendar,
   createEvent,
   createEventRaw,
   deleteEvent,
@@ -960,6 +961,38 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
     })
   }, [])
 
+  // Batch visibility ops surfaced by the sidebar's "Show all" / "Hide
+  // all" buttons. Hide-all puts every uid into `hidden`; show-all
+  // clears the set. Both are local state — the etebase collections
+  // themselves don't carry a "hidden" flag.
+  const showAllCalendars = useCallback(() => {
+    setHidden(new Set())
+  }, [])
+  const hideAllCalendars = useCallback(() => {
+    setHidden(new Set((calendars ?? []).map((c) => c.uid)))
+  }, [calendars])
+
+  // Create a new local calendar from the sidebar "+ New" affordance.
+  // Reuses the same refresh path as the initial list load so the new
+  // row appears once the server confirms — no optimistic placeholder
+  // for now (mirrors the calendar module's existing simpler model;
+  // tasks does the optimistic dance but the calendar doesn't have
+  // the same scaffolding yet).
+  const handleCreateCalendar = useCallback(
+    async (name: string) => {
+      try {
+        await createCalendar(name)
+        const next = await listCalendars()
+        setCalendars(next)
+      } catch (e) {
+        setNotice(
+          `Couldn't create calendar: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
+    },
+    [],
+  )
+
   // Quick-complete a task from the calendar (optimistic).
   const toggleTask = useCallback(async (t: CalTask) => {
     const nextStatus =
@@ -1460,6 +1493,9 @@ export function CalendarView({ onLoggedOut }: CalendarViewProps) {
         onImportCalendar={handleImportCalendar}
         onRenameCalendar={handleRenameCalendar}
         onSyncCalendar={handleSyncCalendar}
+        onCreateCalendar={handleCreateCalendar}
+        onShowAllCalendars={showAllCalendars}
+        onHideAllCalendars={hideAllCalendars}
         syncingUids={syncingUids}
         showWeekNum={showWeekNum}
         defaultCalUid={defaultCalUid}
