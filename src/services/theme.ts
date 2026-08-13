@@ -1,26 +1,53 @@
 // Theme persistence + DOM application. Kept tiny so main.tsx can call
 // applyStoredTheme() synchronously before React mounts (no flash).
 
+// The concrete theme actually applied to the DOM.
 export type Theme = 'dark' | 'light'
+// The user's stored preference. 'system' tracks the OS light/dark setting
+// live (see watchSystemTheme); the others pin a fixed theme.
+export type ThemePref = 'dark' | 'light' | 'system'
 
 const STORAGE_KEY = 'ete-sthetic.theme'
 
-export function readStoredTheme(): Theme {
+export function readStoredThemePref(): ThemePref {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
-    if (v === 'light' || v === 'dark') return v
+    if (v === 'light' || v === 'dark' || v === 'system') return v
   } catch {
     // localStorage unavailable; fall through.
   }
   return 'dark'
 }
 
-export function writeStoredTheme(theme: Theme) {
+export function writeStoredThemePref(pref: ThemePref) {
   try {
-    localStorage.setItem(STORAGE_KEY, theme)
+    localStorage.setItem(STORAGE_KEY, pref)
   } catch {
     // not fatal
   }
+}
+
+// The OS's current light/dark setting. Defaults to dark when the query
+// is unsupported (matches the app's historical default).
+export function systemTheme(): Theme {
+  try {
+    return window.matchMedia('(prefers-color-scheme: light)').matches
+      ? 'light'
+      : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
+
+// Concrete theme for a preference — resolving 'system' against the OS.
+export function resolveTheme(pref: ThemePref): Theme {
+  return pref === 'system' ? systemTheme() : pref
+}
+
+// Effective theme currently in force (preference resolved). Kept for
+// callers that just want "is it dark right now".
+export function readStoredTheme(): Theme {
+  return resolveTheme(readStoredThemePref())
 }
 
 export function applyTheme(theme: Theme) {
@@ -28,9 +55,31 @@ export function applyTheme(theme: Theme) {
 }
 
 export function applyStoredTheme(): Theme {
-  const t = readStoredTheme()
+  const t = resolveTheme(readStoredThemePref())
   applyTheme(t)
   return t
+}
+
+// Re-apply the theme when the OS light/dark setting changes, but only
+// while the stored preference is 'system'. Returns an unsubscribe.
+// Called once at startup; lives for the app's lifetime.
+export function watchSystemTheme(
+  onChange?: (theme: Theme) => void,
+): () => void {
+  let mql: MediaQueryList
+  try {
+    mql = window.matchMedia('(prefers-color-scheme: light)')
+  } catch {
+    return () => {}
+  }
+  const handler = () => {
+    if (readStoredThemePref() !== 'system') return
+    const t = systemTheme()
+    applyTheme(t)
+    onChange?.(t)
+  }
+  mql.addEventListener('change', handler)
+  return () => mql.removeEventListener('change', handler)
 }
 
 // ---- Accent colour --------------------------------------------------
