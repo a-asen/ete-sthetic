@@ -292,13 +292,8 @@ export async function listTaskItems(
   }
 
   let stoken: string | undefined = fromStoken
-  let resultStoken: string = ''
   while (true) {
     checkAborted(signal)
-    // Pass the ORIGINAL stoken on every page — the server tracks
-    // pagination internally. Updating stoken to page.stoken between
-    // pages would turn the next call into a delta sync (returning
-    // nothing), silently dropping all items after the first page.
     const page = await im.list({ stoken })
     checkAborted(signal)
 
@@ -320,15 +315,12 @@ export async function listTaskItems(
         checkAborted(signal)
       }
     }
-    // Capture the collection's latest stoken for the caller to persist,
-    // but DON'T feed it back into the next im.list() call — that would
-    // start a delta sync from the current point, returning nothing.
-    resultStoken = page.stoken
+    stoken = page.stoken
     if (page.done) break
   }
 
   flush()
-  return { items: accumulated, removed, stoken: resultStoken }
+  return { items: accumulated, removed, stoken: stoken ?? '' }
 }
 
 function setItemMeta(item: Etebase.Item, summary: string) {
@@ -718,11 +710,8 @@ export async function listEventItems(
   }
 
   let stoken: string | undefined = fromStoken
-  let resultStoken: string = ''
   while (true) {
     checkAborted(signal)
-    // Pass the ORIGINAL stoken on every page — see listTaskItems for
-    // why updating stoken between pages silently drops items.
     const page = await im.list({ stoken })
     checkAborted(signal)
 
@@ -744,12 +733,12 @@ export async function listEventItems(
         checkAborted(signal)
       }
     }
-    resultStoken = page.stoken
+    stoken = page.stoken
     if (page.done) break
   }
 
   flush()
-  return { items: accumulated, removed, stoken: resultStoken }
+  return { items: accumulated, removed, stoken: stoken ?? '' }
 }
 
 export async function createEvent(
@@ -1037,11 +1026,8 @@ export async function listContactItems(
   }
 
   let stoken: string | undefined = fromStoken
-  let resultStoken: string = ''
   while (true) {
     checkAborted(signal)
-    // Pass the ORIGINAL stoken on every page — see listTaskItems for
-    // why updating stoken between pages silently drops items.
     const page = await im.list({ stoken })
     checkAborted(signal)
 
@@ -1066,12 +1052,12 @@ export async function listContactItems(
         checkAborted(signal)
       }
     }
-    resultStoken = page.stoken
+    stoken = page.stoken
     if (page.done) break
   }
 
   flush()
-  return { items: accumulated, removed, stoken: resultStoken }
+  return { items: accumulated, removed, stoken: stoken ?? '' }
 }
 
 export async function createContact(
