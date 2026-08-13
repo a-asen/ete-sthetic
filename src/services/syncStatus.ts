@@ -27,6 +27,14 @@ export interface SyncStatus {
   failed: ReadonlySet<ModuleName>
 }
 
+// One recorded sync failure, surfaced in the pill's details panel so the
+// user can see *what* failed and *why* rather than just a red dot.
+export interface SyncLogEntry {
+  module: ModuleName
+  message: string
+  at: number
+}
+
 // ---- Mutable in-process state ----
 // All three sets/maps below are intentionally global module-singletons.
 // Each module's View updates them on sync start/finish/error and the
@@ -37,6 +45,37 @@ const inFlight = new Set<ModuleName>()
 const failures = new Set<ModuleName>()
 const handlers = new Map<ModuleName, () => void | Promise<void>>()
 const listeners = new Set<() => void>()
+
+// Recent failure log (newest first), capped. Survives a recovery so the
+// user can still review what went wrong after a retry succeeds; wiped on
+// logout. Consecutive identical messages from the same module are
+// de-duplicated so a flapping connection doesn't flood the panel.
+const LOG_CAP = 40
+const failLog: SyncLogEntry[] = []
+
+export function logSyncFailure(module: ModuleName, message: string): void {
+  const msg = (message || 'Unknown error').trim()
+  const head = failLog[0]
+  if (head && head.module === module && head.message === msg) {
+    // Same error repeating — just bump its timestamp.
+    head.at = Date.now()
+    notify()
+    return
+  }
+  failLog.unshift({ module, message: msg, at: Date.now() })
+  if (failLog.length > LOG_CAP) failLog.length = LOG_CAP
+  notify()
+}
+
+export function getSyncLog(): readonly SyncLogEntry[] {
+  return failLog
+}
+
+export function clearSyncLog(): void {
+  if (failLog.length === 0) return
+  failLog.length = 0
+  notify()
+}
 
 function notify(): void {
   for (const fn of listeners) fn()
@@ -102,6 +141,7 @@ export async function triggerSyncAll(): Promise<void> {
 export function resetSyncStatus(): void {
   inFlight.clear()
   failures.clear()
+  failLog.length = 0
   notify()
 }
 
@@ -139,4 +179,19 @@ export function formatSyncAge(syncedAt: number, now: number): string {
   const hours = Math.floor(mins / 60)
   if (hours < 24) return `Synced ${hours}h ago`
   return `Synced ${new Date(syncedAt).toLocaleDateString()}`
+}
+
+// Ultra-compact age ("12s" / "5m" / "3h" / "2d" / "1y") for tight rows
+// like the per-list / per-book sidebar stamp, where a full "Synced … ago"
+// wouldn't fit. Pair with a `title` carrying the absolute timestamp.
+export function compactSyncAge(syncedAt: number, now: number): string {
+  const diff = Math.max(0, Math.floor((now - syncedAt) / 1000))
+  if (diff < 60) return `${diff}s`
+  const mins = Math.floor(diff / 60)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  if (days < 365) return `${days}d`
+  return `${Math.floor(days / 365)}y`
 }
