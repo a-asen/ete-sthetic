@@ -24,6 +24,7 @@ export const ALL_MODULES: readonly ModuleName[] = [
 const KEY_PREFIX = 'ete-sthetic.modules.'
 const KEY_SUFFIX = '.enabled'
 const ORDER_KEY = 'ete-sthetic.modules.order'
+const LAUNCH_MODULE_KEY = 'ete-sthetic.modules.launch'
 
 export const MODULE_FLAGS_CHANGED_EVENT = 'ete-sthetic:module-flags-changed'
 
@@ -110,4 +111,34 @@ export function moveModule(m: ModuleName, dir: -1 | 1): void {
   const next = [...order]
   ;[next[i], next[j]] = [next[j], next[i]]
   writeModuleOrder(next)
+}
+
+// Preferred module to land on at app launch. 'home' means "no preference"
+// (the app's historical default of tasks-when-enabled-else-first-enabled).
+// Stored as a module name string; validated on read against the known
+// modules. A launch module the user has since disabled falls back to the
+// first enabled module, so this never lands them on a hidden view.
+export function readLaunchModule(): ModuleName | null {
+  try {
+    const raw = localStorage.getItem(LAUNCH_MODULE_KEY)
+    if (!raw) return null
+    const known = new Set<string>(ALL_MODULES)
+    if (typeof raw === 'string' && known.has(raw)) return raw as ModuleName
+  } catch {
+    // fall through
+  }
+  return null
+}
+
+export function writeLaunchModule(m: ModuleName | null): void {
+  try {
+    if (m === null || m === 'home') {
+      localStorage.removeItem(LAUNCH_MODULE_KEY)
+    } else {
+      localStorage.setItem(LAUNCH_MODULE_KEY, m)
+    }
+    window.dispatchEvent(new CustomEvent(MODULE_FLAGS_CHANGED_EVENT))
+  } catch {
+    // Quota / disabled storage — preference just won't persist this session.
+  }
 }

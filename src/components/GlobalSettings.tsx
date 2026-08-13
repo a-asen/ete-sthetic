@@ -14,6 +14,14 @@ import {
   setHintsEnabled,
 } from '../services/hints'
 import { getAccountInfo, logout, type AccountInfo } from '../services/etebase'
+import {
+  MODULE_FLAGS_CHANGED_EVENT,
+  readLaunchModule,
+  readModuleEnabled,
+  readModuleOrder,
+  writeLaunchModule,
+  type ModuleName,
+} from '../services/moduleFlags'
 import { SettingsWindow } from './SettingsWindow'
 import { SettingsSection } from './SettingsSection'
 import { ModuleToggles } from './ModuleToggles'
@@ -34,6 +42,7 @@ const ACCENT_PRESETS = [
 const SECTIONS = [
   { id: 'shared.appearance', label: 'Appearance' },
   { id: 'shared.modules', label: 'Modules' },
+  { id: 'shared.launch', label: 'Launch' },
   { id: 'tasks.blueprints', label: 'Task Blueprints' },
   { id: 'shared.account', label: 'Account' },
 ] as const
@@ -73,6 +82,28 @@ export function GlobalSettings({
     window.addEventListener(HINTS_CHANGED_EVENT, refresh)
     return () => window.removeEventListener(HINTS_CHANGED_EVENT, refresh)
   }, [])
+
+  // Preferred launch module. 'home' = "no preference" (the default of
+  // tasks-when-enabled-else-first-enabled). Re-reads on module-flag flips
+  // so disabling the chosen module updates the dropdown, and the list of
+  // selectable modules tracks the enabled set.
+  const [launchModule, setLaunchModuleState] = useState<ModuleName | 'home'>(
+    () => readLaunchModule() ?? 'home',
+  )
+  useEffect(() => {
+    const refresh = () =>
+      setLaunchModuleState(readLaunchModule() ?? 'home')
+    window.addEventListener(MODULE_FLAGS_CHANGED_EVENT, refresh)
+    return () =>
+      window.removeEventListener(MODULE_FLAGS_CHANGED_EVENT, refresh)
+  }, [])
+  const setLaunch = (m: ModuleName | 'home') => {
+    writeLaunchModule(m === 'home' ? null : m)
+    setLaunchModuleState(m)
+  }
+  // Only enabled modules are pickable as a launch target; a module the
+  // user has disabled shouldn't be offered as a landing page.
+  const launchOptions = readModuleOrder().filter(readModuleEnabled)
 
   const [account, setAccount] = useState<AccountInfo | null>(null)
   const [signingOut, setSigningOut] = useState(false)
@@ -192,6 +223,27 @@ export function GlobalSettings({
       </SettingsSection>
 
       <ModuleToggles forceOpen />
+
+      <SettingsSection id="shared.launch" label="Launch" forceOpen>
+        <Row label="Open on launch">
+          <select
+            value={launchModule}
+            onChange={(e) =>
+              setLaunch(e.target.value as ModuleName | 'home')
+            }
+            className="h-6 rounded-md border border-border bg-surface-2 px-1.5 text-[11px] text-text outline-none focus:border-border-strong"
+          >
+            <option value="home">Default (Tasks)</option>
+            {launchOptions.map((m) => (
+              <option key={m} value={m}>
+                {m === 'home'
+                  ? 'Home'
+                  : m.charAt(0).toUpperCase() + m.slice(1)}
+              </option>
+            ))}
+          </select>
+        </Row>
+      </SettingsSection>
 
       <BlueprintsSettings />
 
