@@ -1427,7 +1427,13 @@ export function MainView({
       if (fromStoken === undefined) {
         try {
           const snap = await loadSnapshot(uid)
-          if (snap?.stoken) {
+          if (snap?.stoken && snap.items.length > 0) {
+            // Only use the snapshot's stoken when the snapshot also has
+            // items. A snapshot with 0 items + a stoken is suspicious —
+            // it means a previous sync returned 0 items but advanced the
+            // cursor, so a delta from that stoken would never pick up
+            // items the server had all along. Force a full sync instead
+            // by leaving fromStoken undefined.
             fromStoken = snap.stoken
             setStokenByUid((prev) => {
               if (prev.has(uid)) return prev
@@ -1529,12 +1535,29 @@ export function MainView({
         // removals applied above.
         setItemsByUid((prev) => {
           const items = prev.get(uid)
-          if (items) {
+          // Don't save a 0-item snapshot with a stoken — that creates a
+          // poisoned cursor: the next launch loads it, does a delta sync
+          // from the stoken, gets nothing back, and the server's actual
+          // items are never fetched. Only save when we have items to pair
+          // with the stoken. (A genuinely empty collection still saves a
+          // snapshot — just with an empty items array and no stoken, so
+          // the next sync is a full one that confirms it's still empty.)
+          if (items && items.length > 0) {
             const snapshot: CollectionSnapshot = {
               version: 1,
               uid,
               items,
               stoken: result.stoken || undefined,
+              lastSyncedAt: Date.now(),
+            }
+            void saveSnapshot(snapshot)
+          } else if (items && items.length === 0 && !result.stoken) {
+            // Genuinely empty collection with no stoken — safe to save.
+            const snapshot: CollectionSnapshot = {
+              version: 1,
+              uid,
+              items,
+              stoken: undefined,
               lastSyncedAt: Date.now(),
             }
             void saveSnapshot(snapshot)
