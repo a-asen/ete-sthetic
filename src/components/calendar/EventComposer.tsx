@@ -409,9 +409,13 @@ export function EventComposer({
   // to save/discard this in-progress event instead of dropping it. The ref
   // is refreshed each render so the (stable) registered guard always calls
   // the latest isDirty/submit/onClose.
-  const guardRef = useRef({
+  const guardRef = useRef<{
+    isDirty: () => boolean
+    save: () => boolean
+    discard: () => void
+  }>({
     isDirty: () => false,
-    save: (): boolean => true,
+    save: () => true,
     discard: () => {},
   })
   useEffect(() => {

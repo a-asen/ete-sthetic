@@ -341,9 +341,13 @@ export function ContactEditor({
   // current draft without re-subscribing on every keystroke.
   const saveRef = useRef(handleSave)
   const cancelRef = useRef(requestCancel)
-  const guardRef = useRef({
+  const guardRef = useRef<{
+    isDirty: () => boolean
+    save: () => boolean
+    discard: () => void
+  }>({
     isDirty: () => false,
-    save: (): boolean => true,
+    save: () => true,
     discard: () => {},
   })
   useEffect(() => {

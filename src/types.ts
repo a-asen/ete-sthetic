@@ -264,6 +264,12 @@ export interface VCard {
   // detect group cards so they can be hidden from the person list. The
   // KIND/MEMBER lines themselves round-trip verbatim (never re-emitted).
   kind?: string
+  // Parsed GEO property (RFC 6350 §6.5.2): a lat/lon pair. Undefined when
+  // the card has no GEO or when the value isn't a usable `geo:lat,lon`
+  // (the structural form `geo:48.85,2.35` is what we model; the older
+  // `lat;lon` label form is left on the raw string). Round-tripped
+  // verbatim via `raw` — the parsed field is display-only.
+  geo?: { lat: number; lon: number }
   raw: string
 }
 

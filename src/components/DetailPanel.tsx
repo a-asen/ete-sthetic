@@ -534,9 +534,13 @@ export function DetailPanel({
   // Register as the active unsaved-changes guard so switching modules prompts
   // to save/discard this task's edits instead of dropping them. isDirty gates
   // the prompt, so a merely-selected (unedited) task never blocks a switch.
-  const guardRef = useRef({
+  const guardRef = useRef<{
+    isDirty: () => boolean
+    save: () => boolean
+    discard: () => void
+  }>({
     isDirty: () => false,
-    save: (): boolean => true,
+    save: () => true,
     discard: () => {},
   })
   useEffect(() => {
