@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { DragEvent as ReactDragEvent } from 'react'
 import type { CollectionInfo, ContactItem, VCard } from '../types'
 import {
   createAddressBook,
@@ -8,6 +9,7 @@ import {
   listAddressBooks,
   listContactItems,
   logout,
+  moveContactsToCollection,
   updateCollectionMeta,
   updateContact,
   type ContactSyncResult,
@@ -19,6 +21,7 @@ import {
 } from '../services/contactsnapshot'
 import { getContactMemory, patchContactMemory } from '../services/contactstore'
 import {
+  compactSyncAge,
   registerSyncAllHandler,
   setModuleSyncFailed,
   setModuleSyncing,
@@ -26,6 +29,7 @@ import {
 import { useInactiveOpacities } from '../hooks/useInactiveOpacities'
 import { ContactCard, Avatar } from './contacts/ContactCard'
 import { ContactEditor } from './contacts/ContactEditor'
+import { ContactSearchModal } from './contacts/ContactSearchModal'
 import { ConfirmModal } from './ConfirmModal'
 import { ContextMenu, type ContextMenuState } from './ContextMenu'
 import { ContactsSettingsPopover } from './ContactsSettingsPopover'
@@ -165,7 +169,12 @@ function liveBooks(books: CollectionInfo[]): CollectionInfo[] {
   return books.filter((b) => !b.isDeleted)
 }
 
-export type ContactSortAxis = 'fn' | 'given' | 'family'
+export type ContactSortAxis =
+  | 'fn'
+  | 'given'
+  | 'family'
+  | 'modified'
+  | 'added'
 
 function sortKey(c: ContactItem, axis: ContactSortAxis): string {
   if (axis === 'given') return c.card.name.given || c.card.fn
@@ -178,6 +187,29 @@ function sortContacts(
   axis: ContactSortAxis = 'fn',
   reverse = false,
 ): ContactItem[] {
+  // The mtime-based axes sort numerically; the rest fall back to a
+  // locale-aware string compare. We do a stable sort by mtime descending
+  // (newest first), with `null` mtime rows pinned to the end regardless
+  // of reverse — they're missing data, not "ancient", and bouncing them
+  // to the top under reverse would be confusing.
+  if (axis === 'modified' || axis === 'added') {
+    const arr = [...contacts].sort((a, b) => {
+      const am = a.mtime
+      const bm = b.mtime
+      if (am === null && bm === null) {
+        // Fall back to display name so the tail is at least readable.
+        return a.card.fn.localeCompare(b.card.fn, undefined, {
+          sensitivity: 'base',
+        })
+      }
+      if (am === null) return 1
+      if (bm === null) return -1
+      return bm - am
+    })
+    return reverse
+      ? [...arr.filter((c) => c.mtime !== null).reverse(), ...arr.filter((c) => c.mtime === null)]
+      : arr
+  }
   const cmp = (a: ContactItem, b: ContactItem) =>
     sortKey(a, axis).localeCompare(sortKey(b, axis), undefined, {
       sensitivity: 'base',
@@ -199,6 +231,31 @@ function sortBooks(
 const BOOKS_SORT_REV_KEY = 'ete-sthetic.contacts.booksSort.reverse'
 const CONTACTS_SORT_AXIS_KEY = 'ete-sthetic.contacts.contactsSort.axis'
 const CONTACTS_SORT_REV_KEY = 'ete-sthetic.contacts.contactsSort.reverse'
+// Hide KIND:group cards from the person list. Off by default (groups show),
+// so nothing changes until the user opts in via the settings toggle.
+const HIDE_GROUPS_KEY = 'ete-sthetic.contacts.hideGroups'
+// Address books the user has hidden ("archive" books kept out of the way).
+// Persisted across restarts — unlike the calendar's session-only hidden
+// set — because an archive book is meant to stay collapsed indefinitely.
+const HIDDEN_BOOKS_KEY = 'ete-sthetic.contacts.hiddenBooks'
+
+function readHiddenBooks(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_BOOKS_KEY)
+    if (!raw) return new Set()
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === 'string')) : new Set()
+  } catch {
+    return new Set()
+  }
+}
+function writeHiddenBooks(set: Set<string>): void {
+  try {
+    localStorage.setItem(HIDDEN_BOOKS_KEY, JSON.stringify([...set]))
+  } catch {
+    // best-effort
+  }
+}
 
 function readBoolPref(key: string): boolean {
   try {
@@ -217,7 +274,15 @@ function writeBoolPref(key: string, v: boolean): void {
 function readSortAxisPref(): ContactSortAxis {
   try {
     const v = localStorage.getItem(CONTACTS_SORT_AXIS_KEY)
-    if (v === 'given' || v === 'family' || v === 'fn') return v
+    if (
+      v === 'given' ||
+      v === 'family' ||
+      v === 'fn' ||
+      v === 'modified' ||
+      v === 'added'
+    ) {
+      return v
+    }
   } catch {
     // ignore
   }
@@ -233,9 +298,20 @@ function writeSortAxisPref(v: ContactSortAxis): void {
 
 interface ContactsViewProps {
   onLoggedOut: () => void
+  // App-level handoff for "open this contact" requests from other
+  // modules (today: the calendar birthdays overlay). When non-null
+  // on mount or when the prop changes, the view jumps to that book
+  // + contact and signals consumption via `onPendingOpenConsumed`
+  // so App can clear the state and not re-fire on the next render.
+  pendingOpen?: { bookUid: string; contactItemUid: string } | null
+  onPendingOpenConsumed?: () => void
 }
 
-export function ContactsView({ onLoggedOut }: ContactsViewProps) {
+export function ContactsView({
+  onLoggedOut,
+  pendingOpen,
+  onPendingOpenConsumed,
+}: ContactsViewProps) {
   const inactiveOpacities = useInactiveOpacities()
   // Seeded synchronously from the process-lifetime cache so a module
   // switch and back is instant (no flash, no spinner).
@@ -260,6 +336,14 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     () => getContactMemory().selectedContact,
   )
   const [search, setSearch] = useState('')
+  // Cross-address-book search modal (Ctrl/Cmd+Shift+F).
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
+  // A pending "jump to this contact in that book" from the global search —
+  // consumed by an effect that switches books first, then selects.
+  const [jumpTarget, setJumpTarget] = useState<{
+    bookUid: string
+    itemUid: string
+  } | null>(null)
   const [mode, setMode] = useState<Mode>('view')
   const [editorSeed, setEditorSeed] = useState<VCard | null>(null)
   const [editorKey, setEditorKey] = useState(0)
@@ -297,6 +381,17 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     setContactsSortReverseState(v)
     writeBoolPref(CONTACTS_SORT_REV_KEY, v)
   }, [])
+  // Whether KIND:group cards are hidden from the person list.
+  const [hideGroups, setHideGroupsState] = useState(() =>
+    readBoolPref(HIDE_GROUPS_KEY),
+  )
+  const toggleHideGroups = useCallback(() => {
+    setHideGroupsState((v) => {
+      const next = !v
+      writeBoolPref(HIDE_GROUPS_KEY, next)
+      return next
+    })
+  }, [])
   const [booksLoading, setBooksLoading] = useState(
     () => getContactMemory().addressBooks == null,
   )
@@ -308,6 +403,31 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
   const [bookDraftText, setBookDraftText] = useState('')
   const [deletingBook, setDeletingBook] = useState<CollectionInfo | null>(null)
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
+  // Drag-to-move state. `draggingContactUid` is the contact currently being
+  // dragged from the active book's list; `dragOverBook` is the address-book
+  // row the pointer is hovering as a drop target (for highlight + drop).
+  const [draggingContactUid, setDraggingContactUid] = useState<string | null>(
+    null,
+  )
+  const [dragOverBook, setDragOverBook] = useState<string | null>(null)
+  // Hidden ("archived") address books + whether the collapsed Hidden
+  // section is expanded. The set persists; the expand toggle is session-only.
+  const [hiddenBooks, setHiddenBooksState] = useState<Set<string>>(
+    () => readHiddenBooks(),
+  )
+  const [showHiddenBooks, setShowHiddenBooks] = useState(false)
+  const toggleBookHidden = useCallback(
+    (uid: string) => {
+      setHiddenBooksState((prev) => {
+        const next = new Set(prev)
+        if (next.has(uid)) next.delete(uid)
+        else next.add(uid)
+        writeHiddenBooks(next)
+        return next
+      })
+    },
+    [],
+  )
 
   // Zone meta-navigation. Mirrors the tasks module: Ctrl+L / Ctrl+T /
   // Ctrl+E target the three zones, Ctrl+←/→ step between them, and the
@@ -456,6 +576,12 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
 
   const cancelledRef = useRef(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  // The detail pane, focused after a save so the keyboard lands back on the
+  // contact card (the editor's inputs have just unmounted). A one-shot flag
+  // gates it so we only grab focus right after a save, not on every
+  // mode→view transition (e.g. a plain Cancel).
+  const detailRef = useRef<HTMLElement>(null)
+  const focusDetailAfterSave = useRef(false)
 
   useEffect(() => {
     cancelledRef.current = false
@@ -520,14 +646,17 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
         setStokenByBook((prev) => new Map(prev).set(uid, result.stoken))
       }
       // Auto-select the first contact (and drop a stale selection if the
-      // user's pick was removed server-side). syncBook is always called
-      // for the active book, so this only ever affects what's visible.
-      setSelectedUid((prev) =>
-        prev && merged.some((c) => c.itemUid === prev)
-          ? prev
-          : (sortContacts(merged, contactsSortAxis, contactsSortReverse)[0]
-              ?.itemUid ?? null),
-      )
+      // user's pick was removed server-side) — but ONLY for the active
+      // book. sync-all and background sync also run this for other books,
+      // which must not hijack the visible selection.
+      if (uid === getContactMemory().activeBook) {
+        setSelectedUid((prev) =>
+          prev && merged.some((c) => c.itemUid === prev)
+            ? prev
+            : (sortContacts(merged, contactsSortAxis, contactsSortReverse)[0]
+                ?.itemUid ?? null),
+        )
+      }
       setLastSyncedAt((prev) => new Map(prev).set(uid, Date.now()))
       setError(null)
       // Successful sync clears any previously-recorded failure for this
@@ -648,17 +777,26 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
   useEffect(() => {
     setModuleSyncFailed('contacts', errorByBook.size > 0)
   }, [errorByBook])
-  // Sync-all handler: kick a syncBook for every live book. Failures
-  // surface via errorByBook (above); we don't need to re-throw here.
-  useEffect(() => {
-    const syncAll = async () => {
-      const live = addressBooks
-        ? addressBooks.filter((b) => !b.isDeleted)
-        : []
-      await Promise.all(live.map((b) => syncBook(b.uid)))
-    }
-    return registerSyncAllHandler('contacts', syncAll)
+  // Sync-all: kick a syncBook for every live book. Failures surface via
+  // errorByBook (above); we don't re-throw. Shared by the global sync
+  // pill (registered below) and the contact-list header's "sync all"
+  // button.
+  const syncAllBooks = useCallback(async () => {
+    const live = addressBooks ? addressBooks.filter((b) => !b.isDeleted) : []
+    await Promise.all(live.map((b) => syncBook(b.uid)))
   }, [addressBooks, syncBook])
+  useEffect(
+    () => registerSyncAllHandler('contacts', syncAllBooks),
+    [syncAllBooks],
+  )
+  // A clock that ticks every 30s so the per-book "synced N ago" stamps
+  // stay fresh without each one owning a timer. Lazy-initialised (not a
+  // bare Date.now() in render) to keep the lint purity rules happy.
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 30_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const activeContacts = activeBook ? contactsByBook.get(activeBook) : undefined
 
@@ -669,32 +807,55 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
         : [],
     [addressBooks, booksSortReverse],
   )
+  // Split into the always-shown list and the collapsed "Hidden" group.
+  const visibleBooks = useMemo(
+    () => books.filter((b) => !hiddenBooks.has(b.uid)),
+    [books, hiddenBooks],
+  )
+  const hiddenBooksList = useMemo(
+    () => books.filter((b) => hiddenBooks.has(b.uid)),
+    [books, hiddenBooks],
+  )
 
   const filtered = useMemo(() => {
-    const all = sortContacts(
+    let all = sortContacts(
       activeContacts ?? [],
       contactsSortAxis,
       contactsSortReverse,
     )
+    if (hideGroups) all = all.filter((it) => it.card.kind !== 'group')
     const q = search.trim().toLowerCase()
     if (!q) return all
     return all.filter((it) => {
       const c = it.card
       return (
         c.fn.toLowerCase().includes(q) ||
+        c.nickname.toLowerCase().includes(q) ||
         c.org.toLowerCase().includes(q) ||
         c.emails.some((e) => e.value.toLowerCase().includes(q)) ||
         c.phones.some((p) => p.value.toLowerCase().includes(q)) ||
         c.categories.some((cat) => cat.toLowerCase().includes(q))
       )
     })
-  }, [activeContacts, search, contactsSortAxis, contactsSortReverse])
+  }, [activeContacts, search, contactsSortAxis, contactsSortReverse, hideGroups])
 
   const selectedItem = useMemo(
     () =>
       activeContacts?.find((c) => c.itemUid === selectedUid) ?? null,
     [activeContacts, selectedUid],
   )
+
+  // Distinct tags already in use across the active book, for the editor's
+  // tag suggestions (consistent reuse / spelling).
+  const knownCategories = useMemo(() => {
+    const set = new Set<string>()
+    for (const it of activeContacts ?? [])
+      for (const cat of it.card.categories) {
+        const t = cat.trim()
+        if (t) set.add(t)
+      }
+    return [...set].sort((a, b) => a.localeCompare(b))
+  }, [activeContacts])
 
   const selectBook = useCallback(
     (uid: string) => {
@@ -738,6 +899,56 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     [activeBook, contactsByBook, syncBook, switchFreshMin, lastSyncedAt],
   )
 
+  // Hide ("archive") a book. If it's the active one, switch to the first
+  // other still-visible book first so the list doesn't keep showing a
+  // now-archived book's contacts. (When it's the last visible book there's
+  // nothing to fall back to — it just becomes the lone hidden+active book.)
+  const hideBook = useCallback(
+    (uid: string) => {
+      if (uid === activeBook) {
+        const fallback = visibleBooks.find((b) => b.uid !== uid)?.uid
+        if (fallback) selectBook(fallback)
+      }
+      toggleBookHidden(uid)
+    },
+    [activeBook, visibleBooks, selectBook, toggleBookHidden],
+  )
+
+  // Consume "open this contact" handoffs from App (the calendar's
+  // birthdays overlay is the only source today). Switches to the
+  // requested book and selects the contact; signals consumption so
+  // App can clear the pending state. If the book isn't active yet,
+  // selectBook flips activeBook and this effect re-runs. The
+  // set-state-in-effect lint rule is suppressed because reacting to
+  // a prop change with state updates IS the intended pattern here —
+  // there's no external system to mirror, this is the integration.
+  useEffect(() => {
+    if (!pendingOpen) return
+    const { bookUid, contactItemUid } = pendingOpen
+    if (activeBook !== bookUid) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      selectBook(bookUid)
+      return
+    }
+    setSelectedUid(contactItemUid)
+    setMode('view')
+    onPendingOpenConsumed?.()
+  }, [pendingOpen, activeBook, selectBook, onPendingOpenConsumed])
+
+  // Same handoff for a pick from the global search: switch to the book if
+  // needed, then select the contact (selectBook cold-loads/syncs it).
+  useEffect(() => {
+    if (!jumpTarget) return
+    if (activeBook !== jumpTarget.bookUid) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      selectBook(jumpTarget.bookUid)
+      return
+    }
+    setSelectedUid(jumpTarget.itemUid)
+    setMode('view')
+    setJumpTarget(null)
+  }, [jumpTarget, activeBook, selectBook])
+
   // ---- contact mutations ----
 
   const startCreate = useCallback(() => {
@@ -745,6 +956,9 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     setEditorSeed(emptyVCard())
     setEditorKey((k) => k + 1)
     setMode('create')
+    // The editor lives in the detail zone — activate it so the pane (and
+    // any discard-confirm rendered inside it) isn't dimmed/inactive.
+    setFocusZone('detail')
   }, [activeBook])
 
   const startEdit = useCallback(() => {
@@ -752,7 +966,35 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     setEditorSeed(selectedItem.card)
     setEditorKey((k) => k + 1)
     setMode('edit')
+    setFocusZone('detail')
   }, [selectedItem])
+
+  // Resolve a RELATED entry's value to another contact in this book, so
+  // the card can link to it. Matches a `urn:uuid:<uid>` / bare-uid URI
+  // against the vCard UID, else an exact (case-insensitive) full-name
+  // match. Returns the target itemUid, or null when it's free-text with no
+  // matching contact. Self-references are ignored.
+  const resolveRelated = useCallback(
+    (value: string): string | null => {
+      const v = value.trim()
+      if (!v || !activeContacts) return null
+      const lower = v.toLowerCase()
+      const uuid = lower.match(/urn:uuid:([0-9a-f-]+)/)?.[1] ?? null
+      for (const it of activeContacts) {
+        if (it.itemUid === selectedUid) continue
+        const uid = it.card.uid.toLowerCase()
+        if ((uuid && uid === uuid) || uid === lower) return it.itemUid
+        if (it.card.fn.trim().toLowerCase() === lower) return it.itemUid
+      }
+      return null
+    },
+    [activeContacts, selectedUid],
+  )
+
+  const openContact = useCallback((itemUid: string) => {
+    setSelectedUid(itemUid)
+    setMode('view')
+  }, [])
 
   const handleSaveContact = useCallback(
     async (card: VCard) => {
@@ -790,7 +1032,11 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
             return next
           })
         }
+        // Back to the read-only card, with the detail zone active and
+        // focused (the editor's fields just unmounted).
         setMode('view')
+        setFocusZone('detail')
+        focusDetailAfterSave.current = true
       } catch (e) {
         if (!cancelledRef.current) setError(message(e))
       } finally {
@@ -799,6 +1045,15 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     },
     [activeBook, mode, selectedItem],
   )
+
+  // Move DOM focus to the detail pane once the card has re-rendered after a
+  // save, so arrow-nav / Tab pick up there instead of on a detached input.
+  useEffect(() => {
+    if (mode === 'view' && focusDetailAfterSave.current) {
+      focusDetailAfterSave.current = false
+      detailRef.current?.focus()
+    }
+  }, [mode])
 
   const confirmDeleteContact = useCallback(async () => {
     const uid = deletingUid
@@ -821,6 +1076,79 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
       if (!cancelledRef.current) setError(message(e))
     }
   }, [deletingUid, activeBook, selectedUid])
+
+  // Move a contact to another address book (the archive workflow). Copy-
+  // then-delete on the server; optimistically drop it from the source's
+  // cached list and clear the selection if it was the moved one. The
+  // destination's list refreshes from cache on next visit (or its own
+  // background sync) — we splice the moved item in only if that book is
+  // already hydrated, so we never show a half-populated book.
+  const handleMoveContact = useCallback(
+    async (uid: string, destBookUid: string) => {
+      if (!activeBook || destBookUid === activeBook) return
+      const sourceBook = activeBook
+      setError(null)
+      try {
+        const moved = await moveContactsToCollection(sourceBook, destBookUid, [
+          uid,
+        ])
+        if (cancelledRef.current) return
+        setContactsByBook((prev) => {
+          const next = new Map(prev)
+          next.set(
+            sourceBook,
+            (next.get(sourceBook) ?? []).filter((c) => c.itemUid !== uid),
+          )
+          // Splice into the destination only if it's already loaded.
+          if (next.has(destBookUid) && moved.length > 0) {
+            next.set(destBookUid, [...(next.get(destBookUid) ?? []), ...moved])
+          }
+          return next
+        })
+        if (selectedUid === uid) setSelectedUid(null)
+      } catch (e) {
+        if (!cancelledRef.current) setError(message(e))
+      }
+    },
+    [activeBook, selectedUid],
+  )
+
+  // Drop-target props for an address-book row, shared by the visible and
+  // hidden lists. A row only accepts a drop when a contact is being dragged
+  // and the row isn't the source (active) book. Dropping runs the same
+  // copy-then-delete move as the context-menu "Move to" item.
+  const dropPropsForBook = useCallback(
+    (bookUid: string) => {
+      const canDrop = draggingContactUid != null && bookUid !== activeBook
+      return {
+        onDragOver: (e: ReactDragEvent) => {
+          if (!canDrop) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+        },
+        onDragEnter: (e: ReactDragEvent) => {
+          if (!canDrop) return
+          e.preventDefault()
+          setDragOverBook(bookUid)
+        },
+        onDragLeave: (e: ReactDragEvent) => {
+          // Ignore leave events fired while moving onto a child element —
+          // only clear when the pointer actually exits the row.
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+          setDragOverBook((cur) => (cur === bookUid ? null : cur))
+        },
+        onDrop: (e: ReactDragEvent) => {
+          if (!canDrop) return
+          e.preventDefault()
+          const uid = draggingContactUid
+          setDraggingContactUid(null)
+          setDragOverBook(null)
+          if (uid) void handleMoveContact(uid, bookUid)
+        },
+      }
+    },
+    [draggingContactUid, activeBook, handleMoveContact],
+  )
 
   // ---- address-book mutations ----
 
@@ -871,6 +1199,9 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
   // ---- keyboard ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The cross-book search modal owns the keyboard while open (its own
+      // input handles Esc/↑/↓/↵); don't let this handler also react.
+      if (globalSearchOpen) return
       const t = e.target
       const typing =
         t instanceof HTMLInputElement ||
@@ -878,9 +1209,17 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
         t instanceof HTMLSelectElement
       if (e.key === 'Escape') {
         if (mode !== 'view') {
-          setMode('view')
-        } else if (search) {
-          setSearch('')
+          // The editor owns Escape while open — it may warn about unsaved
+          // changes before closing, so don't tear it down from here.
+          return
+        }
+        // From the search box, Esc steps back down to the contact items:
+        // clear the query and blur the input so list arrow-nav and Ctrl+←
+        // (both suppressed while a text field is focused) work again.
+        if (search) setSearch('')
+        if (document.activeElement === searchRef.current) {
+          searchRef.current?.blur()
+          setFocusZone('list')
         }
         return
       }
@@ -918,6 +1257,32 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
         startCreate()
         return
       }
+      // Ctrl/Cmd+Enter → open the selected contact for editing. Works from
+      // anywhere (incl. the search box) as long as a contact is selected —
+      // matches the tasks module's "Ctrl+Enter opens the item".
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        e.key === 'Enter' &&
+        selectedUid
+      ) {
+        e.preventDefault()
+        startEdit()
+        return
+      }
+      // Ctrl/Cmd+Shift+F → search across EVERY address book (a modal that
+      // spans all books, not just the active one). Checked before plain
+      // Ctrl+F so the Shift variant doesn't fall through to it.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        !e.altKey &&
+        (e.key === 'f' || e.key === 'F')
+      ) {
+        e.preventDefault()
+        setGlobalSearchOpen(true)
+        return
+      }
       // Ctrl/Cmd+F → focus the contact-list search bar AND lift the
       // contact-list zone (the search input lives inside the list pane,
       // so we want the inactive-fade to come off it too — otherwise
@@ -926,6 +1291,7 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
       // native find dialog.
       if (
         (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
         !e.altKey &&
         (e.key === 'f' || e.key === 'F')
       ) {
@@ -975,10 +1341,12 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
         searchRef.current?.focus()
         return
       }
-      if (e.key === 'Enter' && selectedUid) {
+      if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && selectedUid) {
         // Enter on the selected contact opens it for editing — matches
         // the user's "Enter opens the detail" mental model (the detail
-        // pane is always visible, so "open" = enter edit mode).
+        // pane is always visible, so "open" = enter edit mode). Ctrl/Cmd
+        // +Enter is the editor's "save" and is handled there, so don't
+        // re-open an edit on top of it.
         e.preventDefault()
         startEdit()
         return
@@ -1033,6 +1401,7 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     books,
     activeBook,
     selectBook,
+    globalSearchOpen,
   ])
 
   const deletingContact = deletingUid
@@ -1040,7 +1409,7 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
     : null
 
   return (
-    <div className="flex h-screen bg-bg text-text">
+    <div className="flex h-full min-h-0 flex-1 bg-bg text-text">
       {/* ---- Address books ---- */}
       <aside
         onMouseDown={() => setFocusZone('books')}
@@ -1076,7 +1445,7 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
           {booksLoading && books.length === 0 && (
             <p className="px-2 py-1 text-xs text-text-faint">Loading…</p>
           )}
-          {books.map((b) =>
+          {visibleBooks.map((b) =>
             bookDraft?.mode === 'rename' && bookDraft.uid === b.uid ? (
               <input
                 key={b.uid}
@@ -1102,6 +1471,7 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
                 key={b.uid}
                 role="button"
                 tabIndex={0}
+                {...dropPropsForBook(b.uid)}
                 onClick={() => selectBook(b.uid)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -1123,6 +1493,10 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
                         },
                       },
                       {
+                        label: 'Hide (archive)',
+                        onSelect: () => hideBook(b.uid),
+                      },
+                      {
                         label: 'Delete',
                         danger: true,
                         onSelect: () => setDeletingBook(b),
@@ -1131,9 +1505,11 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
                   })
                 }}
                 className={`group mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                  b.uid === activeBook
-                    ? 'bg-accent-soft text-text'
-                    : 'text-text-muted hover:bg-surface-2 hover:text-text'
+                  dragOverBook === b.uid
+                    ? 'ring-1 ring-inset ring-accent bg-accent-soft text-text'
+                    : b.uid === activeBook
+                      ? 'bg-accent-soft text-text'
+                      : 'text-text-muted hover:bg-surface-2 hover:text-text'
                 }`}
               >
                 <span className="min-w-0 flex-1 truncate">{b.name}</span>
@@ -1160,6 +1536,21 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
                     ⚠
                   </button>
                 )}
+                {/* Per-book "synced N ago" stamp. Hidden while syncing or
+                    on failure (those badges take priority), and faded out
+                    on hover so the rename pencil can take its place. */}
+                {!syncing.has(b.uid) &&
+                  !errorByBook.has(b.uid) &&
+                  lastSyncedAt.has(b.uid) && (
+                    <span
+                      className="shrink-0 text-[10px] tabular-nums text-text-faint transition-opacity group-hover:opacity-0"
+                      title={`Synced ${new Date(
+                        lastSyncedAt.get(b.uid)!,
+                      ).toLocaleString()}`}
+                    >
+                      {compactSyncAge(lastSyncedAt.get(b.uid)!, nowMs)}
+                    </span>
+                  )}
                 {/* Hover-revealed rename affordance — the right-click
                     "Rename" item still exists; this just makes the
                     feature discoverable without right-clicking. */}
@@ -1213,6 +1604,88 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
               No address books yet.
             </p>
           )}
+
+          {/* Collapsed "Hidden" group — archived books kept out of the
+              way. Click the header to expand; each row right-clicks to
+              Show (unhide), and is dimmed + still selectable while open. */}
+          {hiddenBooksList.length > 0 && (
+            <div className="mt-1 border-t border-border/60 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowHiddenBooks((v) => !v)}
+                className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-[11px] uppercase tracking-wide text-text-faint hover:bg-surface-2 hover:text-text-muted"
+              >
+                <span className="shrink-0">{showHiddenBooks ? '▾' : '▸'}</span>
+                <span className="flex-1">Hidden</span>
+                <span className="shrink-0 tabular-nums">
+                  {hiddenBooksList.length}
+                </span>
+              </button>
+              {showHiddenBooks &&
+                hiddenBooksList.map((b) => (
+                  <div
+                    key={b.uid}
+                    role="button"
+                    tabIndex={0}
+                    {...dropPropsForBook(b.uid)}
+                    onClick={() => selectBook(b.uid)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        selectBook(b.uid)
+                      }
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setCtxMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        items: [
+                          {
+                            label: 'Show (unarchive)',
+                            onSelect: () => toggleBookHidden(b.uid),
+                          },
+                          {
+                            label: 'Rename',
+                            onSelect: () => {
+                              setBookDraft({ mode: 'rename', uid: b.uid })
+                              setBookDraftText(b.name)
+                            },
+                          },
+                          {
+                            label: 'Delete',
+                            danger: true,
+                            onSelect: () => setDeletingBook(b),
+                          },
+                        ],
+                      })
+                    }}
+                    className={`group mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-faint transition-colors hover:bg-surface-2 ${
+                      dragOverBook === b.uid
+                        ? 'ring-1 ring-inset ring-accent bg-accent-soft'
+                        : b.uid === activeBook
+                          ? 'bg-accent-soft'
+                          : ''
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleBookHidden(b.uid)
+                      }}
+                      aria-label={`Unarchive ${b.name}`}
+                      title="Show (unarchive)"
+                      className="shrink-0 px-1 text-[11px] text-text-faint opacity-0 transition-opacity hover:text-text group-hover:opacity-100 focus:opacity-100"
+                    >
+                      ↩
+                    </button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
         {/* Drag handle: 1.5px wide accent strip on the right edge,
             visible on hover and while resizing. Stops the row's own
@@ -1240,6 +1713,42 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
       {/* ---- Contact list ---- */}
       <div
         onMouseDown={() => setFocusZone('list')}
+        onContextMenu={(e) => {
+          // Contact rows, buttons and the search input handle their own
+          // right-click (row menu / native copy-paste); this covers the
+          // rest of the list pane with list-level actions.
+          const t = e.target as HTMLElement
+          if (t.closest('button, input, textarea, [role="button"]')) return
+          e.preventDefault()
+          setFocusZone('list')
+          setCtxMenu({
+            x: e.clientX,
+            y: e.clientY,
+            items: [
+              {
+                label: 'New contact',
+                disabled: !activeBook,
+                onSelect: startCreate,
+              },
+              {
+                label: 'Search contacts',
+                onSelect: () => {
+                  setFocusZone('list')
+                  searchRef.current?.focus()
+                  searchRef.current?.select()
+                },
+              },
+              {
+                label: 'Search all address books…',
+                onSelect: () => setGlobalSearchOpen(true),
+              },
+              {
+                label: 'Sync all',
+                onSelect: () => void syncAllBooks(),
+              },
+            ],
+          })
+        }}
         style={{
           width: listWidth,
           zoom: zoom.list,
@@ -1256,6 +1765,22 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
             ref={searchRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              // Enter drops out of the search box into the contact items:
+              // land on the current selection if it's still a match, else
+              // the top result, then blur so arrow-nav / a second Enter
+              // (which opens the editor) take over.
+              e.preventDefault()
+              const stillVisible =
+                selectedUid != null &&
+                filtered.some((c) => c.itemUid === selectedUid)
+              if (!stillVisible && filtered[0]) {
+                setSelectedUid(filtered[0].itemUid)
+              }
+              searchRef.current?.blur()
+              setFocusZone('list')
+            }}
             placeholder="Search contacts…"
             className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none placeholder:text-text-faint focus:border-border-strong"
           />
@@ -1268,6 +1793,35 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-text-faint transition-colors hover:border-border-strong hover:text-text disabled:opacity-40"
           >
             ↻
+          </button>
+          <button
+            type="button"
+            onClick={() => void syncAllBooks()}
+            disabled={books.length === 0 || syncing.size > 0}
+            title={
+              syncing.size > 0
+                ? `Syncing ${syncing.size} book${syncing.size === 1 ? '' : 's'}…`
+                : 'Sync all address books'
+            }
+            aria-label="Sync all address books"
+            className="flex h-8 shrink-0 items-center justify-center gap-0.5 rounded-md border border-border px-2 text-text-faint transition-colors hover:border-border-strong hover:text-text disabled:opacity-40"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              className={`h-4 w-4 ${syncing.size > 0 ? 'animate-spin' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+              <path d="M13.5 2.5v3h-3" />
+            </svg>
+            {syncing.size > 0 && (
+              <span className="text-[10px] tabular-nums">{syncing.size}</span>
+            )}
           </button>
           <button
             type="button"
@@ -1329,6 +1883,8 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
                 onToggleContactsSortReverse={() =>
                   setContactsSortReverse(!contactsSortReverse)
                 }
+                showGroups={!hideGroups}
+                onToggleShowGroups={toggleHideGroups}
                 onLogout={handleLogout}
                 onClose={() => setSettingsOpen(false)}
               />
@@ -1397,9 +1953,55 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
             <li key={it.itemUid}>
               <button
                 type="button"
+                draggable
+                onDragStart={(e) => {
+                  setDraggingContactUid(it.itemUid)
+                  // text/plain payload so the drag has data; the move
+                  // itself reads draggingContactUid on drop.
+                  e.dataTransfer.setData('text/plain', it.itemUid)
+                  e.dataTransfer.effectAllowed = 'move'
+                }}
+                onDragEnd={() => {
+                  setDraggingContactUid(null)
+                  setDragOverBook(null)
+                }}
                 onClick={() => {
                   setSelectedUid(it.itemUid)
                   setMode('view')
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setSelectedUid(it.itemUid)
+                  setMode('view')
+                  const targets = books.filter((b) => b.uid !== activeBook)
+                  const moveItems =
+                    targets.length > 0
+                      ? targets.map((b) => ({
+                          label: `Move to “${b.name}”${
+                            hiddenBooks.has(b.uid) ? ' (archived)' : ''
+                          }`,
+                          onSelect: () =>
+                            void handleMoveContact(it.itemUid, b.uid),
+                        }))
+                      : [
+                          {
+                            label: 'Move to… (create another book first)',
+                            disabled: true,
+                            onSelect: () => {},
+                          },
+                        ]
+                  setCtxMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    items: [
+                      ...moveItems,
+                      {
+                        label: 'Delete',
+                        danger: true,
+                        onSelect: () => setDeletingUid(it.itemUid),
+                      },
+                    ],
+                  })
                 }}
                 className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ${
                   it.itemUid === selectedUid && mode === 'view'
@@ -1474,12 +2076,14 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
 
       {/* ---- Detail / editor ---- */}
       <section
+        ref={detailRef}
+        tabIndex={-1}
         onMouseDown={() => setFocusZone('detail')}
         style={{
           zoom: zoom.detail,
           opacity: focusZone === 'detail' ? 1 : inactiveOpacities.detail,
         }}
-        className="flex min-w-0 flex-1 flex-col bg-bg transition-opacity duration-300 ease-out"
+        className="flex min-w-0 flex-1 flex-col bg-bg outline-none transition-opacity duration-300 ease-out"
       >
         {error && (
           <div className="flex items-center justify-between gap-2 border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-text-muted">
@@ -1502,6 +2106,7 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
               saving={savingContact}
               onSave={handleSaveContact}
               onCancel={() => setMode('view')}
+              knownCategories={knownCategories}
             />
           ) : selectedItem ? (
             <ContactCard
@@ -1509,6 +2114,8 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
               pending={false}
               onEdit={startEdit}
               onDelete={() => setDeletingUid(selectedItem.itemUid)}
+              resolveRelated={resolveRelated}
+              onOpenContact={openContact}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center text-sm text-text-faint">
@@ -1549,6 +2156,19 @@ export function ContactsView({ onLoggedOut }: ContactsViewProps) {
           destructive
           onConfirm={confirmDeleteBook}
           onCancel={() => setDeletingBook(null)}
+        />
+      )}
+      {globalSearchOpen && (
+        <ContactSearchModal
+          contactsByBook={contactsByBook}
+          books={books}
+          onRequestSyncAll={syncAllBooks}
+          onPick={(bookUid, itemUid) => {
+            setGlobalSearchOpen(false)
+            setFocusZone('detail')
+            setJumpTarget({ bookUid, itemUid })
+          }}
+          onClose={() => setGlobalSearchOpen(false)}
         />
       )}
     </div>

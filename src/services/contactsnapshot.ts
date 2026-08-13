@@ -13,6 +13,11 @@ const SNAPSHOT_VERSION = 1
 interface RawContact {
   itemUid: string
   raw: string
+  // Last-modified epoch ms (from etebase item meta). Optional for
+  // back-compat — snapshots written before the "Recently modified"
+  // sort axis landed won't have it; rows with a missing mtime sort
+  // to the end of the list under that axis.
+  mtime?: number | null
 }
 
 export interface ContactSnapshot {
@@ -41,9 +46,9 @@ export async function loadContactSnapshot(
   const data = await store.get<StoredSnapshot>(keyOf(uid))
   if (!data || data.version !== SNAPSHOT_VERSION) return null
   const contacts: ContactItem[] = []
-  for (const { itemUid, raw } of data.contacts) {
+  for (const { itemUid, raw, mtime } of data.contacts) {
     const card = parseVCard(raw)
-    if (card) contacts.push({ itemUid, card })
+    if (card) contacts.push({ itemUid, card, mtime: mtime ?? null })
   }
   return {
     version: data.version,
@@ -63,6 +68,7 @@ export async function saveContactSnapshot(
     contacts: snapshot.contacts.map((c) => ({
       itemUid: c.itemUid,
       raw: c.card.raw,
+      mtime: c.mtime,
     })),
     stoken: snapshot.stoken,
     lastSyncedAt: snapshot.lastSyncedAt,

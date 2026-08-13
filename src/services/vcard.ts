@@ -35,6 +35,7 @@ const MODELED = new Set([
   'UID',
   'FN',
   'N',
+  'NICKNAME',
   'ORG',
   'TITLE',
   'EMAIL',
@@ -44,8 +45,11 @@ const MODELED = new Set([
   'X-SOCIALPROFILE',
   'ADR',
   'BDAY',
+  'ANNIVERSARY',
+  'RELATED',
   'NOTE',
   'CATEGORIES',
+  'PHOTO',
   'REV',
 ])
 
@@ -245,6 +249,7 @@ export function emptyVCard(): VCard {
       prefixes: '',
       suffixes: '',
     },
+    nickname: '',
     org: '',
     title: '',
     emails: [],
@@ -253,8 +258,11 @@ export function emptyVCard(): VCard {
     messaging: [],
     addresses: [],
     birthday: '',
+    anniversary: '',
+    related: [],
     note: '',
     categories: [],
+    photos: [],
     raw: '',
   }
 }
@@ -307,6 +315,16 @@ export function parseVCard(raw: string): VCard | null {
         }
         break
       }
+      case 'NICKNAME':
+        if (!card.nickname) {
+          // Comma-separated list per RFC; we collapse to a single
+          // display string and let serializeVCard re-split if needed.
+          card.nickname = splitUnescaped(line.value, ',')
+            .map((c) => unescapeText(c).trim())
+            .filter(Boolean)
+            .join(', ')
+        }
+        break
       case 'ORG':
         if (!card.org) {
           card.org = splitUnescaped(line.value, ';')
@@ -378,6 +396,15 @@ export function parseVCard(raw: string): VCard | null {
       case 'BDAY':
         if (!card.birthday) card.birthday = line.value.trim()
         break
+      case 'ANNIVERSARY':
+        if (!card.anniversary) card.anniversary = line.value.trim()
+        break
+      case 'RELATED': {
+        const v = unescapeText(line.value).trim()
+        if (!v) break
+        card.related.push({ value: v, type: pickType(line) })
+        break
+      }
       case 'NOTE':
         if (!card.note) card.note = unescapeText(line.value)
         break
@@ -387,8 +414,19 @@ export function parseVCard(raw: string): VCard | null {
           if (v && !card.categories.includes(v)) card.categories.push(v)
         }
         break
-      case 'PHOTO':
-        if (!card.photo) card.photo = photoSrc(line)
+      case 'PHOTO': {
+        // Collect every PHOTO (vCard allows repeats); the first becomes
+        // the primary/avatar. De-dupe identical sources.
+        const src = photoSrc(line)
+        if (src && !card.photos.includes(src)) card.photos.push(src)
+        break
+      }
+      // Group detection only — read from both the vCard 4.0 KIND and
+      // Apple's older X-ADDRESSBOOKSERVER-KIND. Not added to MODELED, so
+      // the source lines (and any MEMBER links) round-trip verbatim.
+      case 'KIND':
+      case 'X-ADDRESSBOOKSERVER-KIND':
+        if (!card.kind) card.kind = line.value.trim().toLowerCase()
         break
     }
   }
@@ -465,6 +503,7 @@ export function serializeVCard(card: VCard, preserveFrom?: string): string {
           .join(';'),
     )
   }
+  if (card.nickname) out.push(`NICKNAME:${escapeText(card.nickname)}`)
   if (card.org) out.push(`ORG:${escapeText(card.org)}`)
   if (card.title) out.push(`TITLE:${escapeText(card.title)}`)
   for (const e of card.emails) {
@@ -489,9 +528,23 @@ export function serializeVCard(card: VCard, preserveFrom?: string): string {
     )
   }
   if (card.birthday) out.push(`BDAY:${card.birthday}`)
+  if (card.anniversary) out.push(`ANNIVERSARY:${card.anniversary}`)
+  for (const r of card.related) {
+    if (r.value) {
+      out.push(`RELATED${typeParam(r.type)}:${escapeText(r.value)}`)
+    }
+  }
   if (card.note) out.push(`NOTE:${escapeText(card.note)}`)
   if (card.categories.length > 0) {
     out.push(`CATEGORIES:${card.categories.map(escapeText).join(',')}`)
+  }
+  // PHOTOs are stored as complete data: URIs (the parser already
+  // normalises ENCODING=b / base64 forms into a data: URL). Emit each
+  // straight — modern clients accept this on both vCard 3.0 and 4.0, and
+  // repeating PHOTO is valid per RFC 6350. The first is the primary. Each
+  // line gets folded at the standard 75-char boundary by `foldLine` below.
+  for (const p of card.photos ?? []) {
+    if (p) out.push(`PHOTO:${p}`)
   }
 
   // Carry every property we don't model across untouched.
