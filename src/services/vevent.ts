@@ -266,6 +266,14 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
   if (patch.end !== undefined) {
     vevent.updatePropertyWithValue('dtend', localTime(patch.end, allDay))
   }
+  // We standardise on DTEND for the end. If the source carried a DURATION
+  // (mutually exclusive with DTEND per RFC 5545), drop it whenever we
+  // rewrite the time window — otherwise a lingering DURATION can win over
+  // our new DTEND (e.g. ICAL.Event prefers DURATION when expanding a
+  // recurring series), silently resizing an event we only meant to move.
+  if (patch.start !== undefined || patch.end !== undefined) {
+    vevent.removeAllProperties('duration')
+  }
   if (patch.description !== undefined) {
     if (!patch.description) vevent.removeAllProperties('description')
     else vevent.updatePropertyWithValue('description', patch.description)

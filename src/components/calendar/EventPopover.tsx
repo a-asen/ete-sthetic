@@ -23,13 +23,18 @@ function when(item: EventItem): string {
 }
 
 // Lightweight detail popover anchored at the click point. Edit opens the
-// full composer; this stays read-only + quick actions.
+// full composer; this stays read-only + quick actions. Setting
+// `readOnly` hides Edit + Delete (events from external ICS
+// subscriptions, or a calendar the user has locked, can't be written
+// back). `readOnlyReason` customises the explanatory note.
 export function EventPopover({
   item,
   calName,
   x,
   y,
   busy,
+  readOnly,
+  readOnlyReason,
   onEdit,
   onDelete,
   onClose,
@@ -39,6 +44,8 @@ export function EventPopover({
   x: number
   y: number
   busy: boolean
+  readOnly?: boolean
+  readOnlyReason?: string
   onEdit: () => void
   onDelete: () => void
   onClose: () => void
@@ -57,33 +64,42 @@ export function EventPopover({
     })
   }, [x, y])
 
+  // Dismiss on outside click / Esc / blur — and crucially NOT via a
+  // full-screen overlay. A blocking overlay would swallow a right-click on
+  // a second event (showing the browser's native menu instead of reopening
+  // the popover there); with bare window listeners the event's own
+  // onContextMenu fires, replacing this popover with the new one.
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose()
+    }
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
       }
     }
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('blur', onClose)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('blur', onClose)
+    }
   }, [onClose])
 
   const ev = item.event
 
   return (
     <div
-      className="fixed inset-0 z-50"
-      onClick={onClose}
-      role="presentation"
+      ref={ref}
+      role="dialog"
+      aria-label={ev.summary || 'Event'}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ left: pos.left, top: pos.top }}
+      className="fixed z-50 w-72 rounded-lg border border-border bg-surface p-4 shadow-xl"
     >
-      <div
-        ref={ref}
-        role="dialog"
-        aria-label={ev.summary || 'Event'}
-        onClick={(e) => e.stopPropagation()}
-        style={{ left: pos.left, top: pos.top }}
-        className="absolute w-72 rounded-lg border border-border bg-surface p-4 shadow-xl"
-      >
         <div className="mb-2 flex items-start gap-2">
           <h3 className="min-w-0 flex-1 break-words text-sm font-medium text-text">
             {ev.recurring && '↻ '}
@@ -118,23 +134,31 @@ export function EventPopover({
           )}
         </dl>
 
-        <div className="mt-4 flex gap-2">
-          <button
-            onClick={onDelete}
-            disabled={busy}
-            className="h-7 rounded-md border border-border px-2.5 text-xs text-danger hover:border-danger disabled:opacity-50"
-          >
-            Delete
-          </button>
-          <button
-            onClick={onEdit}
-            disabled={busy}
-            className="ml-auto h-7 rounded-md bg-accent px-3 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-50"
-          >
-            Edit
-          </button>
-        </div>
-      </div>
+        {readOnly ? (
+          <div className="mt-4 text-[11px] italic text-text-faint">
+            {readOnlyReason ?? 'Read-only — synced from a subscription.'}
+          </div>
+        ) : (
+          // Edit sits left — nearest the cursor/anchor, the primary action;
+          // Delete is pushed to the far bottom-right corner, the hardest
+          // spot to hit by accident.
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <button
+              onClick={onEdit}
+              disabled={busy}
+              className="h-7 rounded-md bg-accent px-3 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-50"
+            >
+              Edit
+            </button>
+            <button
+              onClick={onDelete}
+              disabled={busy}
+              className="h-7 rounded-md border border-border px-2.5 text-xs text-danger hover:border-danger disabled:opacity-50"
+            >
+              Delete
+            </button>
+          </div>
+        )}
     </div>
   )
 }

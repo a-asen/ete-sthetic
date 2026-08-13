@@ -1,27 +1,32 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { EventItem } from '../../types'
 import type { CalTask } from '../../services/caltasks'
+import type { CalBirthday } from '../../services/birthdays'
 
 // "+N more" expansion: every event on a given day, anchored at the click.
 export function DayPopover({
   day,
   events,
   tasks,
+  birthdays,
   colorFor,
   x,
   y,
   onOpenEvent,
   onToggleTask,
+  onOpenBirthday,
   onClose,
 }: {
   day: Date
   events: EventItem[]
   tasks: CalTask[]
+  birthdays: CalBirthday[]
   colorFor: (item: EventItem) => string
   x: number
   y: number
   onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
   onToggleTask: (t: CalTask) => void
+  onOpenBirthday: (b: CalBirthday) => void
   onClose: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -86,11 +91,13 @@ export function DayPopover({
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {sorted.length === 0 && tasks.length === 0 && (
-            <div className="px-2 py-3 text-xs text-text-faint">
-              Nothing on this day.
-            </div>
-          )}
+          {sorted.length === 0 &&
+            tasks.length === 0 &&
+            birthdays.length === 0 && (
+              <div className="px-2 py-3 text-xs text-text-faint">
+                Nothing on this day.
+              </div>
+            )}
           {sorted.map((item) => {
             const ev = item.event
             return (
@@ -143,6 +150,31 @@ export function DayPopover({
                 >
                   {t.summary || '(untitled task)'}
                 </span>
+              </button>
+            )
+          })}
+          {birthdays.length > 0 && (
+            <div className="mt-1 border-t border-border px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-text-faint">
+              Birthdays
+            </div>
+          )}
+          {birthdays.map((b) => {
+            const age = b.year !== null ? day.getFullYear() - b.year : null
+            return (
+              <button
+                key={`${b.bookUid}:${b.contactItemUid}`}
+                onClick={() => onOpenBirthday(b)}
+                className="flex w-full items-center gap-2 truncate rounded-md px-2 py-1 text-left text-xs hover:bg-surface-2"
+              >
+                <span className="shrink-0" aria-hidden>
+                  🎂
+                </span>
+                <span className="truncate text-text">{b.contactName}</span>
+                {age !== null && (
+                  <span className="shrink-0 text-text-faint">
+                    turns {age}
+                  </span>
+                )}
               </button>
             )
           })}

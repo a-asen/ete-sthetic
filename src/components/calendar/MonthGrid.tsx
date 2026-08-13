@@ -1,5 +1,16 @@
 import type { EventItem } from '../../types'
 import type { CalTask } from '../../services/caltasks'
+import type { CalBirthday } from '../../services/birthdays'
+import type {
+  DailyForecast,
+  WeatherUnits,
+} from '../../services/weather'
+import {
+  formatRange,
+  unitSuffix,
+  weatherIcon,
+  weatherLabel,
+} from '../../services/weather'
 import {
   dayKey,
   isBarEvent,
@@ -26,6 +37,10 @@ export function MonthGrid({
   onShowMore,
   tasksByDay,
   onToggleTask,
+  birthdaysByDay,
+  onOpenBirthday,
+  weatherByDay,
+  weatherUnits,
   showWeekNum,
 }: {
   days: Date[]
@@ -40,6 +55,10 @@ export function MonthGrid({
   onShowMore: (d: Date, coords: { x: number; y: number }) => void
   tasksByDay: Map<string, CalTask[]>
   onToggleTask: (t: CalTask) => void
+  birthdaysByDay: Map<string, CalBirthday[]>
+  onOpenBirthday: (b: CalBirthday) => void
+  weatherByDay: Map<string, DailyForecast>
+  weatherUnits: WeatherUnits
   showWeekNum: boolean
 }) {
   const WK = 'w-8 shrink-0'
@@ -134,16 +153,35 @@ export function MonthGrid({
                     }`}
                   >
                     <div
-                      className="flex justify-end"
+                      className="flex items-center justify-between gap-1"
                       style={{ height: DATE_ROW_PX }}
                     >
+                      {weatherByDay.get(k) ? (
+                        (() => {
+                          const w = weatherByDay.get(k)!
+                          return (
+                            <span
+                              title={`${weatherLabel(w.code)} · ${formatRange(w.tempMin, w.tempMax)}${unitSuffix(weatherUnits)}`}
+                              className="flex min-w-0 items-center gap-0.5 truncate text-[10px] text-text-faint"
+                            >
+                              <span aria-hidden>{weatherIcon(w.code)}</span>
+                              <span className="truncate tabular-nums">
+                                {Math.round(w.tempMin)}°/
+                                {Math.round(w.tempMax)}°
+                              </span>
+                            </span>
+                          )
+                        })()
+                      ) : (
+                        <span />
+                      )}
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
                           onPickDay(day)
                         }}
                         title="Open day"
-                        className={`flex h-5 w-5 items-center justify-center rounded-full text-xs hover:ring-1 hover:ring-accent ${
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs hover:ring-1 hover:ring-accent ${
                           isToday
                             ? 'bg-accent font-semibold text-bg'
                             : inMonth
@@ -163,6 +201,11 @@ export function MonthGrid({
                           <div
                             key={(item.occId ?? item.itemUid) + k}
                             onClick={(e) => {
+                              e.stopPropagation()
+                              onOpenEvent(item, { x: e.clientX, y: e.clientY })
+                            }}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
                               e.stopPropagation()
                               onOpenEvent(item, { x: e.clientX, y: e.clientY })
                             }}
@@ -230,6 +273,30 @@ export function MonthGrid({
                           </button>
                         )
                       })}
+                      {(birthdaysByDay.get(k) ?? []).map((b) => {
+                        const age =
+                          b.year !== null ? day.getFullYear() - b.year : null
+                        return (
+                          <button
+                            key={`${b.bookUid}:${b.contactItemUid}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onOpenBirthday(b)
+                            }}
+                            title={
+                              age !== null
+                                ? `${b.contactName} — turns ${age}`
+                                : `${b.contactName}'s birthday`
+                            }
+                            className="flex w-full items-center gap-1 truncate px-1 text-xs text-text-muted hover:text-accent"
+                          >
+                            <span className="shrink-0" aria-hidden>
+                              🎂
+                            </span>
+                            <span className="truncate">{b.contactName}</span>
+                          </button>
+                        )
+                      })}
                     </div>
                   </div>
                 )
@@ -252,6 +319,11 @@ export function MonthGrid({
                       <div
                         key={(item.occId ?? item.itemUid) + dayKey(week[0])}
                         onClick={(e) => {
+                          e.stopPropagation()
+                          onOpenEvent(item, { x: e.clientX, y: e.clientY })
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
                           e.stopPropagation()
                           onOpenEvent(item, { x: e.clientX, y: e.clientY })
                         }}

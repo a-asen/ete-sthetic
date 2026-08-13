@@ -111,11 +111,17 @@ export function bucketByDay(
   for (const item of events) {
     const s = item.event.start
     if (!s) continue
-    const e = item.event.end && item.event.end > s ? item.event.end : s
+    const hasRealEnd = !!(item.event.end && item.event.end > s)
+    const e = hasRealEnd ? item.event.end! : s
     if (e.getTime() < lo || s.getTime() >= hi) continue
     let cur = startOfDay(new Date(Math.max(s.getTime(), lo)))
+    // Last instant the event actually occupies. DTEND is exclusive, so for
+    // any event with a real duration (all-day OR timed) the last touched
+    // day is the one containing end-1ms — this keeps an event ending at
+    // exactly 00:00 on its own day instead of bleeding a zero-height
+    // sliver onto the next. Point events (no end) stay on their start day.
     const lastMs = Math.min(
-      item.event.allDay ? e.getTime() - 1 : e.getTime(),
+      hasRealEnd || item.event.allDay ? e.getTime() - 1 : e.getTime(),
       hi - 1,
     )
     let guard = 0
