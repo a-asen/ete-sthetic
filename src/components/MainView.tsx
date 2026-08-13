@@ -1509,7 +1509,19 @@ export function MainView({
             return next
           })
         }
-        if (result.stoken) {
+        // Only persist the stoken when we actually have items. A
+        // 0-item sync with a stoken poisons the cursor: the next
+        // sync from that stoken is a no-op delta that never fetches
+        // the server's actual items. When items is empty, leave
+        // stokenByUid unset so the next sync is a full one.
+        // We read the committed items via a no-op setItemsByUid so we
+        // see the latest state (itemsByUidRef may lag by one render).
+        let hasItems = false
+        setItemsByUid((prev) => {
+          hasItems = (prev.get(uid)?.length ?? 0) > 0
+          return prev
+        })
+        if (result.stoken && hasItems) {
           setStokenByUid((prev) => {
             if (prev.get(uid) === result.stoken) return prev
             const next = new Map(prev)
