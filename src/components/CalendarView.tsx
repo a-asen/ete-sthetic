@@ -75,7 +75,12 @@ import {
   stepAnchor,
   viewDayRange,
 } from '../services/caldate'
-import { loadCalSnapshot, saveCalSnapshot } from '../services/calsnapshot'
+import {
+  loadCalSnapshot,
+  loadCalendarsList,
+  saveCalSnapshot,
+  saveCalendarsList,
+} from '../services/calsnapshot'
 import { getCalMemory, patchCalMemory } from '../services/calstore'
 import {
   logSyncFailure,
@@ -1306,10 +1311,22 @@ export function CalendarView({
       const mem = getCalMemory()
       let cals = mem.calendars
       if (!cals) {
-        cals = await listCalendars({
+        // Cold start: hydrate the calendars LIST from disk first so the
+        // sidebar / grid render immediately. The network listCalendars
+        // below reconciles afterward (pruning orphans, updating names).
+        // Without this, `calendars` stays null until the network call
+        // resolves, so the grid shows nothing even though events are
+        // already cached per-calendar on disk.
+        const cached = await loadCalendarsList()
+        if (!ac.signal.aborted && cached && cached.length > 0) {
+          setCalendars((cur) => cur ?? cached)
+          cals = cached
+        }
+        const fresh = await listCalendars({
           includeDeleted: readBool(SHOW_DELETED_CALS_KEY),
         })
         if (ac.signal.aborted) return
+        cals = fresh
         setCalendars(() => cals)
       }
       // Only live calendars are synced — tombstones have no events to
@@ -1706,6 +1723,17 @@ export function CalendarView({
     eventsBySub,
     hiddenSubs,
   ])
+
+  // Persist the calendars list to disk whenever it changes, so the next
+  // cold start can hydrate from it (see loadAll above). Create/delete/
+  // rename optimistically mutate `calendars`, so this mirror keeps the
+  // disk cache in lockstep without each call site remembering to call
+  // saveCalendarsList.
+  useEffect(() => {
+    if (calendars && calendars.length > 0) {
+      void saveCalendarsList(calendars)
+    }
+  }, [calendars])
 
   const colorByCal = useMemo(() => {
     const map = new Map<string, string>()

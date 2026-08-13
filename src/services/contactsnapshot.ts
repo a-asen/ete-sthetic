@@ -1,4 +1,4 @@
-import type { ContactItem } from '../types'
+import type { CollectionInfo, ContactItem } from '../types'
 import { parseVCard } from './vcard'
 import { store } from './store'
 
@@ -9,6 +9,32 @@ import { store } from './store'
 
 const KEY_PREFIX = 'contacts.'
 const SNAPSHOT_VERSION = 1
+const ADDRESS_BOOKS_LIST_KEY = 'addressBooksList.v1'
+
+// The list of address books itself isn't covered by per-book snapshots;
+// cache it so a cold start can render the books column from the last
+// known list before the network listAddressBooks resolves. Same pattern
+// as the tasks module's loadCollectionsList / saveCollectionsList and
+// the calendar module's loadCalendarsList / saveCalendarsList.
+interface AddressBooksListCache {
+  list: CollectionInfo[]
+  savedAt: number
+}
+
+export async function saveAddressBooksList(
+  list: CollectionInfo[],
+): Promise<void> {
+  await store.set(ADDRESS_BOOKS_LIST_KEY, {
+    list,
+    savedAt: Date.now(),
+  } satisfies AddressBooksListCache)
+  await store.save()
+}
+
+export async function loadAddressBooksList(): Promise<CollectionInfo[] | null> {
+  const data = await store.get<AddressBooksListCache>(ADDRESS_BOOKS_LIST_KEY)
+  return data?.list ?? null
+}
 
 interface RawContact {
   itemUid: string

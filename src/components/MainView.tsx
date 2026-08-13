@@ -1053,6 +1053,30 @@ export function MainView({
 
     void (async () => {
       try {
+        // Hydrate the collections LIST from disk first so the sidebar
+        // renders immediately on a cold start. Without this, `collections`
+        // stays null until the network listCollections() resolves (the
+        // disk-hydration pass below only fills task *items*, not the
+        // list of collections itself), so the tree shows nothing even
+        // though every item is already cached. The network listCollections
+        // effect reconciles afterward (pruning orphans, updating names).
+        if (!getTaskMemory().collections) {
+          const cachedCollections = await loadCollectionsList()
+          if (cancelled) return
+          if (cachedCollections && cachedCollections.length > 0) {
+            setCollections((cur) => cur ?? cachedCollections)
+            setActiveUid((cur) =>
+              cur && cachedCollections.some((c) => c.uid === cur)
+                ? cur
+                : sortCollections(
+                    cachedCollections,
+                    sidebarSortRef.current,
+                    new Map(),
+                  )[0]?.uid ?? null,
+            )
+          }
+        }
+
         const uids = await listSnapshotUids()
         const snapshots = await Promise.all(uids.map((uid) => loadSnapshot(uid)))
         if (cancelled) return

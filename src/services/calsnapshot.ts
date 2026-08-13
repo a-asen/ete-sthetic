@@ -1,4 +1,4 @@
-import type { EventItem } from '../types'
+import type { CollectionInfo, EventItem } from '../types'
 import { parseVEvent } from './vevent'
 import { store } from './store'
 
@@ -9,6 +9,31 @@ import { store } from './store'
 
 const KEY_PREFIX = 'calevents.'
 const SNAPSHOT_VERSION = 1
+const CALENDARS_LIST_KEY = 'calendarsList.v1'
+
+// The list of calendars itself isn't covered by per-calendar snapshots;
+// cache it so a cold start can render the sidebar / grid from the last
+// known list before the network listCalendars resolves. Same pattern as
+// the tasks module's loadCollectionsList / saveCollectionsList.
+interface CalendarsListCache {
+  list: CollectionInfo[]
+  savedAt: number
+}
+
+export async function saveCalendarsList(
+  list: CollectionInfo[],
+): Promise<void> {
+  await store.set(CALENDARS_LIST_KEY, {
+    list,
+    savedAt: Date.now(),
+  } satisfies CalendarsListCache)
+  await store.save()
+}
+
+export async function loadCalendarsList(): Promise<CollectionInfo[] | null> {
+  const data = await store.get<CalendarsListCache>(CALENDARS_LIST_KEY)
+  return data?.list ?? null
+}
 
 interface RawEvent {
   itemUid: string

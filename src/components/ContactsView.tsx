@@ -16,7 +16,9 @@ import {
 } from '../services/etebase'
 import { emptyVCard } from '../services/vcard'
 import {
+  loadAddressBooksList,
   loadContactSnapshot,
+  saveAddressBooksList,
   saveContactSnapshot,
 } from '../services/contactsnapshot'
 import { getContactMemory, patchContactMemory } from '../services/contactstore'
@@ -611,6 +613,17 @@ export function ContactsView({
     selectedUid,
   ])
 
+  // Persist the address books list to disk whenever it changes, so the
+  // next cold start can hydrate from it (see the mount effect above).
+  // Create/rename/delete optimistically mutate `addressBooks`, so this
+  // mirror keeps the disk cache in lockstep without each call site
+  // remembering to call saveAddressBooksList.
+  useEffect(() => {
+    if (addressBooks && addressBooks.length > 0) {
+      void saveAddressBooksList(addressBooks)
+    }
+  }, [addressBooks])
+
   // Persist the active book's contacts to disk (debounced) so a cold start
   // renders instantly from the snapshot before the network sync lands.
   useEffect(() => {
@@ -693,6 +706,44 @@ export function ContactsView({
   useEffect(() => {
     let cancelled = false
     void (async () => {
+      // Cold start: hydrate the address books LIST from disk first so the
+      // books column renders immediately. Without this, `addressBooks`
+      // stays null until the network listAddressBooks() resolves, so the
+      // column shows nothing even though contacts are already cached
+      // per-book on disk. The network listAddressBooks below reconciles
+      // afterward (pruning orphans, updating names).
+      if (!getContactMemory().addressBooks) {
+        const cachedBooks = await loadAddressBooksList()
+        if (!cancelled && cachedBooks && cachedBooks.length > 0) {
+          setAddressBooks((cur) => cur ?? cachedBooks)
+          const liveCached = liveBooks(cachedBooks)
+          const prevCached = getContactMemory().activeBook
+          const activeCached =
+            prevCached && liveCached.some((b) => b.uid === prevCached)
+              ? prevCached
+              : (liveCached[0]?.uid ?? null)
+          if (activeCached) {
+            setActiveBook(activeCached)
+            if (!getContactMemory().contactsByBook.has(activeCached)) {
+              const snap = await loadContactSnapshot(activeCached)
+              if (!cancelled && snap) {
+                setContactsByBook((p) =>
+                  new Map(p).set(activeCached, snap.contacts),
+                )
+                if (snap.stoken) {
+                  setStokenByBook((p) =>
+                    new Map(p).set(activeCached, snap.stoken!),
+                  )
+                }
+                setLastSyncedAt((p) =>
+                  new Map(p).set(activeCached, snap.lastSyncedAt),
+                )
+              }
+            }
+          }
+        }
+      }
+
       let books: CollectionInfo[]
       try {
         books = await listAddressBooks()
@@ -705,6 +756,7 @@ export function ContactsView({
       }
       if (cancelled) return
       setAddressBooks(books)
+      void saveAddressBooksList(books)
       setBooksLoading(false)
       const live = liveBooks(books)
       const prev = getContactMemory().activeBook
