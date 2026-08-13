@@ -1071,12 +1071,23 @@ export function MainView({
         if (nextItems.size > 0) {
           setItemsByUid((prev) => {
             const next = new Map(prev)
-            for (const [uid, items] of nextItems) next.set(uid, items)
+            for (const [uid, items] of nextItems) {
+              // Never overwrite a bucket a network sync already touched
+              // this session. A late hydration landing AFTER fetchCollection
+              // ran would otherwise replace the freshly-synced, tombstone-
+              // purged list with stale disk items — reintroducing the very
+              // ghosts the sync just removed.
+              if (next.has(uid)) continue
+              next.set(uid, items)
+            }
             return next
           })
           setStokenByUid((prev) => {
             const next = new Map(prev)
-            for (const [uid, s] of nextStokens) next.set(uid, s)
+            for (const [uid, s] of nextStokens) {
+              if (next.has(uid)) continue
+              next.set(uid, s)
+            }
             return next
           })
           setLoadedUids((prev) => {
@@ -1379,13 +1390,47 @@ export function MainView({
         next.set(uid, [])
         return next
       })
-      const fromStoken = stokenByUid.get(uid)
+      // Resolve the sync cursor. Prefer the in-memory stoken; fall back
+      // to the disk snapshot's stoken so the first sync is a DELTA (which
+      // includes server-side tombstones) rather than a full list (which
+      // does not). Without this, a cold start captures `fromStoken =
+      // undefined` (stokenByUid hasn't been hydrated from disk yet),
+      // the server returns all current items with NO tombstones, and
+      // items the server already tombstoned (e.g. moved/deleted on
+      // another client) stay stuck in the cache — the "stale original"
+      // / cross-client duplicate symptom.
+      let fromStoken = stokenByUid.get(uid)
+      if (fromStoken === undefined) {
+        try {
+          const snap = await loadSnapshot(uid)
+          if (snap?.stoken) {
+            fromStoken = snap.stoken
+            setStokenByUid((prev) => {
+              if (prev.has(uid)) return prev
+              const next = new Map(prev)
+              next.set(uid, snap.stoken!)
+              return next
+            })
+          }
+        } catch {
+          // Snapshot unreadable → proceed with a full sync.
+        }
+      }
+      // A full sync (no stoken) returns all CURRENT items but no
+      // tombstones. We track every itemUid the server returns, then
+      // purge cache entries the server didn't mention — the full-sync
+      // equivalent of the delta-sync `result.removed` purge below.
+      const isFullSync = fromStoken === undefined
+      const seenItemUids = new Set<string>()
       try {
         const result = await listTaskItems(uid, {
           signal,
           fromStoken,
           onBatch: (batch) => {
             if (cancelledRef.current) return
+            if (isFullSync) {
+              for (const t of batch) seenItemUids.add(t.itemUid)
+            }
             setItemsByUid((prev) => {
               const existing = prev.get(uid) ?? []
               // Upsert by itemUid so re-syncs replace rather than duplicate.
@@ -1405,8 +1450,23 @@ export function MainView({
           },
         })
         if (cancelledRef.current) return
-        // Apply server-side deletions to the local cache.
-        if (result.removed.length > 0) {
+        if (isFullSync) {
+          // Purge items the server no longer has. A full sync returns
+          // every current item; anything in our cache that wasn't in the
+          // response is stale (moved/deleted on another client) and must
+          // be dropped, or it would linger as a permanent ghost.
+          setItemsByUid((prev) => {
+            const existing = prev.get(uid) ?? []
+            const filtered = existing.filter((t) =>
+              seenItemUids.has(t.itemUid),
+            )
+            if (filtered.length === existing.length) return prev
+            const next = new Map(prev)
+            next.set(uid, filtered)
+            return next
+          })
+        } else if (result.removed.length > 0) {
+          // Delta sync: apply the server's tombstone list.
           const removeSet = new Set(result.removed)
           setItemsByUid((prev) => {
             const existing = prev.get(uid) ?? []
