@@ -29,3 +29,10 @@ dist-ssr
 # Local working materials (screenshots, scratchpads)
 _resources/
 .rmt.conf
+
+# graphify knowledge-graph build artifacts
+graphify-out/
+
+# VitePress docs build output + cache
+docs/.vitepress/dist/
+docs/.vitepress/cache/

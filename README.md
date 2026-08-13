@@ -43,6 +43,13 @@ and Ctrl-prefixed shortcuts that don't fight the bare-letter typeahead.
 - Tauri plugins: `store` (encrypted Etebase session), `notification`
   (alarms), `dialog`, `fs`
 
+## Documentation
+
+Full docs — user guides, keybindings, architecture, and FAQ — live at
+**<https://a-asen.github.io/ete-sthetic/>** (built from [`docs/`](docs/) with
+[VitePress](https://vitepress.dev/); published to GitHub Pages on push to
+`main`). Work on them locally with `npm run docs:dev`.
+
 ## Running it
 
 Prerequisites: Node 22+, Rust 1.77+, and the Linux GTK/WebKit deps Tauri

@@ -44,4 +44,25 @@ export default defineConfig({
       ignored: ['**/src-tauri/**'],
     },
   },
+  // Pre-bundle the Tauri plugins. Vite 8's dev-server resolver
+  // only walks the static graph by default, so packages reachable
+  // exclusively via React.lazy chunks (calendar → weather.ts /
+  // icsSubscriptions.ts → @tauri-apps/plugin-http) can slip through.
+  // Two-part fix:
+  //   `include`  — guarantees these IDs end up in the pre-bundled
+  //                deps cache.
+  //   `entries`  — forces the scanner to walk every src/**/*.{ts,tsx}
+  //                at startup so lazy chunks surface their deps too.
+  // `vite build` doesn't need any of this; rollup's resolver is fine.
+  optimizeDeps: {
+    entries: ['index.html', 'src/**/*.{ts,tsx}'],
+    include: [
+      '@tauri-apps/api/core',
+      '@tauri-apps/plugin-dialog',
+      '@tauri-apps/plugin-fs',
+      '@tauri-apps/plugin-http',
+      '@tauri-apps/plugin-notification',
+      '@tauri-apps/plugin-store',
+    ],
+  },
 })

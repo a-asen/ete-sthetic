@@ -21,6 +21,25 @@
         { "path": "$DESKTOP/**" },
         { "path": "$DOWNLOAD/**" }
       ]
+    },
+    "http:default",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [
+        { "url": "http://**" },
+        { "url": "https://**" },
+        { "url": "webcal://**" }
+      ]
+    },
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://*" },
+        { "url": "http://*" },
+        { "url": "mailto:*" },
+        { "url": "tel:*" }
+      ]
     }
   ]
 }
