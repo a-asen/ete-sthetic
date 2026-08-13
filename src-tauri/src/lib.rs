@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewWindowBuilder};
 
 // Holds the .ics path passed via argv on launch (e.g. the user double-
 // clicked a calendar invite in their file manager and the OS routed
@@ -22,9 +22,85 @@ struct PendingIcs(Mutex<Option<String>>);
 // drain so both cold-start and warm-handoff funnel into the same picker.
 const ICS_OPEN_EVENT: &str = "ics-open";
 
+// Module labels the frontend can request to pop into their own window.
+// Each gets a stable window label so re-requesting an already-open
+// module focuses the existing window instead of opening a duplicate.
+const MODULE_LABELS: &[(&str, &str)] = &[
+  ("tasks", "tasks-window"),
+  ("calendar", "calendar-window"),
+  ("contacts", "contacts-window"),
+];
+
 #[tauri::command]
 fn take_pending_ics(state: tauri::State<PendingIcs>) -> Option<String> {
-    state.0.lock().ok().and_then(|mut g| g.take())
+  state.0.lock().ok().and_then(|mut g| g.take())
+}
+
+// Open a single-module window (e.g. "calendar on the second monitor").
+// Loads the same frontend URL with a `?window=<module>` query param the
+// App reads on boot to render ONLY that module (no top-bar switcher, no
+// global sync pill). Re-requesting an already-open module focuses the
+// existing window instead of opening a second one. Returns nothing on
+// success / failure — the frontend treats this as fire-and-forget.
+#[tauri::command]
+fn open_module_window(app: tauri::AppHandle, module: String) -> Result<(), String> {
+  let label = MODULE_LABELS
+    .iter()
+    .find(|(m, _)| *m == module.as_str())
+    .map(|(_, label)| *label)
+    .ok_or_else(|| format!("Unknown module: {}", module))?;
+
+  // Already open → focus and return. WebviewWindow labels are unique;
+  // a second create with the same label would panic.
+  if let Some(existing) = app.get_webview_window(label) {
+    let _ = existing.unminimize();
+    let _ = existing.set_focus();
+    return Ok(());
+  }
+
+  // Derive the URL the main window loaded, then append our query param.
+  // In dev this is the Vite server; in the bundled app it's the dist
+  // asset. The frontend's App.tsx reads `?window=` and branches into a
+  // single-module render.
+  let url = {
+    let main = app
+      .get_webview_window("main")
+      .ok_or_else(|| "main window not found".to_string())?;
+    let raw = main.url().map_err(|e| e.to_string())?;
+    // The main window's URL has no query string; append ours. If it
+    // somehow already has one, `?` would be wrong — but the base URL
+    // is a bare path (tauri://localhost or http://localhost:5173),
+    // so a single `?` is always correct here.
+    format!("{}?window={}", raw, module)
+  };
+
+  let title = format!(
+    "{} — ete-sthetic",
+    match module.chars().next() {
+      Some(c) => c.to_uppercase().collect::<String>() + &module[c.len_utf8()..],
+      None => module.clone(),
+    }
+  );
+
+  let parsed = tauri::Url::parse(&url).map_err(|e| e.to_string())?;
+  // Match how Tauri itself chooses the variant: http/https → External,
+  // any other scheme (tauri://, ipc://, …) → CustomProtocol. This keeps
+  // the new window's URL scheme identical to the main window's, so the
+  // frontend loads the same way in dev (http://localhost:5173) and in
+  // the bundled app (tauri://localhost).
+  let webview_url = if parsed.scheme() == "http" || parsed.scheme() == "https" {
+    tauri::WebviewUrl::External(parsed)
+  } else {
+    tauri::WebviewUrl::CustomProtocol(parsed)
+  };
+  WebviewWindowBuilder::new(&app, label, webview_url)
+    .title(title)
+    .inner_size(1100.0, 720.0)
+    .min_inner_size(720.0, 480.0)
+    .build()
+    .map_err(|e| e.to_string())?;
+
+  Ok(())
 }
 
 fn ics_arg_in<'a>(mut args: impl Iterator<Item = &'a String>) -> Option<String> {
@@ -70,7 +146,7 @@ pub fn run() {
       }
     }))
     .manage(PendingIcs(Mutex::new(pending)))
-    .invoke_handler(tauri::generate_handler![take_pending_ics])
+    .invoke_handler(tauri::generate_handler![take_pending_ics, open_module_window])
     .plugin(tauri_plugin_store::Builder::default().build())
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_dialog::init())

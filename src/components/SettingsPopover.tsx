@@ -9,6 +9,7 @@ import { KeybindingEditor } from './KeybindingEditor'
 import { ModuleToggles } from './ModuleToggles'
 import { InactiveOpacitySettings } from './InactiveOpacitySettings'
 import { NavRow, PaneHeader } from './SettingsNav'
+import { OpenInWindowRow } from './OpenInWindowRow'
 import { SettingsSection } from './SettingsSection'
 import { SettingsWindow } from './SettingsWindow'
 import {
@@ -710,6 +711,12 @@ export function SettingsPopover({
           </SettingsSection>
           <InactiveOpacitySettings />
           <ModuleToggles />
+          <SettingsSection id="tasks.window" label="Window">
+            <OpenInWindowRow
+              module="tasks"
+              label="Open Tasks in new window"
+            />
+          </SettingsSection>
           <SettingsSection
             id="tasks.keybindings"
             label="Keyboard shortcuts"

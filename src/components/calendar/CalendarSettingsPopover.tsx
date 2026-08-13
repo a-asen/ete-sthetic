@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ModuleToggles } from '../ModuleToggles'
 import { NavRow, PaneHeader } from '../SettingsNav'
+import { OpenInWindowRow } from '../OpenInWindowRow'
 import { SettingsSection } from '../SettingsSection'
 import { SettingsWindow } from '../SettingsWindow'
 import { BDAY_UNCATEGORISED } from '../../services/birthdays'
@@ -499,6 +500,12 @@ export function CalendarSettingsPopover({
         <div className="max-h-[70vh] overflow-y-auto">
           <PaneHeader title="Advanced" onBack={() => setPane('root')} />
           <ModuleToggles />
+          <SettingsSection id="calendar.window" label="Window">
+            <OpenInWindowRow
+              module="calendar"
+              label="Open Calendar in new window"
+            />
+          </SettingsSection>
         </div>
       )}
     </div>

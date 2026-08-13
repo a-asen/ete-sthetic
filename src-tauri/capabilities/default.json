@@ -3,7 +3,10 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "tasks-window",
+    "calendar-window",
+    "contacts-window"
   ],
   "permissions": [
     "core:default",

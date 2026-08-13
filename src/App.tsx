@@ -14,6 +14,7 @@ import {
 } from './services/backgroundSync'
 import {
   MODULE_FLAGS_CHANGED_EVENT,
+  readLaunchModule,
   readModuleEnabled,
   readModuleOrder,
   setModuleEnabled,
@@ -58,6 +59,26 @@ const ContactsView = lazy(() =>
 )
 
 type AuthState = 'checking' | 'unauthenticated' | 'authenticated'
+
+// When the app is launched in a single-module window (the "Open in new
+// window" feature), the URL carries `?window=<module>`. We read it once
+// at module load; when set, App renders ONLY that module full-screen —
+// no top-bar switcher, no global sync pill, no meta-search, no global
+// settings, no module-switch guard. Each such window runs its own sync
+// against the same etebase account independently (state does NOT cross
+// the window boundary; the in-memory caches are per-JS-context). This
+// is by design for "calendar on the second monitor": the two windows
+// show different modules, so cache divergence is harmless.
+const windowModuleParam = (() => {
+  try {
+    const u = new URL(window.location.href)
+    const m = u.searchParams.get('window')
+    if (m === 'tasks' || m === 'calendar' || m === 'contacts') return m
+  } catch {
+    // not a URL (SSR / non-browser) — fall through
+  }
+  return null
+})()
 
 // Slim module switcher (calendar-contacts-plan.md path A, step 2).
 // Rendered inline inside the top bar in App's flex-column layout —
@@ -109,13 +130,18 @@ function firstEnabledModule(): ModuleName {
   return readModuleOrder().find(readModuleEnabled) ?? 'home'
 }
 
-// Land on tasks when it's enabled (the common case), otherwise the first
-// enabled module (home may itself be hidden now).
+// Land on the user's preferred launch module when it's still enabled;
+// otherwise fall back to tasks (the common default), else the first
+// enabled module. A launch preference the user has since disabled
+// silently degrades to the safe default rather than landing on a
+// hidden view.
 function initialModule(): ModuleName {
+  const pref = readLaunchModule()
+  if (pref && readModuleEnabled(pref)) return pref
   return readModuleEnabled('tasks') ? 'tasks' : firstEnabledModule()
 }
 
-function App() {
+function MainApp() {
   const [auth, setAuth] = useState<AuthState>('checking')
   const [module, setModule] = useState<ModuleName>(initialModule)
   const [enabledModules, setEnabledModules] =
@@ -587,6 +613,75 @@ function App() {
       </div>
     </div>
   )
+}
+
+// Single-module window variant: launched via the "Open in new window"
+// Rust command with `?window=<module>` in the URL. Renders ONLY that
+// module full-screen — no top-bar switcher, no global sync pill, no
+// meta-search, no module-switch guard, no global settings. Each window
+// runs its own sync independently. Auth still flows through the same
+// restoreSession path (the encrypted session is shared via the Tauri
+// store, which is per-app not per-window), so a single-module window
+// opens already logged-in if the main window is.
+function SingleModuleApp({ module }: { module: ModuleName }) {
+  const [auth, setAuth] = useState<AuthState>('checking')
+
+  useEffect(() => {
+    restoreSession().then((ok) => {
+      setAuth(ok ? 'authenticated' : 'unauthenticated')
+    })
+  }, [])
+
+  const onLoggedOut = () => setAuth('unauthenticated')
+
+  if (auth === 'checking') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-bg">
+        <p className="text-sm text-text-faint">Loading…</p>
+      </div>
+    )
+  }
+  if (auth === 'unauthenticated') {
+    return <LoginScreen onAuthenticated={() => setAuth('authenticated')} />
+  }
+
+  return (
+    <div className="flex h-screen flex-col bg-bg text-text">
+      {module === 'tasks' && <MainView onLoggedOut={onLoggedOut} />}
+      {module === 'calendar' && (
+        <Suspense
+          fallback={
+            <div className="flex flex-1 items-center justify-center bg-bg">
+              <p className="text-sm text-text-faint">Loading calendar…</p>
+            </div>
+          }
+        >
+          <CalendarView onLoggedOut={onLoggedOut} />
+        </Suspense>
+      )}
+      {module === 'contacts' && (
+        <Suspense
+          fallback={
+            <div className="flex flex-1 items-center justify-center bg-bg">
+              <p className="text-sm text-text-faint">Loading contacts…</p>
+            </div>
+          }
+        >
+          <ContactsView onLoggedOut={onLoggedOut} />
+        </Suspense>
+      )}
+    </div>
+  )
+}
+
+function App() {
+  // Branch on the ?window= query param at the top: a single-module window
+  // renders its own root (no top bar / switcher / global modals). The
+  // main window runs the full multi-module shell below.
+  if (windowModuleParam) {
+    return <SingleModuleApp module={windowModuleParam} />
+  }
+  return <MainApp />
 }
 
 export default App

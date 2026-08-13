@@ -7,6 +7,7 @@ import {
 import { ModuleToggles } from './ModuleToggles'
 import { InactiveOpacitySettings } from './InactiveOpacitySettings'
 import { NavRow, PaneHeader } from './SettingsNav'
+import { OpenInWindowRow } from './OpenInWindowRow'
 import { SettingsSection } from './SettingsSection'
 import { SettingsWindow } from './SettingsWindow'
 
@@ -460,6 +461,12 @@ export function ContactsSettingsPopover({
           </SettingsSection>
           <InactiveOpacitySettings />
           <ModuleToggles />
+          <SettingsSection id="contacts.window" label="Window">
+            <OpenInWindowRow
+              module="contacts"
+              label="Open Contacts in new window"
+            />
+          </SettingsSection>
         </div>
       )}
     </div>
