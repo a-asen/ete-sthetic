@@ -41,6 +41,22 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
       { keys: ['←'], description: 'Collapse, then jump to parent' },
       { keys: ['→'], description: 'Expand a parent, or start a subtask' },
       {
+        keys: ['Shift+↑', 'Shift+↓'],
+        description: 'Extend the selection to multiple tasks',
+      },
+      {
+        keys: ['Shift+Click'],
+        description: 'Select a range; Ctrl+Click toggles one task',
+      },
+      {
+        keys: ['Alt+Shift+↑', 'Alt+Shift+↓'],
+        description: 'Move a row within its siblings (manual sort)',
+      },
+      {
+        keys: ['Drag onto a row'],
+        description: 'Drop selected tasks under it (move to a sub-item)',
+      },
+      {
         keys: ['Enter'],
         description: 'Cycle status: needs-action → in-progress → completed',
       },
@@ -87,6 +103,10 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     group: 'Filters & sort',
     items: [
       { keys: ['Ctrl+F'], description: 'Open filter and focus search' },
+      {
+        keys: ['Ctrl+Shift+F'],
+        description: 'Search every list (cross-list global search)',
+      },
       { keys: ['Ctrl+S'], description: 'Open sort options (per-list)' },
       {
         keys: ['Ctrl+Shift+S'],
