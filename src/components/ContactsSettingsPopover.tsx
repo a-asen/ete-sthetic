@@ -6,8 +6,19 @@ import {
 } from '../services/hints'
 import { ModuleToggles } from './ModuleToggles'
 import { InactiveOpacitySettings } from './InactiveOpacitySettings'
+import { NavRow, PaneHeader } from './SettingsNav'
+import { SettingsSection } from './SettingsSection'
+import { SettingsWindow } from './SettingsWindow'
 
-type ContactSortAxis = 'fn' | 'given' | 'family'
+type ContactSortAxis =
+  | 'fn'
+  | 'given'
+  | 'family'
+  | 'modified'
+  | 'added'
+
+// Compact-popover drill-down panes (same shape as the tasks popover).
+type Pane = 'root' | 'zoom' | 'sync' | 'sort' | 'advanced' | 'account'
 
 interface Props {
   booksZoomPct: number
@@ -33,6 +44,9 @@ interface Props {
   onSetContactsSortAxis: (axis: ContactSortAxis) => void
   contactsSortReverse: boolean
   onToggleContactsSortReverse: () => void
+  // Whether KIND:group cards appear in the contact list.
+  showGroups: boolean
+  onToggleShowGroups: () => void
   onLogout: () => void
   onClose: () => void
 }
@@ -194,11 +208,15 @@ export function ContactsSettingsPopover({
   onSetContactsSortAxis,
   contactsSortReverse,
   onToggleContactsSortReverse,
+  showGroups,
+  onToggleShowGroups,
   onLogout,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [hintsOn, setHintsOn] = useState(readHintsEnabled)
+  const [windowOpen, setWindowOpen] = useState(false)
+  const [pane, setPane] = useState<Pane>('root')
   // Keep this popover's toggle in sync if hints get flipped elsewhere
   // (e.g. the tasks-module settings popover) while this one is open.
   useEffect(() => {
@@ -208,6 +226,7 @@ export function ContactsSettingsPopover({
   }, [])
 
   useEffect(() => {
+    if (windowOpen) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement
       if (t.closest('[aria-label="Contacts settings"]')) return
@@ -216,7 +235,8 @@ export function ContactsSettingsPopover({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onClose()
+        if (pane !== 'root') setPane('root')
+        else onClose()
       }
     }
     document.addEventListener('mousedown', onDown)
@@ -225,18 +245,23 @@ export function ContactsSettingsPopover({
       document.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [onClose, windowOpen, pane])
 
-  return (
-    <div
-      ref={ref}
-      role="dialog"
-      aria-label="Contacts settings"
-      className="absolute right-0 top-9 z-30 w-72 rounded-md border border-border bg-surface py-1 shadow-xl"
-    >
-      <p className="px-3 pb-0.5 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-        Zoom
-      </p>
+  const SECTIONS = [
+    { id: 'contacts.zoom', label: 'Zoom' },
+    { id: 'contacts.sync', label: 'Sync' },
+    { id: 'contacts.sort', label: 'Sort' },
+    { id: 'contacts.help', label: 'Help' },
+    { id: 'shared.inactiveOpacity', label: 'Inactive-zone fade' },
+    { id: 'shared.modules', label: 'Modules' },
+    { id: 'shared.account', label: 'Account' },
+  ] as const
+
+  // Per-pane row fragments, reused by the compact drill-down panes
+  // and the wide SettingsWindow body (each wrapped in a
+  // SettingsSection there).
+  const zoomRows = (
+    <>
       <ZoomRow
         label="Address books"
         pct={booksZoomPct}
@@ -244,10 +269,11 @@ export function ContactsSettingsPopover({
       />
       <ZoomRow label="Contact list" pct={listZoomPct} onZoom={onListZoom} />
       <ZoomRow label="Detail" pct={detailZoomPct} onZoom={onDetailZoom} />
+    </>
+  )
 
-      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-        Sync
-      </p>
+  const syncRows = (
+    <>
       <SyncRow
         label="Active book every"
         value={activeSyncMin}
@@ -269,10 +295,11 @@ export function ContactsSettingsPopover({
         onChange={onSetSwitchFresh}
         labelFn={freshLabel}
       />
+    </>
+  )
 
-      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-        Sort
-      </p>
+  const sortRows = (
+    <>
       <Row label="Books · reverse">
         <Toggle
           on={booksSortReverse}
@@ -292,6 +319,8 @@ export function ContactsSettingsPopover({
           <option value="fn">Display name</option>
           <option value="given">First name</option>
           <option value="family">Last name</option>
+          <option value="modified">Recently modified</option>
+          <option value="added">Recently added</option>
         </select>
       </Row>
       <Row label="Contacts · reverse">
@@ -301,34 +330,138 @@ export function ContactsSettingsPopover({
           label="Reverse contact order"
         />
       </Row>
-
-      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-        Help
-      </p>
-      <Row label="Show usage hints">
+      <Row label="Show contact groups">
         <Toggle
-          on={hintsOn}
-          onClick={() => setHintsEnabled(!hintsOn)}
-          label="Show usage hints"
+          on={showGroups}
+          onClick={onToggleShowGroups}
+          label="Show contact groups"
         />
       </Row>
+    </>
+  )
 
-      <InactiveOpacitySettings />
+  const helpRows = (
+    <Row label="Show usage hints">
+      <Toggle
+        on={hintsOn}
+        onClick={() => setHintsEnabled(!hintsOn)}
+        label="Show usage hints"
+      />
+    </Row>
+  )
 
-      <ModuleToggles />
+  const accountRows = (
+    <button
+      type="button"
+      onClick={onLogout}
+      className="block w-full px-3 py-2 text-left text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+    >
+      Sign out
+    </button>
+  )
 
+  const body = (
+    <>
+      <SettingsSection id="contacts.zoom" label="Zoom" forceOpen={windowOpen}>
+        {zoomRows}
+      </SettingsSection>
+      <SettingsSection id="contacts.sync" label="Sync" forceOpen={windowOpen}>
+        {syncRows}
+      </SettingsSection>
+      <SettingsSection id="contacts.sort" label="Sort" forceOpen={windowOpen}>
+        {sortRows}
+      </SettingsSection>
+      <SettingsSection id="contacts.help" label="Help" forceOpen={windowOpen}>
+        {helpRows}
+      </SettingsSection>
+      <InactiveOpacitySettings forceOpen={windowOpen} />
+      <ModuleToggles forceOpen={windowOpen} />
       <div className="mt-1 border-t border-border">
-        <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-          Account
-        </p>
-        <button
-          type="button"
-          onClick={onLogout}
-          className="block w-full px-3 py-2 text-left text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+        <SettingsSection
+          id="shared.account"
+          label="Account"
+          forceOpen={windowOpen}
         >
-          Sign out
-        </button>
+          {accountRows}
+        </SettingsSection>
       </div>
+    </>
+  )
+
+  if (windowOpen) {
+    return (
+      <SettingsWindow
+        title="Contacts settings"
+        sections={SECTIONS}
+        onClose={() => {
+          setWindowOpen(false)
+          onClose()
+        }}
+      >
+        {body}
+      </SettingsWindow>
+    )
+  }
+
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label="Contacts settings"
+      className="absolute right-0 top-9 z-30 w-72 rounded-md border border-border bg-surface py-1 shadow-xl"
+    >
+      {pane === 'root' ? (
+        <>
+          <div className="flex items-center justify-between px-3 pb-1 pt-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+              Settings
+            </p>
+            <button
+              type="button"
+              onClick={() => setWindowOpen(true)}
+              className="rounded-md px-1.5 py-0.5 text-[11px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+            >
+              More settings…
+            </button>
+          </div>
+          <NavRow label="Zoom" onClick={() => setPane('zoom')} />
+          <NavRow label="Sync" onClick={() => setPane('sync')} />
+          <NavRow label="Sort" onClick={() => setPane('sort')} />
+          <NavRow label="Advanced" onClick={() => setPane('advanced')} />
+          <div className="mt-1 border-t border-border">
+            <NavRow label="Account" onClick={() => setPane('account')} />
+          </div>
+        </>
+      ) : pane === 'zoom' ? (
+        <>
+          <PaneHeader title="Zoom" onBack={() => setPane('root')} />
+          {zoomRows}
+        </>
+      ) : pane === 'sync' ? (
+        <>
+          <PaneHeader title="Sync" onBack={() => setPane('root')} />
+          {syncRows}
+        </>
+      ) : pane === 'sort' ? (
+        <>
+          <PaneHeader title="Sort" onBack={() => setPane('root')} />
+          {sortRows}
+        </>
+      ) : pane === 'account' ? (
+        <>
+          <PaneHeader title="Account" onBack={() => setPane('root')} />
+          {accountRows}
+        </>
+      ) : (
+        <div className="max-h-[70vh] overflow-y-auto">
+          <PaneHeader title="Advanced" onBack={() => setPane('root')} />
+          <SettingsSection id="contacts.help" label="Help">
+            {helpRows}
+          </SettingsSection>
+          <InactiveOpacitySettings />
+          <ModuleToggles />
+        </div>
+      )}
     </div>
   )
 }
