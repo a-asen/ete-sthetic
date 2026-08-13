@@ -4,8 +4,11 @@
   --color-bg: #0e0f12;
   --color-surface: #16181d;
   --color-surface-2: #1c1f25;
-  --color-border: #252830;
-  --color-border-strong: #353945;
+  /* Grid lines / separators — bumped to read clearly against the dark bg
+     (were #252830 / #353945, which were barely visible on the calendar
+     grid and pane borders). */
+  --color-border: #363c48;
+  --color-border-strong: #4c5361;
   --color-text: #e6e7ea;
   --color-text-muted: #8a8d96;
   --color-text-faint: #5b5e67;
@@ -73,6 +76,23 @@ body {
 *::selection {
   background: var(--color-accent-soft);
   color: var(--color-text);
+}
+
+/* Text-entry fields must always be selectable, even when nested inside a
+   container that disables selection — e.g. the task list's `select-none`
+   `<ul>` (its inline-rename input), a drag-in-progress resize guard, or the
+   calendar grids. WebKitGTK inherits `user-select: none` into descendant
+   input/textarea/contenteditable, which silently blocks keyboard text
+   selection (Shift+Home/End, Ctrl+Shift+←/→), drag-select, and select-then-
+   overtype — i.e. normal writing. Force selectability back on so every
+   editor field (task rename + detail, event composer, contact editor)
+   behaves like a normal text field. */
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable=""] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button {

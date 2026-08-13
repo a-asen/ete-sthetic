@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface Props {
   title: string
@@ -32,10 +32,22 @@ export function ConfirmModal({
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
+  // Which button is "armed". Driven by state (not :focus-visible) so the
+  // highlight is ALWAYS visible — programmatic / arrow-key focus doesn't
+  // reliably trigger :focus-visible in WebKitGTK, which left the modal
+  // looking like nothing was selected. Default to Cancel: safer when the
+  // action is destructive, and Enter then needs a deliberate arrow first.
+  const [active, setActive] = useState<'cancel' | 'confirm'>('cancel')
 
+  // Mirror the armed button into real DOM focus for screen readers, but the
+  // visible highlight comes from `active` below. The buttons' onFocus syncs
+  // the other direction so the highlight tracks focus however it moved —
+  // WebKitGTK handles Shift+Tab as native back-tab traversal and never fires
+  // a cancellable Tab keydown, so without this the green selector would lag.
   useEffect(() => {
-    cancelRef.current?.focus()
-  }, [])
+    const el = active === 'confirm' ? confirmRef.current : cancelRef.current
+    el?.focus()
+  }, [active])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -44,50 +56,45 @@ export function ConfirmModal({
         ;(onDismiss ?? onCancel)()
         return
       }
-      // ←/→/Tab all cycle between the two buttons. With only two
-      // focusable elements "cycle" == "toggle to the other", which also
-      // guarantees focus never lands in an in-between (button-less)
-      // state and never escapes the dialog.
-      if (
-        e.key === 'ArrowLeft' ||
-        e.key === 'ArrowRight' ||
-        e.key === 'Tab'
-      ) {
+      // ← / → map positionally (Cancel is left, Confirm is right); Tab
+      // toggles. Either way the highlight follows immediately.
+      if (e.key === 'ArrowLeft') {
         e.preventDefault()
-        if (document.activeElement === confirmRef.current) {
-          cancelRef.current?.focus()
-        } else {
-          confirmRef.current?.focus()
-        }
+        setActive('cancel')
         return
       }
-      // Ctrl/Cmd+Enter confirms regardless of where focus sits (matches the
-      // DetailPanel shortcut that opens this modal — pressing the same combo
-      // again commits). A bare Enter also confirms unless the user has Tab'd
-      // to the Cancel button, where Enter should trigger its native click.
-      if (e.key === 'Enter') {
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault()
-          onConfirm()
-          return
-        }
-        if (
-          e.target instanceof HTMLButtonElement ||
-          e.target instanceof HTMLAnchorElement
-        ) {
-          return
-        }
+      if (e.key === 'ArrowRight') {
         e.preventDefault()
-        onConfirm()
+        setActive('confirm')
+        return
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        setActive((a) => (a === 'cancel' ? 'confirm' : 'cancel'))
+        return
+      }
+      if (e.key === 'Enter') {
+        // Ctrl/Cmd+Enter always confirms (matches the DetailPanel shortcut
+        // that opens this modal). A bare Enter triggers whichever button is
+        // armed.
+        e.preventDefault()
+        if (e.ctrlKey || e.metaKey || active === 'confirm') onConfirm()
+        else onCancel()
       }
     }
     // Capture phase so the focus trap wins over any inner element's
-    // keydown handling (in particular, the browser's native Tab/Shift+Tab
-    // focus move runs as the default action of this event — calling
-    // preventDefault first stops focus from escaping the dialog).
+    // keydown handling and the browser's native Tab focus move.
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [onCancel, onConfirm, onDismiss])
+  }, [onCancel, onConfirm, onDismiss, active])
+
+  // Inline outline for the armed button — bulletproof against Tailwind
+  // purging `ring-*` utilities, and always visible (programmatic focus
+  // can't be relied on for :focus-visible in WebKitGTK).
+  const armed = {
+    outline: '2px solid var(--color-accent)',
+    outlineOffset: '2px',
+  } as const
 
   return (
     <div
@@ -109,7 +116,14 @@ export function ConfirmModal({
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="h-8 rounded-md border border-border px-3 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
+            onMouseEnter={() => setActive('cancel')}
+            onFocus={() => setActive('cancel')}
+            style={active === 'cancel' ? armed : undefined}
+            className={`h-8 rounded-md border px-3 text-xs transition-colors ${
+              active === 'cancel'
+                ? 'border-accent bg-accent-soft text-accent'
+                : 'border-border text-text-muted hover:border-border-strong hover:text-text'
+            }`}
           >
             {cancelLabel}
           </button>
@@ -117,10 +131,11 @@ export function ConfirmModal({
             ref={confirmRef}
             type="button"
             onClick={onConfirm}
-            className={`h-8 rounded-md px-3 text-xs font-medium transition-opacity hover:opacity-90 outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface ${
-              destructive
-                ? 'bg-danger text-bg focus-visible:ring-danger'
-                : 'bg-accent text-bg focus-visible:ring-accent'
+            onMouseEnter={() => setActive('confirm')}
+            onFocus={() => setActive('confirm')}
+            style={active === 'confirm' ? armed : undefined}
+            className={`h-8 rounded-md px-3 text-xs font-medium text-bg transition-opacity hover:opacity-90 ${
+              destructive ? 'bg-danger' : 'bg-accent'
             }`}
           >
             {confirmLabel}

@@ -5,8 +5,51 @@ See also: [`docs/task-item-options.md`](docs/task-item-options.md) (VTODO field
 coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contacts-plan.md)
 (unified-client plan).
 
+## Backlog (queued 2026-07-06)
+
+### Task Blueprints — sync across devices (storage model "A")
+**Task.** Blueprints currently live in `localStorage` (per-device, storage
+model "B"): the config and the `lastSpawnedKey` idempotency marker are local,
+so two devices each spawn today's instance independently (deduped only by the
+deterministic VTODO uid `bp_<id>_<yyyymmdd>` + the secondary list-scan in
+`runBlueprintSpawn`). For true multi-device use, move the blueprint config and
+a per-day spawn log to a synced Etebase collection (or a well-known synced
+item) so definitions and "already spawned this day" state are shared.
+**Notes.** Keep the deterministic-uid + marker dedup as the last line of
+defence. Watch for edit conflicts (two devices editing the same blueprint) and
+clock/timezone skew on the day boundary. The spawn engine
+(`services/blueprints.ts`), markers (`X-ETE-BLUEPRINT` / `-DATE`), and the
+no-back-fill rule stay as-is; only storage/dedup change.
+
 ## Shipped
 
+- [x] Text selection works in all editor fields: a global CSS rule forces
+  `user-select: text` on `input`/`textarea`/`[contenteditable]` so an ancestor
+  `select-none` (e.g. the task list `<ul>`, drag-resize guards) can't inherit
+  into a field and block keyboard selection (`Shift+Home/End`,
+  `Ctrl+Shift+←/→`), drag-select, and select-then-overtype in WebKitGTK.
+  Restores normal writing in the task rename/detail, event composer, and
+  contact editor.
+- [x] Unsaved-changes guard on module switch: switching modules (top-bar
+  switcher or `Ctrl/Cmd+Alt+←/→` / `1–4`) while a task / event / contact
+  editor has unsaved edits now prompts **Save & switch / Discard / Keep
+  editing** instead of silently dropping the in-progress item. Each editor
+  self-registers a guard (`services/unsavedGuard.ts`); App intercepts the
+  switch. Save respects editor validation (e.g. an event still needs a title —
+  a blocked save keeps you put). Not wired to cross-module "reveal" jumps
+  (Ctrl+K meta-search, birthday→contact) or the uncommitted quick-add line yet.
+- [x] Native spell-check on prose fields (webview `spellCheck` + OS
+  dictionary/squiggles): task title (quick-add, inline rename, detail Title),
+  task Notes/Comment, event Title/Description, contact Note, and blueprint
+  name/description. Deliberately off for structured/proper-noun fields (dates,
+  email, URL, hex, categories, location, contact name parts, blueprint title
+  template + subtask titles that carry `{tokens}`). Bundled-dictionary /
+  personal-word-list path left as a future option if the OS dictionary proves
+  insufficient.
+- [x] `Ctrl+↑/↓` bulk sibling reorder: slots the selected task N rows within
+  its group in one keystroke (clamped to the ends), under manual sort only —
+  otherwise falls back to the existing page-selection. Step configurable in
+  the tasks settings (default 5, range 2–50); reuses `commitSiblingOrder`.
 - [x] Task list create / inline-rename / delete (sidebar + `n`/`F2`/`Del`).
 - [x] Full VTODO field model + basic/advanced detail panel.
 - [x] Priority `0–9` hotkeys + card priority tint.
@@ -318,7 +361,7 @@ show "syncing…" on that row until the server confirms.
   rows. Watch the load effect's orphan-prune so it doesn't nuke the
   optimistic placeholder mid-flight.
 
-### 14. Modal zoom parity + zoom % in settings — ◑ modal-zoom done; % deferred (no settings panel)
+### 14. Modal zoom parity + zoom % in settings — ✅ done
 **Task.** The confirm/delete modal should render at the same zoom as the zone
 it was triggered from. Also expose the current zoom level as a % (a future
 settings menu).
@@ -328,6 +371,10 @@ settings menu).
   delete → sidebar zoom, save-changes → details zoom).
 - Settings menu doesn't exist yet — defer the % readout to that. When built:
   small panel listing the three zone zooms with +/-/reset and a numeric %.
+**Resolution (follow-up).** `SettingsPopover`'s "Zoom" subsection now
+shows three +/-/reset rows (Sidebar / Task pane / Detail) with a
+clickable percentage in the middle that resets the zone on click — so
+both halves of the original item are in.
 
 ### 15. Discoverable task-card size control (PRIORITY) — ✅ done
 **Task.** Make resizing the task cards as discoverable as the
@@ -352,11 +399,32 @@ surface it read-only in the detail panel when the task is completed.
 
 ## Tracked elsewhere
 
-- [ ] Manual ordering + `Shift+↑/↓` reorder + drag-to-position / `Shift+←/→`
-      indent-outdent — blocked on the per-list manual-order store; see the
-      tree-UX backlog memory for the design sketch.
-- [ ] Fill in [`docs/task-item-options.md`](docs/task-item-options.md) — which
+- [x] Manual ordering + `Shift+↑/↓` reorder + drag-to-position / `Shift+←/→`
+      indent-outdent — **done**. Per-list manual-order store now lives in
+      the VTODO itself: `X-APPLE-SORT-ORDER` (the de-facto cross-client
+      ordering key) is parsed into `VTodo.sortOrder`, written via a new
+      `VTodoPatch.sortOrder`, and therefore **synced across devices** like
+      any other task field. A new `'manual'` `TaskSort` (sort popover +
+      `comparatorFor`) orders ascending by `sortOrder`, sending
+      never-ordered tasks to the bottom in created order so a freshly
+      switched list reads as "created order" until the user moves a row.
+      `Shift+↑/↓` swaps the selected task with its adjacent sibling (in the
+      *full* tree, so hidden siblings keep a coherent position);
+      drag-to-position drops a row onto the top/bottom half of a sibling
+      row (insertion-line indicator, same-parent only). Both funnel
+      through `commitSiblingOrder`, which normalizes the group to
+      sequential values and persists only the rows that actually changed
+      (optimistic, per-row rollback). Indent/outdent was already shipped
+      via `Alt+←/→` (the `Shift+←/→` half is the same operation under a
+      different chord). The referenced "tree-UX backlog memory" never
+      existed; the store was designed fresh here, synced per the
+      local-first model.
+- [x] Fill in [`docs/task-item-options.md`](docs/task-item-options.md) — which
       remaining VTODO fields (recurrence, alarms, …) are worth adding.
+      Notes column scored ✅/◑/⊘ with rationale; "Recommended next batch"
+      block calls out DTSTART, URL, DUE-with-time, CONTACT as the
+      low-effort wedge wins, with RRULE queued as the bigger next step.
+      "Your call" stays open for you to override any of the calls.
 - [x] Unified EteSync client (calendar + contacts) —
       [`docs/calendar-contacts-plan.md`](docs/calendar-contacts-plan.md).
       Calendar shipped earlier; contacts module added 2026-05-22 (see the
@@ -520,10 +588,16 @@ when `errorByBook.has(uid)` and it isn't currently syncing; clicking
 the warning re-surfaces that book's failure in the main error banner
 prefixed with the book name. The warning stays until that book's
 next successful `syncBook` (which clears the map entry) — no more
-silent failures behind newer ops. Sync-all button + per-book inline
-"last synced N ago" stamp deferred (the global tally + active-book
-"Synced HH:MM" cover the common cases; a future iteration can add
-those if the user finds them missing in practice).
+silent failures behind newer ops.
+**Sync-all button + per-book stamp — ✅ done.** The inline sync-all
+mechanism (already registered with the global pill) was lifted into a
+shared `syncAllBooks` callback and surfaced as a visible button in the
+contact-list header next to the single-book `↻` — same spinning SVG +
+in-flight count the tasks sidebar uses, disabled while any sync runs.
+Each address-book row now also carries a compact "synced N ago" stamp
+(`compactSyncAge`, exported from `syncStatus.ts` and shared with a 30s
+clock tick), faded out on hover so the rename pencil takes its place,
+and suppressed while that book is syncing or showing a `⚠` failure.
 
 ### Adaptive (relative) sync for address books — ✅ done
 Contacts currently syncs the active book on open + on the manual
@@ -834,18 +908,36 @@ single source of truth for "an .ics arrived from anywhere" stays
   existing" badges). On dev mode against a binary without the
   command, the invoke catches and silently no-ops so drag-drop
   and Paste invite keep working.
-- **Subsequent-launch handoff.** A second double-click while the
-  app is already running currently opens a second instance.
-  `tauri-plugin-single-instance` would let the existing window
-  receive the new argv instead — TODO as a follow-up if it
-  becomes a real pain.
+- **Subsequent-launch handoff.** ✅ done. `tauri-plugin-single-instance`
+  is now the first plugin registered. A second double-click while the
+  app is running no longer spawns a window — the OS routes the new
+  argv into the running instance's callback, which pulls the `.ics`
+  path out (`ics_arg_in`), stashes it in the same `PendingIcs` slot,
+  emits an `ics-open` Tauri event, and refocuses (`unminimize` +
+  `set_focus`) the main window. `App.tsx` listens for `ics-open` via
+  `@tauri-apps/api/event` and routes it through the same
+  `routeIcsPath` helper the cold-start `take_pending_ics` drain uses
+  (force-enable calendar → switch module → dispatch `ICS_OPEN_EVENT`).
+  Linux / Windows forward argv this way; a macOS file-open while
+  running arrives via `RunEvent::Opened` instead — ✅ now handled too.
+  Needs `cargo build` + reinstall to take effect
+  (`cargo check` passes; pulls `tauri-plugin-single-instance v2.4.2`).
+- **macOS RunEvent::Opened handoff.** ✅ done (needs `cargo build` +
+  reinstall; only exercisable on macOS). The builder tail moved from
+  `.run(generate_context!())` to `.build(…)?.run(|app, event| …)`, and a
+  `#[cfg(any(target_os = "macos", target_os = "ios"))]` arm drains any
+  `file://…​.ics` URL out of `RunEvent::Opened { urls }`. Both the
+  single-instance argv callback and this arm now funnel through a shared
+  `stash_and_emit_ics` helper, so the frontend path (`PendingIcs` slot +
+  `ics-open` event) is identical on every platform. Closure params stay
+  underscored so the no-op build on Linux / Windows compiles cleanly.
 - **Filesystem scope.** The existing fs allowlist covers `$HOME`,
   `$DOCUMENT`, `$DESKTOP`, `$DOWNLOAD` — enough for the common
   cases (mail downloads, attachments). Reads from `/tmp` or
   other locations error in the picker's notice toast; expand
   `capabilities/default.json` if it bites in practice.
 
-### Quick-add VEVENTs from mail invites (without the full Mail module) — ◑ DnD + paste done, OS open-with deferred
+### Quick-add VEVENTs from mail invites (without the full Mail module) — ✅ DnD + paste + OS open-with all done
 **Task.** Even before the proposed Mail module lands, give users
 a fast path to drop an invite into the calendar from whatever
 mail client they're already using. Mail invites are by far the
@@ -874,12 +966,12 @@ the same parse/de-dup/picker path 1:1.
   `replaceEventRaw` for existing UIDs and `createEventRaw` for
   fresh ones, then resyncs the target calendar so the new rows
   paint without waiting for the next adaptive tick.
-**Deferred.** The OS share / "Open with" handler still lives under
-the separate "Open `.ics` files" entry — that work registers the
-app as a `text/calendar` handler at the Tauri / OS layer and
-parses the path out of argv on launch. When it lands, it reuses
-this same `parseIcsCandidates` + picker flow, so it's purely a
-plumbing-on-launch task at that point.
+**Resolution (OS open-with).** Landed under the "Open `.ics` files"
+entry — the app registers as a `text/calendar` handler at the Tauri /
+OS layer, parses the path out of argv on cold start, and (now) also
+handles warm second-launches via `tauri-plugin-single-instance`. Both
+arrival paths reuse this same `parseIcsCandidates` + picker flow, so
+the three surfaces (drag-drop, paste, OS open-with) are fully unified.
 
 ### Custom Etebase server URL — ✅ done
 **Task.** Let users point ete-sthetic at their own Etebase server
@@ -1194,7 +1286,7 @@ sites (`MainView` sidebar, `DetailPanel` left edge, contacts books
 original 6 px, but the counts column gets its 2 px of breathing
 room back.
 
-### Move the global Sync pill out of the top-right — ◑ moved to top-center, full per-header embed deferred
+### Move the global Sync pill out of the top-right — ✅ done (relocated into a dedicated top bar)
 **Task.** The top-right is busy real estate — window controls live
 there and the new `SyncStatusPill` competes with them visually. The
 user suggests relocating to the centre-top of the active module's
@@ -1207,13 +1299,15 @@ renders at `fixed top-3 left-1/2 -translate-x-1/2` instead of
 the window controls and each module's busy top-right cluster.
 This keeps the wiring as-is (App-level mount, no per-module
 embed) but removes the visual competition the user flagged.
-**Deferred.** The full per-module-header embed — pill inline next
-to "0_Daily 4 open · 2700" or the calendar's week-range — is a
-follow-up if the centre-top placement still feels redundant with
-the per-list "Syncing… N items" badge that already lives next to
-the task title. Touching every module's header is meaningfully
-more invasive than the single-line move, so we defer until
-needed.
+**Resolution (final).** Superseded the interim centre-top float: the
+pill now renders inline in a dedicated app-level top bar that it
+shares with the module switcher (`App.tsx` header — `ModuleSwitch` on
+the left, `SyncStatusPill` on the right, `justify-between`). This
+removes the visual competition with the window controls AND the
+per-module top-right clusters without touching any module header, so
+the per-module embed is moot — a single shared bar is both cleaner and
+less invasive than threading the pill through three headers. The
+deferred per-header embed is dropped as no-longer-needed.
 
 ### Calendar: sort the calendars sidebar — ✅ already implemented
 **Task.** The sidebar lists calendars in server order today. Add a
@@ -1228,21 +1322,113 @@ persisted under `cal.sortBy` / `cal.sortReverse`. The
 toggle. Discoverability gap, not a missing feature — the user
 just hadn't opened the calendar settings gear.
 
-### Calendar: subscribe to external / ICS-stream calendars
+### Calendar: subscribe to external / ICS-stream calendars — ✅ done (needs `npm install` + `cargo build` to enable)
 **Task.** Public calendars (public holidays, sports schedules,
 sprint cadences) are usually published as a remote ICS URL the
 user wants to subscribe to read-only. Tasks today only knows
 about etebase-backed calendars.
-**Plan sketch.**
-- Per subscription: URL, friendly name, colour, refresh interval.
-  Stored in etebase as a special "subscription" item type, or in
-  localStorage if etebase doesn't model this cleanly.
-- Periodic background fetch via Tauri's `http` plugin (frontend
-  `fetch` is CORS-blocked for most ICS endpoints).
-- Parse via `splitIcs` + `parseVEvent` (same path quick-add uses).
-  Render in the calendar grid with a "subscription" badge.
-- Read-only: no Accept/Decline, no edits, no sync-back.
-- A "+ Add subscription" entry in the calendar sidebar.
+**Resolution.**
+- **HTTP path.** Added `@tauri-apps/plugin-http` (JS) +
+  `tauri-plugin-http = "2"` (Cargo) + `http:default` /
+  `http:allow-fetch` with `{http,https,webcal}://**` scope in
+  `capabilities/default.json`, registered the plugin in
+  `lib.rs`. Fetch runs through Rust → no browser CORS, which
+  was the blocker the original entry called out. Until you
+  `npm install && cargo build` (or `tauri build`) and reinstall,
+  the JS will throw at fetch time; the row surfaces the error
+  via its ⚠ badge.
+- **Storage.** `services/icsSubscriptions.ts` —
+  `IcsSubscription = { id, url, name, color, refreshMinutes,
+  lastSyncedAt, lastError }`; persisted to localStorage under
+  `ete-sthetic.cal.subscriptions` as a JSON array. Subscriptions
+  are a per-machine preference (the URL is universal but each
+  device decides to subscribe), so no etebase round-trip.
+  Fetched events live in `calstore.eventsBySub` — in-memory
+  only, since a re-fetch is cheap and on-disk would be redundant
+  with the source URL.
+- **Fetch + parse.** `fetchIcsSubscription(url)` normalises
+  `webcal://` → `https://`, fetches with the plugin, runs the
+  body through the existing `splitIcs` + `parseVEvent` path the
+  quick-add VEVENTs flow already uses. Per-event itemUid comes
+  from the VEVENT's UID line (so re-fetches dedupe naturally)
+  and falls back to the index when absent.
+- **Render.** `CalendarView.visibleEvents` reducer was extended
+  to walk both `eventsByCal` (etebase) and `eventsBySub` so
+  every grid (`MonthGrid` / `TimeGrid` / `YearGrid` /
+  `DayPopover`) renders subscription events alongside owned
+  ones without per-grid changes. Per-subscription colour seeds
+  `colorByItem`; `calByItem` carries the subscription id so the
+  popover can label the source.
+- **Read-only.** `EventPopover` gained a `readOnly` prop that
+  hides Edit / Delete and shows "Read-only — synced from a
+  subscription." in their place. `openEvent` checks whether the
+  resolved id is a subscription and sets the flag — no path can
+  reach the composer for a sub event.
+- **Sidebar.** `CalendarSidebar` got a new "Subscriptions"
+  section under the etebase calendar list with a `+` button
+  that opens an inline URL input (Enter commits, Esc/empty-blur
+  cancels — same UX shape as `+ New calendar`). The auto-name
+  is derived from the URL's basename via
+  `suggestSubscriptionName`. Each row: colour-swatch checkbox
+  (toggles `hiddenSubs`), name (double-click to rename, hover-
+  visible ✎ button), spinner while syncing, ⚠ button with the
+  last error tooltip + retry-on-click, hover-cluster with sync
+  / rename / remove. The ⚠ stays until the next successful
+  fetch clears it.
+- **Periodic refresh.** A 60s `setInterval` in CalendarView ticks
+  every subscription; rows whose age in minutes ≥ `refreshMinutes`
+  re-fetch. `refreshMinutes <= 0` means "manual only" (refresh
+  via the per-row sync button). Initial fire on mount catches
+  cold rows immediately. Default cadence is 60 min — exposed in
+  `REFRESH_OPTIONS` for a future per-subscription cadence
+  picker.
+**Follow-up (this batch).** Per-subscription editor landed. Each
+subscription row in `CalendarSidebar` got a ⚙ button in its hover
+cluster that toggles an inline `<SubEditor>` panel directly below
+the row (one row at a time so the sidebar doesn't shift around).
+The editor has two blocks: a **Colour** swatch row (curated 7-colour
+palette + accent-default "✕" + custom hex via colour input or text
+field with Enter to commit), and a **Refresh every** select wired
+through the existing `REFRESH_OPTIONS` grid
+(Manual/15min/30min/1h/4h/12h/24h). All edits flow through a new
+`onUpdateSubscription(id, patch)` prop that re-uses
+CalendarView's existing `updateSubscription` for the localStorage
+write + state mirror — so a colour change recolours the events
+immediately (via `colorByItem`) and a refresh-cadence change is
+picked up by the next periodic tick of the 60s interval.
+**Deferred (follow-ups).**
+- **ETag / `Last-Modified` conditional GET ✅ done (this batch).**
+  `IcsSubscription` gained optional `etag` + `lastModified`
+  fields, populated from every successful response's headers and
+  echoed back as `If-None-Match` / `If-Modified-Since` on the next
+  fetch. `fetchIcsSubscription` now returns a discriminated
+  `FetchResult` — `{ kind: 'fresh', events, raw, etag,
+  lastModified }` on a 200 or `{ kind: 'not-modified', etag,
+  lastModified }` when the server responds 304. CalendarView's
+  fetch path branches on the union: a `not-modified` result keeps
+  the in-memory events untouched, just bumps `lastSyncedAt` and
+  refreshes the validators (some servers re-mint the ETag on
+  304). The first-ever fetch in `handleAddSubscription` has no
+  validators to send and always lands in the 'fresh' branch.
+  Old persisted subscriptions without these fields decode with
+  null validators — the first refresh after upgrade is
+  unconditional, then the cycle kicks in.
+- **Per-subscription disk snapshot ✅ done (this batch).** New
+  `services/icsSubscriptionSnapshot.ts` mirrors
+  `calsnapshot.ts` — `saveSubSnapshot` / `loadSubSnapshot` /
+  `clearSubSnapshot` / `clearAllSubSnapshots`, keyed
+  `subevents.<id>` in the same Tauri Store. `CalendarView`'s
+  mount effect cold-loads all subscription snapshots (gated on
+  the warm `CalMemory` cache being empty) and seeds
+  `eventsBySub` only for entries the in-memory state hasn't
+  already populated — so a network fetch that lands first wins
+  over an older snapshot. `fetchSubscription` (and the inline
+  fetch in `handleAddSubscription`) save the snapshot on every
+  successful fetch; `handleRemoveSubscription` wipes that
+  subscription's snapshot so re-adding the same URL with a new
+  id doesn't briefly paint old events. `clearAllSubSnapshots`
+  joins `clearAllCalSnapshots` / `clearAllContactSnapshots` in
+  `etebase.ts::logout` so signing out leaves nothing behind.
 
 ### Calendar: create new calendars from the app — ✅ done
 **Task.** Tasks has "+ New list"; calendar doesn't. Adding a new
@@ -1300,7 +1486,7 @@ the name with very little. The name truncated to fit the leftover.
   buttons gets keyboard focus. The name now fills almost the full
   sidebar width when the user isn't pointing at the row.
 
-### Calendar event composer: Ctrl/Shift modifiers on time / date arrows — ◑ time + day done, month/year deferred
+### Calendar event composer: Ctrl/Shift modifiers on time / date arrows — ✅ time + day + month/year all done
 **Task.** When editing the start/end fields of a new (or existing)
 event, ↑/↓ should bump the focused unit. With modifiers, jump by a
 larger step so the user isn't stuck at 1-unit-per-press:
@@ -1319,13 +1505,19 @@ segmented editor) and intercepted Shift / Ctrl+arrows on keydown:
   arrows still hit the browser default ±1 min / ±1 day.
 - The four input sites (start/end date+time) gained `onKeyDown`
   hooks + a tooltip documenting the steps.
-**Deferred (month / year jumps).** The browser doesn't tell us
-which segment of `<input type=date>` is focused, so we can't
-target month-only or year-only jumps without a segmented editor.
-Filed as a follow-up if the user finds Shift+↑/↓ on the day
-isn't enough.
+**Resolution (month / year jumps).** The browser still doesn't
+expose which segment of `<input type=date>` is focused, so instead
+of a segmented editor the month/year steps are surfaced through
+dedicated **Alt chords** that don't depend on the focused segment:
+`Alt+↑/↓` = ±1 month, `Alt+Shift+↑/↓` = ±1 year. `bumpDate` was
+generalized to `bumpDateBy({ days, months, years })` (month steps
+clamp the day to the last valid day of the target month, e.g.
+Jan 31 +1mo → Feb 28). Both date-input tooltips document the full
+set (Shift 3d · Ctrl/Cmd 7d · Alt 1mo · Alt+Shift 1yr). This
+delivers the capability the original spec wanted (not being stuck
+at ±1 for month/year) while keeping the native input.
 
-### Calendar: recurring events — ◑ preset RRULE done, custom-RRULE UI deferred
+### Calendar: recurring events — ✅ presets + custom-RRULE editor + per-occurrence detach all done
 **Task.** Today the composer doesn't expose RRULE / EXDATE — every
 event is one-off. The user wants real recurrence (daily, weekly,
 monthly, yearly, custom).
@@ -1344,13 +1536,75 @@ monthly, yearly, custom).
 - On save, the dropdown maps to `FREQ=DAILY` etc. (or null to
   remove). Recurring events render in the grid via the existing
   ical.js expansion path — no changes needed there.
-**Deferred.** A full custom-RRULE editor (BYDAY pickers, COUNT /
-UNTIL, INTERVAL > 1) — power-user territory. For now Custom is
-read-only; you keep the existing RRULE or swap to one of the
-presets. The most common use case (set a recurring weekly /
-monthly event) works without it. Per-occurrence detach (the
-"this and future" prompt for editing one instance of a series)
-also stays out of scope — flagged for the next iteration.
+**Follow-up (this batch).** Custom-RRULE editor shipped.
+`EventComposer` gained an inline `<CustomRruleBlock>` that
+appears when "Custom…" is selected in the Repeats dropdown.
+Surface: **Every N {day|week|month|year}s** (INTERVAL), a
+**weekly weekday picker** (BYDAY — MO TU WE TH FR SA SU pill
+toggles, only shown when FREQ=WEEKLY), and a **termination**
+radio group (Never · After N occurrences · Until DATE). Three
+helpers landed alongside it: `parseRruleToCustom(rrule)` reads
+an existing RRULE into the editor model (tolerant of positional
+prefixes like `1MO` / `-1FR` by stripping the number),
+`serializeCustomRrule(state)` emits a canonical
+`FREQ=…;INTERVAL=…;BYDAY=…;COUNT/UNTIL=…` string, and
+`customSupportsRrule(rrule)` checks whether the editor's
+surface can fully express a stored RRULE (only `FREQ` /
+`INTERVAL` / `BYDAY` / `COUNT` / `UNTIL` / `WKST` are
+supported). The composer combines `customDirty` (user touched
+the form) and `sourceCustomEditable` (source RRULE is within
+the supported subset) to decide whether `Save` emits the
+freshly-serialised RRULE or sends `undefined` to preserve the
+source verbatim — so a monthly-by-positional-weekday or
+BYMONTHDAY rule survives untouched until the user explicitly
+edits the form, at which point the new RRULE replaces the old
+(with a one-line warning shown in the block: "Editing any
+field below will replace it"). The dropdown's "Custom"
+option is now always selectable; when the source has a
+preserve-only RRULE it labels as "Custom (preserved)".
+**Follow-up (this batch).** Monthly BYMONTHDAY ("on day 15") and
+positional BYDAY ("the 3rd Tuesday") now have editor surface.
+The `CustomRrule` model gained `monthlyMode: 'day' | 'weekday'`
+plus `monthDay`, `monthWeekN` (1/2/3/4/5/-1 for first/.../last),
+and `monthWeekday`. `parseRruleToCustom` reads BYMONTHDAY and a
+single positional `BYDAY=NWW` into those fields (FREQ-aware
+since BYDAY means different things under WEEKLY vs MONTHLY).
+`serializeCustomRrule` emits `BYMONTHDAY=N` for the day mode or
+`BYDAY=NWW` for the weekday mode under FREQ=MONTHLY.
+`customSupportsRrule` now does FREQ-aware validation (bare
+weekday list under WEEKLY/DAILY; single positional under
+MONTHLY/YEARLY; single day-of-month for BYMONTHDAY only on
+MONTHLY; anything else → preserve verbatim). The editor's
+MONTHLY block has two radio rows: "Day [select 1..31] of the
+month" and "The [first/second/third/fourth/fifth/last]
+[weekday]". Picking either commits both the mode and the
+specific value in one update so the rule stays consistent.
+**BYSETPOS / multi-position — ✅ done.** The monthly-by-weekday
+model went from a single `monthWeekN`/`monthWeekday` pair to
+`monthWeekdays: Set` × `monthPositions: Set`. One weekday × one
+position still serializes to the familiar `BYDAY=1MO`; anything
+wider emits `BYDAY=<days>;BYSETPOS=<positions>`, so "last weekday
+of the month" (`BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1`) and "1st & 3rd
+Monday" are now authored, not just preserved. The parser also
+normalizes equivalent positional BYDAY (`1MO,3MO` →
+`MO;BYSETPOS=1,3`); rules BYSETPOS can't express losslessly
+(`1MO,1FR` = independent days, bad ordinals like `-2`, YEARLY
+BY\* which we'd drop on re-serialize) still round-trip verbatim.
+Both the calendar `CustomRruleBlock` and task `RecurrenceEditor`
+swapped the two ordinal/weekday `<select>`s for multi-select
+toggle pills (positions + weekdays) with a hint explaining the
+cross-weekday "Nth occurrence" semantics. Verified with 20
+parse↔serialize↔support round-trip assertions.
+**Still deferred.** BYWEEKNO, BYYEARDAY, BYMONTH, EXDATE authoring
+— all roundtrip via the preserve-verbatim path.
+
+**Per-occurrence detach.** Already wired —
+`RecurrenceScopeModal` (this / following / all) pops when the
+user edits or deletes a recurring occurrence from the composer
+or the right-click popover, and `runRecurScope` in CalendarView
+dispatches to the `addExdate` / `truncateUntil` /
+`detachedEvent` / `newSeriesFrom` helpers in
+`services/recurrence-edit.ts`. Verified in code 2026-05-27.
 
 ### Contacts: Ctrl+F should also focus the list zone, not just the search input — ✅ done
 **Task.** Earlier polish made Ctrl+F focus the search input. The
@@ -1363,7 +1617,7 @@ inactive-fade lifts off the contact list pane immediately, the
 search input gets focus + selected text, and the user can keep
 arrow-navigating after typing without a second key combo.
 
-### Contacts: full vCard editor parity
+### Contacts: full vCard editor parity — ✅ done (NICKNAME / ANNIVERSARY / RELATED / PHOTO upload + crop all in)
 **Task.** Today the editor covers `FN / N / ORG / TITLE / emails /
 phones / URLs / addresses / BDAY / NOTE / categories`. The user
 wants the full default vCard surface — photo upload + region
@@ -1379,6 +1633,47 @@ crop, IM handles, anniversaries, related-name links, etc.
 - **Related** (`RELATED;TYPE=spouse:Jane Smith`).
 - Each new field follows the same parser/serializer pattern
   `services/vcard.ts` already uses for the existing fields.
+**Resolution.** Three of the four landed; the photo crop UI is a
+distinct piece of work and is left for a follow-up.
+- `VCard` type gained `nickname: string`, `anniversary: string`,
+  `related: VCardField[]`. `emptyVCard` initialises them; the
+  ContactEditor's `cloneCard` deep-copies `related`.
+- `services/vcard.ts`: NICKNAME / ANNIVERSARY / RELATED added to
+  `MODELED` (so the preserved-line path doesn't double-emit them),
+  parsed in `parseVCard` (NICKNAME collapses a comma list into a
+  display string; ANNIVERSARY mirrors BDAY; RELATED uses
+  `pickType` for the relationship token), and serialised in
+  `serializeVCard` between Name and ORG (NICKNAME), and after
+  BDAY (ANNIVERSARY + RELATED loop using `typeParam`).
+- ContactEditor: nickname text field above org/title; birthday
+  and anniversary now share a 2-column grid; new `FieldListEditor`
+  for "Related" with a curated `RELATED_TYPES` dropdown (spouse /
+  parent / child / sibling / friend / colleague / co-worker /
+  kin / neighbor / agent / emergency / other) — unrecognised TYPE
+  tokens from third-party cards still round-trip via TypeSelect.
+- ContactCard view: nickname appears in quotes next to the display
+  name in the header; birthday + anniversary share a 2-column
+  Section when either is set; "Related" lists each entry with its
+  relationship badge.
+- ContactsView search now matches against nickname too.
+**Follow-up (this batch).** Photo upload + crop UI shipped.
+`services/vcard.ts` was extended: `PHOTO` joined `MODELED` and
+`serializeVCard` now emits the line straight from `card.photo` (a
+complete `data:image/...;base64,...` URI — the parser already
+normalised the various encodings into that shape). New
+`components/contacts/PhotoCropModal.tsx`: a 280×280 preview canvas
+with pointer-drag pan, mouse-wheel zoom toward the cursor, and a
+zoom slider; output is rendered at 256×256 JPEG quality 0.85 via
+`canvas.toDataURL`. The same transform from the preview is
+replayed at OUTPUT_SIZE so "what you see is what you get".
+`ContactEditor.tsx` gained a "Photo" block at the top of the form
+(64px circular preview + Choose / Replace / Remove buttons), a
+hidden `<input type=file accept="image/*">` ref'd by the buttons,
+and a FileReader → data-URL → `PhotoCropModal` chain. The crop
+modal honours Esc (cancel) and Enter (confirm). Existing
+display-only PHOTOs already round-trip via the preserve-from path,
+and adding PHOTO to MODELED + emitting it from the model is now
+the canonical path on save.
 
 ### Contacts: app-specific identifier fields (Discord, Slack, …) — ✅ done
 **Task.** vCard 3.0 has `X-AIM`, `X-SKYPE`, etc., for legacy IM
@@ -1401,7 +1696,7 @@ unrecognised-value handling. ContactCard renders an extra
 "Messaging" section in view mode listing each handle with its
 service badge.
 
-### Contacts: sort the address books AND the contact list (both with reverse) — ◑ done minus "recently added/modified"
+### Contacts: sort the address books AND the contact list (both with reverse) — ✅ done
 **Task.** Tasks has a sidebar sort + reverse toggle; contacts
 should mirror it for **both** the address-books column AND the
 contact-list column. Sort axes for each:
@@ -1419,10 +1714,367 @@ by (dropdown), Contacts · reverse (toggle). The books-pane
 `useMemo` runs `sortBooks(liveBooks(addressBooks), reverse)`; the
 contact-list `filtered` `useMemo` runs `sortContacts(...,
 axis, reverse)` before filtering by search.
-**Deferred.** "Recently added" / "recently modified" axes require
-threading the etebase `mtime` through `ContactItem` (today it's
-not on the type). Skipped to keep this batch contained — file
-when the user actually needs it.
+**Follow-up (this batch).** "Recently added" / "recently modified"
+axes shipped. `ContactItem` gained `mtime: number | null`
+(`types.ts`); `services/etebase.ts::listContactItems` reads
+`item.getMeta().mtime` per row, `createContact` writes `Date.now()`
+and returns it, `updateContact` reads the post-setMeta value off
+the item. `services/contactsnapshot.ts` was extended with an
+optional `mtime` field in the stored shape (back-compat — old
+snapshots decode with `mtime: null` until a fresh sync repopulates
+it). `sortContacts` in `ContactsView` got a numeric branch for
+the two mtime axes: sort by mtime descending (newest first); rows
+with `null` mtime are pinned to the end regardless of reverse —
+they're missing data, not "ancient". The ContactsSettingsPopover
+"Contacts · by" dropdown gained the two new options ("Recently
+modified", "Recently added"). The two axes share the mtime today —
+etebase doesn't expose a separate creation timestamp; if it ever
+does, "Recently added" can switch to it without other plumbing
+changes.
+
+### Contacts: move a contact between address books — ✅ done
+**Task.** No way to relocate a contact to another address book. The
+EteSync data model has no per-contact "archive" state, so the
+idiomatic way to keep "old contacts I'll never need but don't want
+to delete" is a separate address book — which needs a move.
+**Resolution.** `services/etebase.ts::moveContactsToCollection` is a
+1:1 mirror of `moveTasksToCollection`: copy raw content+meta into the
+destination, commit, delete from the source, then **verify on the
+server** that the source deletes stuck (one retry, then a loud error
+that leaves the destination copies for a manual retry — copy-then-
+delete must never silently leave the original behind). Returns the
+re-parsed `ContactItem[]` for the destination. `ContactsView` adds a
+right-click menu on each contact row with a "Move to “{book}”" item
+per other live book (hidden/archive books included, flagged
+"(archived)"), plus Delete. `handleMoveContact` is optimistic:
+drops the row from the source's cached list, clears the selection if
+it was the moved one, and splices into the destination only if that
+book is already hydrated. A disabled "create another book first"
+item shows when there's nowhere to move to.
+
+### Contacts: hide / archive an address book — ✅ done
+**Task.** Mirror the calendar's hide toggle so an "Archive" address
+book can be collapsed out of the way (the other half of the archive
+workflow above).
+**Resolution.** `hiddenBooks: Set<string>` persisted to
+`ete-sthetic.contacts.hiddenBooks` (JSON array). Unlike the
+calendar's session-only `hidden` set, this persists across restarts —
+an archive book is meant to stay collapsed indefinitely. The books
+sidebar splits into `visibleBooks` (main list) and `hiddenBooksList`
+(a collapsed "Hidden (N)" group at the bottom that expands on click;
+rows render dimmed, stay selectable, and right-click to "Show
+(unarchive)"). The main list's right-click menu gains "Hide
+(archive)"; `hideBook` switches the active book to the first other
+visible book before hiding so the list never lingers on an archived
+book's contacts. Hidden books still background-sync (cheap deltas).
+
+## Backlog (queued 2026-05-25)
+
+### Calendar: contact birthdays with group-based visibility — ✅ done (month view + DayPopover + TimeGrid + YearGrid badge)
+**Task.** Surface contact BDAYs in the calendar grid as a built-in
+overlay (so the user sees friends'/family's birthdays alongside
+events without manually duplicating them as VEVENTs). Visibility
+must be controllable **by contact group** (vCard `CATEGORIES`):
+e.g. "Family" and "Close friends" always visible, "Extended /
+acquaintances" off by default — birthdays of people outside the
+user's inner sphere shouldn't clutter the calendar. Implementation
+sketch: a virtual "Birthdays" calendar fed from the contacts cache
+(no etebase round-trip), repeats yearly off each BDAY; a filter
+panel under the calendar's birthday toggle exposes the list of
+known categories with show/hide checkboxes (mirroring the existing
+calendar show/hide pattern). Honours both vCard 3.0 `YYYY-MM-DD`
+and 4.0 `YYYYMMDD` / partial `--MM-DD` (no year). Read-only — no
+inline edit, clicking the entry opens the underlying contact.
+**Resolution.**
+- New `services/birthdays.ts` — `loadCalBirthdays` reads from the
+  warm contacts in-memory cache (zero extra network when the user
+  has already opened contacts this session) and falls back to a
+  direct `listAddressBooks` + `listContactItems` cold fetch
+  otherwise. `parseBday` accepts vCard 3.0 `YYYY-MM-DD`, vCard 4.0
+  `YYYYMMDD`, and the year-omitted `--MM-DD` / `--MMDD` partial
+  form; free-form values (`circa 1990`) are silently skipped.
+  Helpers: `bdayCategoriesIndex`, `isBdayVisible`, and the
+  `BDAY_UNCATEGORISED` sentinel for "contacts without any
+  CATEGORIES" so the user can hide those without inventing a
+  category name. Multi-category contacts are visible as long as
+  any one of their tags is on (mirrors how the user thinks).
+- `services/calstore.ts` gained `birthdays` + `showBirthdays` +
+  `hiddenBdayCategories` so module switches preserve the overlay
+  state; CalendarView mirrors render state into it on every change
+  (same pattern `tasks` already uses).
+- `CalendarView` loads birthdays alongside tasks in `loadAll`,
+  memoises a `birthdaysByDay: Map<dayKey, CalBirthday[]>` that
+  expands the recurring month/day across every visible year (skips
+  Feb 29 in non-leap years rather than silently moving the date),
+  and exposes the count of distinct categories via
+  `bdayCategoriesIndex` for the settings panel. Persisted prefs:
+  `cal.showBirthdays` (off by default — opt-in, so the calendar is
+  visually unchanged for users who don't want it) and
+  `cal.hiddenBdayCategories` (JSON array of hidden category names).
+- `MonthGrid` + `DayPopover` render birthday rows beneath tasks in
+  the day cell — 🎂 + contact name, hover-tooltip annotates the
+  age the contact turns when the BDAY has a year. Clicking
+  dispatches `CONTACT_OPEN_EVENT` (new in `App.tsx`).
+- `App.tsx` listens for `CONTACT_OPEN_EVENT`: force-enables the
+  contacts module if disabled (the user explicitly clicked a
+  contact — silently dropping the click would be worse), switches
+  to it, and stashes the request in `pendingContactOpen` state
+  passed down to `ContactsView` as a prop. `ContactsView` accepts
+  `pendingOpen` + `onPendingOpenConsumed`; an effect drives the
+  book switch + selection on prop change and clears the stash via
+  the callback. If the requested book isn't active, `selectBook`
+  fires (which triggers its own snapshot load + delta sync) and
+  the effect re-runs once `activeBook` settles.
+- `CalendarSettingsPopover` got a "Contact birthdays" toggle in
+  the Display section and a new collapsible "Birthday categories"
+  section that's only rendered when the toggle is on and there's
+  at least one known category. Per-category checkboxes mirror the
+  existing calendar show/hide UX; the uncategorised sentinel
+  renders as a `(no category)` italic row.
+### Calendar: contact birthdays — YearGrid follow-up ✅ done
+`YearGrid` now shows a `🎂 N` badge in each mini-month's header when
+the month has any visible birthdays. Count is derived inline from
+the per-day map already passed for the other views; only days whose
+`getMonth()` matches the cell's month are counted, so the leading /
+trailing days from neighbouring months in `monthGridDays` don't
+double-count. `CalendarView` threads `birthdaysByDay` through to
+`YearGrid` alongside its existing `byDay` prop.
+
+**Follow-up (TimeGrid batch).** Birthdays now also render in `TimeGrid`
+(day / week / 3-day views) as a dedicated strip directly under the
+all-day spanning bars. Per-day single-day chips (🎂 + contact name),
+same hover-tooltip with age-when-applicable, same `onOpenBirthday`
+handler that routes through `CONTACT_OPEN_EVENT` → contacts module.
+The strip only renders when at least one day in the visible range
+actually has a birthday, so the empty row never pushes the time
+body down. `CalendarView` passes `birthdaysByDay` + `openBirthday`
+through; the existing `showBirthdays` filter and per-category
+visibility apply unchanged (the map handed to TimeGrid is already
+filtered).
+**Done in YearGrid follow-up batch.** Each mini-month header now
+carries a small `🎂 N` count when the month has any visible
+birthdays (see the YearGrid entry above for details).
+
+### Calendar: weather overlay — ✅ month view + history + city search + hourly strip + settings all done
+**Task.** Show weather info inline in the calendar so the user can
+plan around forecasts (outdoor events, travel days). Open
+questions: API (Open-Meteo is free + no API key, good fit for a
+local-first app) vs. scraping (fragile, blocked by Tauri's HTTP
+plugin needing per-host allowlist anyway). Default to Open-Meteo
+unless we hit a coverage gap. Display: a small icon + high/low in
+each day cell on month view; an hourly strip across the top of
+week/day views. Settings: location (manual lat/lng or city search),
+unit toggle (°C / °F), refresh cadence (mirrors the adaptive-sync
+prefs grid). Cache in localStorage with a short TTL so view
+switches don't re-hit the network.
+**Resolution.**
+- **Service.** New `services/weather.ts` wraps Open-Meteo's
+  `/v1/forecast` endpoint (free, no key) via the Tauri http plugin
+  added for ICS subscriptions — no CORS, no preflight. One request
+  returns 7 days of daily max / min / weather-code in the local
+  timezone (`timezone=auto`), so each entry's `time[i]` lines up
+  with the existing `dayKey()` format used by `byDay` /
+  `tasksByDay` / `birthdaysByDay` for O(1) lookup.
+- **Storage.** Three localStorage keys (`weather.location`,
+  `weather.units`, `weather.refreshMin`) for the user's
+  preferences plus a `weather.cache` blob (fetched-at, source
+  location/units, daily entries) so a module switch or app
+  restart paints yesterday's forecast immediately while the next
+  fetch lands. The on-mount effect re-fetches only when the cache
+  is for a different location/units or older than the refresh
+  window — a re-render with a fresh cache is a no-op.
+- **WMO mapping.** `weatherIcon(code)` returns the canonical
+  emoji bucket (☀️ / 🌤️ / ☁️ / 🌫️ / 🌦️ / 🌧️ / ❄️ / 🌨️ /
+  ⛈️); `weatherLabel(code)` returns the human-readable phrase
+  for the tooltip. Codes outside the table fall back to `·`
+  rather than misleading text.
+- **MonthGrid render.** Day-cell header row gained a small weather
+  badge next to the date number — `<icon> <min>°/<max>°`, with
+  the tooltip carrying the full label + unit. Lives inside the
+  fixed `DATE_ROW_PX` strip so it doesn't push events down; tabular
+  numerals keep the temps aligned across rows.
+- **Settings.** New "Weather" SettingsSection in the calendar
+  popover. Lat/lng inputs validate range (−90..90 / −180..180,
+  inline danger border on invalid), optional label for display.
+  Apply / Off / Refresh buttons; Units dropdown (°C / °F);
+  Refresh-every dropdown reusing the `WEATHER_REFRESH_OPTIONS`
+  grid (Manual / 30 min / 1 h / 4 h / 12 h, default 1 h). Shows
+  the last fetch time, surfaces fetch failures inline with a
+  `role="alert"`.
+- **Periodic refresh.** Re-fetch fires automatically when the
+  user changes location / units, and on a `setInterval` matching
+  `refreshMinutes` (skipped when set to 0 / Manual).
+- **History (past_days).** `fetchWeather` now accepts a `pastDays`
+  argument (default reads `cal.weather.pastDays` localStorage,
+  itself defaulting to 14). Open-Meteo's forecast endpoint takes a
+  `past_days` param up to 92 in the same single request, so the
+  user gets observed weather alongside the upcoming forecast with
+  no extra round-trips. The cache shape gained an optional
+  `pastDays` field so the staleness check forces a refetch when the
+  user changes the horizon; older caches without the field decode
+  as undefined and are treated as stale (one auto-refresh, then
+  fine). Settings popover added a "History" select with options
+  0/7/14/30/60/92 days (`WEATHER_PAST_DAYS_OPTIONS`); 0 reads as
+  "Forecast only". `MonthGrid`'s existing `weatherByDay.get(k)`
+  lookup serves past dates the same way as future ones, so no UI
+  change was needed beyond the new control.
+**Deferred.**
+- **Hourly strip ✅ done (this batch).** Same Open-Meteo
+  forecast endpoint now sends `hourly=temperature_2m,weather_code`
+  alongside the daily request — a single round-trip, no second
+  network path. `services/weather.ts` exports a new
+  `HourlyForecast` shape keyed by `YYYY-MM-DD@HH`, plus a
+  `WeatherFetchResult = { daily, hourly }` for the return. The
+  cache shape gained an optional `hourly` field (back-compat —
+  older caches decode as empty until the next refresh repopulates).
+  `CalendarView` indexes the array into a `Map<string,
+  HourlyForecast>` via `weatherByHour` and threads it to
+  `TimeGrid` alongside `weatherUnits`. `TimeGrid` renders a thin
+  strip between the day-header row and the all-day bars: one
+  cell per day subdivided into 4 chips at 00/06/12/18, each
+  showing the WMO icon + rounded temp (tooltip carries the full
+  weather label + unit suffix). The strip only renders when at
+  least one of the 28 sample slots in the visible range has
+  data, so empty windows don't waste vertical space.
+- **City search ✅ done (this batch).** New `geocodeCity(query)`
+  in `services/weather.ts` hits Open-Meteo's free geocoding
+  endpoint (no key, max 10 results, language `en`). The Weather
+  settings block in `CalendarSettingsPopover` gained a
+  `<CitySearch>` row above the lat/lng inputs: query input + Enter
+  / Search button, results list with name + admin1 + country.
+  Clicking a row writes the location via the existing
+  `onSetLocation` (`label` becomes "Name, Region, Country"). The
+  lat/lng inputs still work for power users / no-result fallbacks.
+- Year view doesn't render weather. Year cells are tiny and the
+  forecast horizon is only 7 days, so the value is low.
+
+### Settings: sub-panels / scrollable "more settings" with side nav — ✅ done across all three modules
+**Task.** The tasks settings popover is getting crowded — Hide
+completed · Phone-friendly priority · Theme · Accent · Zoom (×3) ·
+Inactive-zone fade (×3) · Task row counters · Hints · Modules ·
+Sync (×3) · Account. Two paths, possibly together:
+- **Sub-panels.** Group the popover into collapsible sections so
+  e.g. "Sync" expands inline into its three cadence dropdowns
+  rather than them all being flush at the same level.
+- **"More settings" full window.** A separate scrollable settings
+  window (modal or its own view) with a left-side hierarchy (Sync
+  / Display / Modules / Account / …) for quick navigation, mirroring
+  the standard OS settings pattern. The popover stays for the
+  highest-frequency toggles; the full window holds the long tail.
+Apply the same pattern across all three modules' settings popovers
+(tasks / contacts / calendar) so the layout is consistent.
+**Resolution.** Sub-panels shipped across all three popovers via a
+shared `SettingsSection` primitive (`components/SettingsSection.tsx`)
+and a persistence service (`services/settingsSections.ts`). Each
+section has a clickable header — chevron + uppercase label — that
+toggles its body inline; collapsed state persists per-section in
+localStorage under `ete-sthetic.settings.sections.<id>` and only
+the non-default (closed) state is written, so storage stays clean
+and the popovers look identical to before until the user
+explicitly collapses something. SETTINGS_SECTIONS_CHANGED_EVENT
+keeps multiple open popovers in lockstep — same pattern hints /
+inactive-opacity / module-flags use.
+Section ids:
+- Tasks: `tasks.display` (the Hide/Phone/Dark triplet, newly
+  grouped — was flat), `tasks.zoom`, `tasks.sync`, `tasks.accent`
+  (the swatches + hex picker block — was a bare `<div>` with a
+  `border-t`, now a proper section), `tasks.help`, `tasks.row`.
+- Contacts: `contacts.zoom`, `contacts.sync`, `contacts.sort`,
+  `contacts.help`.
+- Calendar: `calendar.display`, `calendar.zoom` (helper text now
+  inside the collapsing body), `calendar.sort`, `calendar.night`
+  (helper text inside the body too).
+- Shared (collapse state mirrors across modules): the embedded
+  `InactiveOpacitySettings` (`shared.inactiveOpacity`),
+  `ModuleToggles` (`shared.modules`), and the `Account` block
+  (`shared.account`).
+**Follow-up (this batch).** Added a "More settings…" button at the
+top-right of the tasks `SettingsPopover` header that swaps the
+compact frame for a new `SettingsWindow` modal. The window is a
+centered card (max 900×80vh) with a left-side hierarchy nav
+(Display / Zoom / Sync / Accent / Help / Task row /
+Inactive-zone fade / Modules / Account) and a scrollable right pane
+holding the exact same `SettingsSection` blocks the popover uses.
+Clicking a nav entry calls `scrollIntoView({ behavior: 'smooth' })`
+on the matching `[data-section-id]` anchor (`SettingsSection` now
+emits this attribute on its outer `<div>`); an IntersectionObserver
+on the scroll container keeps the active nav row highlighted as the
+user scrolls. Esc + backdrop-click dismiss the window; the popover's
+outside-click handler is gated on `!windowOpen` so it doesn't fight
+the modal. `SettingsSection` gained a `forceOpen` prop that bypasses
+the saved collapsed state and hides the chevron — the window forces
+every section open so the left-nav stays the single navigation
+mechanism. `InactiveOpacitySettings` + `ModuleToggles` got matching
+optional `forceOpen` props so they participate.
+**Follow-up (this batch).** Both `ContactsSettingsPopover` and
+`CalendarSettingsPopover` got the same "More settings…" button and
+`SettingsWindow` swap as the tasks popover. The mechanical refactor
+matched the tasks one (extract `body` fragment, define a `SECTIONS`
+array for the left nav, gate the outside-click effect on
+`!windowOpen`, force every `SettingsSection` open inside the
+window). Calendar's `SECTIONS` conditionally includes
+"Birthday categories" only when the user has the birthdays overlay
+on and there's at least one known category — same condition that
+gates rendering of the section itself, so the nav doesn't link to
+a missing target. All three modules now share the same compact /
+expanded settings UX.
+
+### Tasks: Alt+→ at the top of a sort group should indent under the row below — ✅ done
+**Task.** Alt+→ today indents under the *previous* visible sibling.
+If the focused subtask is sorted to the top of its parent's
+children (e.g. it's the highest-priority child under priority
+sort), there is no previous sibling — so Alt+→ no-ops and the user
+is stuck: they can't ever make it a sub-task because the sort keeps
+putting it first. Change the no-op-at-top case to instead indent
+under the *next* visible sibling (so the row becomes a child of
+the task BELOW it). At the bottom of the group the existing
+"previous sibling" semantics still apply. Edge case: if the row is
+the only child (no previous and no next sibling), Alt+→ still
+no-ops — there's no valid parent in either direction.
+**Resolution.** Alt+→ branch in
+[`MainView.tsx`](src/components/MainView.tsx) now picks
+`loc.siblings[loc.index - 1] ?? loc.siblings[loc.index + 1]` as the
+new parent and only bails when both neighbours are missing. So a
+high-priority subtask sorted to the top of its group can now be
+indented under the row below it; a row in the middle of its group
+keeps the previous-sibling semantics; a true single-child row still
+no-ops as documented.
+
+## Backlog (queued 2026-05-29)
+
+### Task row: split due date vs. time visually — ✅ done
+**Task.** When a task carries a due *date-time* (not just a date), the
+row currently renders the raw ISO string — e.g. `2026-05-31T12:00:00`
+jammed together as one chip. Should split into something like
+`31 May · 12:00` so date and time read separately at a glance.
+**Where.** `formatDue` in
+[`src/components/TaskTree.tsx`](src/components/TaskTree.tsx) at L298.
+Its regex `^(\d{4})(\d{2})(\d{2})` only matches the iCal compact form
+(`20260531T120000`); a hyphenated value like `2026-05-31T12:00:00`
+falls through and returns the raw string verbatim — which is what's
+on screen.
+**Plan sketch.**
+- Accept both shapes: `YYYYMMDD(THHMMSS)?` *and*
+  `YYYY-MM-DD(THH:MM(:SS)?)?` (the rendering surface picks whichever
+  the upstream value happened to use; `vtodo.ts` writes the compact
+  form on save, but legacy/imported items may not).
+- When a time component is present and isn't `00:00`, render it as a
+  second visual unit: e.g. `today · 12:00`, `tomorrow · 12:00`,
+  `31 May · 12:00`. When the time is exactly midnight, keep the
+  date-only label (treat as "all-day"-ish).
+- Style choice for the second unit: separate small span with
+  `text-text-faint` so the date stays the primary read.
+- Update the matching test/sort path if any (priority/due sort already
+  uses the raw string lexicographically — that's still correct for
+  both formats since YYYY-MM-DD sorts the same as YYYYMMDD).
+**Resolution.** `formatDue` now returns `{ label, time }` instead of a
+bare string. The regex accepts both the compact iCal form and the
+hyphenated ISO form (`^(\d{4})-?(\d{2})-?(\d{2})(?:T(\d{2}):?(\d{2})…)?`).
+A time component that isn't exactly `00:00` is surfaced as a second
+visual unit — the row renders `31 May` then `· 12:00` in a
+`text-text-faint` span so the date stays the primary read; exact
+midnight stays date-only (all-day). The due sort path is unchanged
+(still lexicographic on the raw string, correct for both shapes).
 
 ## Known issues
 
@@ -1430,7 +2082,39 @@ Things that have been observed misbehaving but haven't been root-caused
 yet. These get tracked here (not in the polish queue) so they're visible
 without committing to a specific fix.
 
-### Tasks pane stuck at "Loading tasks…" until manual refresh — ✅ defensive fix shipped
+### Moving a task/contact left it in BOTH lists (duplicate across clients) — ✅ fixed 2026-06-06
+Observed on a phone (a second EteSync client): a task moved to another
+list appeared in the destination AND stayed in the original. Root cause:
+`moveTasksToCollection` / `moveContactsToCollection` are copy-then-delete
+(Etebase has no native move). The destination copy committed, but the
+source delete reused a **cached item handle** and went through
+`transaction()` — optimistic-concurrency-checked — so a stale etag (e.g.
+refreshed by a background sync, now firing every 15 min on the active
+list) made the delete reject. The copy was already on the server →
+duplicate. The desktop hid it via the optimistic in-memory removal, so
+no error was obvious. **Fix:** fetch the source items FRESH from the
+server right before deleting (current etag, current content for the
+copy) and force the deletion with `batch()` instead of `transaction()`,
+so an unrelated collection change can't block a removal we intend. The
+existing verify-and-retry (re-fetch + re-delete, then a loud "move
+incomplete" error) stays as the backstop; on failure the worst case is
+a recoverable duplicate, never data loss.
+
+### Settings (sort, zoom, widths, …) reset on every relaunch — ✅ fixed 2026-06-06
+Root cause: settings live in the WebView's `localStorage`, which is keyed
+by **origin**. Launching from a dev server (`http://localhost:5173`) vs.
+the bundled app (`tauri://localhost`) — or any origin change — gives each
+its own empty localStorage, so settings appeared to reset. (Session +
+data snapshots survived because they use the Tauri store, a fixed file in
+the app config dir.) **Fix:** `services/prefs.ts` bridges localStorage to
+that same durable store — `hydratePrefs()` (awaited in `main.tsx` before
+anything reads settings) restores the mirror into localStorage on
+startup, and a patched `setItem`/`removeItem` debounce-flushes every
+later write back. Zero call-site changes; localStorage stays the sync
+read path, the store is the cross-launch source of truth. Only keys the
+app owns (`ete-sthetic*`, `cal.*`) are mirrored.
+
+### Tasks pane stuck at "Loading tasks…" until manual refresh — ✅ root-cause fix shipped 2026-05-28
 Observed 2026-05-23, intermittent. After certain sessions (likely
 following an HMR reload while developing other modules, e.g. contacts),
 the tasks pane sits on "Loading tasks…" indefinitely and only loads
@@ -1464,6 +2148,28 @@ and fall through to a normal network sync — the "Loading tasks…" line
 clears within 2s no matter what, and `fetchCollection` populates the
 items the same way a manual refresh would. Root cause not pinpointed,
 but the symptom can no longer leave the pane stuck.
+
+**Recurrence + root-cause fix (2026-05-28).** Reproduced again — even
+the 2 s safety timer wasn't enough in some cold-start sessions
+(observed after the App-level top-bar layout shipped). Root cause
+turned out to be the trigger gate itself: the
+`if (!hydrated || !activeUid) return` guard on the
+`fetchCollection`-on-activeUid-change effect meant that any
+condition where `hydrated` *stayed* false on cold start (state
+batching collapsing the safety timer's `setHydrated(true)` into a
+no-op, or the IIFE's cancelled-flag flow swallowing the call) left
+the trigger permanently bailed. The hydrated gate was always just a
+"don't fetch and then immediately overwrite with cache" optimisation;
+the fetch is harmless without it — it upserts via `onBatch` and a
+straggling hydration just replaces the bucket the fetch has been
+filling, with the next batch re-upserting on top. Dropped the
+`hydrated` dep entirely from
+[`MainView.tsx`](src/components/MainView.tsx)'s
+`fetchCollection`-trigger effect (kept the periodic-refresh effects
+gated since they're cosmetic). Cold start now fires
+`fetchCollection(activeUid)` as soon as the collections-load effect
+populates the active uid, regardless of whether the disk-hydration
+pass has resolved.
 
 ## Long-term
 

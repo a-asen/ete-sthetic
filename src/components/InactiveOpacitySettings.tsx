@@ -10,6 +10,7 @@ import {
   setInactiveOpacity,
   type InactiveZone,
 } from '../services/inactiveOpacity'
+import { SettingsSection } from './SettingsSection'
 
 // "Inactive zone fade" subsection embedded in each module's settings
 // popover. Three +/-/reset rows control the opacity applied to the
@@ -28,7 +29,11 @@ const ROWS: readonly RowSpec[] = [
   { zone: 'detail', label: 'Detail pane' },
 ]
 
-export function InactiveOpacitySettings() {
+export function InactiveOpacitySettings({
+  forceOpen = false,
+}: {
+  forceOpen?: boolean
+} = {}) {
   const [values, setValues] = useState(() => ({
     sidebar: readInactiveOpacity('sidebar'),
     middle: readInactiveOpacity('middle'),
@@ -50,10 +55,11 @@ export function InactiveOpacitySettings() {
   }, [])
 
   return (
-    <>
-      <p className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-        Inactive zone fade
-      </p>
+    <SettingsSection
+      id="shared.inactiveOpacity"
+      label="Inactive zone fade"
+      forceOpen={forceOpen}
+    >
       {ROWS.map((row) => (
         <div
           key={row.zone}
@@ -83,7 +89,7 @@ export function InactiveOpacitySettings() {
       <p className="px-3 pb-2 pt-0.5 text-[11px] text-text-faint">
         How visible non-focused panels stay. 100% = no fade.
       </p>
-    </>
+    </SettingsSection>
   )
 }
 
