@@ -9,6 +9,8 @@ export interface SortOption<T extends string> {
 export interface GenericSortSpec<T extends string> {
   sort: T
   reverse: boolean
+  // Optional secondary tiebreaker, surfaced when `secondaryOptions` is set.
+  then?: T
 }
 
 interface Props<T extends string> {
@@ -16,6 +18,9 @@ interface Props<T extends string> {
   options: Array<SortOption<T>>
   spec: GenericSortSpec<T>
   onChange: (next: GenericSortSpec<T>) => void
+  // When provided, a "Then by" selector is shown for the secondary
+  // tiebreaker applied to items equal on the primary sort.
+  secondaryOptions?: Array<SortOption<T>>
   onClose: () => void
   // Enter inside the popover commits the (already-applied) selection and
   // hands focus back somewhere useful. Falls back to onClose.
@@ -36,6 +41,7 @@ export function SortPopover<T extends string>({
   options,
   spec,
   onChange,
+  secondaryOptions,
   onClose,
   onConfirm,
   focusKey,
@@ -73,13 +79,13 @@ export function SortPopover<T extends string>({
       const ch = e.key.toLowerCase()
       if (ch === 'r') {
         e.preventDefault()
-        onChange({ sort: spec.sort, reverse: !spec.reverse })
+        onChange({ ...spec, reverse: !spec.reverse })
         return
       }
       const opt = options.find((o) => o.label[0]?.toLowerCase() === ch)
       if (opt) {
         e.preventDefault()
-        onChange({ sort: opt.value, reverse: spec.reverse })
+        onChange({ ...spec, sort: opt.value })
       }
     }
     document.addEventListener('mousedown', onDocClick)
@@ -117,9 +123,7 @@ export function SortPopover<T extends string>({
                   type="radio"
                   name={`sort-${title}`}
                   checked={active}
-                  onChange={() =>
-                    onChange({ sort: opt.value, reverse: spec.reverse })
-                  }
+                  onChange={() => onChange({ ...spec, sort: opt.value })}
                   className="mt-0.5 h-3 w-3 shrink-0 accent-accent"
                 />
                 <span className="flex min-w-0 flex-1 flex-col">
@@ -133,15 +137,36 @@ export function SortPopover<T extends string>({
           )
         })}
       </ul>
+      {secondaryOptions && secondaryOptions.length > 0 && (
+        <div className="mt-3 border-t border-border pt-3">
+          <label className="flex items-center justify-between gap-2 text-sm text-text-muted">
+            <span>Then by</span>
+            <select
+              value={spec.then ?? secondaryOptions[0].value}
+              onChange={(e) =>
+                onChange({ ...spec, then: e.target.value as T })
+              }
+              className="rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-text outline-none focus:border-border-strong"
+            >
+              {secondaryOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="mt-1 text-[11px] text-text-faint">
+            Breaks ties when items match on the primary sort.
+          </p>
+        </div>
+      )}
       <div className="mt-3 border-t border-border pt-3">
         <label className="flex items-center justify-between gap-2 text-sm text-text-muted">
           <span>Reverse</span>
           <input
             type="checkbox"
             checked={spec.reverse}
-            onChange={(e) =>
-              onChange({ sort: spec.sort, reverse: e.target.checked })
-            }
+            onChange={(e) => onChange({ ...spec, reverse: e.target.checked })}
             className="h-3.5 w-3.5 accent-accent"
           />
         </label>

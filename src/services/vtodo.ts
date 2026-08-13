@@ -147,6 +147,25 @@ function strictParseVTodo(raw: string): VTodo | null {
     }
   }
 
+  // Manual ordering key (X-APPLE-SORT-ORDER). Stored as an integer; we
+  // tolerate any numeric value other clients may have written.
+  let sortOrder: number | undefined
+  const rawSort = vtodo.getFirstPropertyValue('x-apple-sort-order')
+  if (rawSort != null) {
+    const n = Number(rawSort)
+    if (Number.isFinite(n)) sortOrder = n
+  }
+
+  // Recurrence: keep the RRULE value verbatim (e.g. "FREQ=WEEKLY;INTERVAL=2").
+  // ical.js hands back an ICAL.Recur; toString() gives the canonical value
+  // string without the "RRULE:" prefix.
+  let rrule: string | undefined
+  const rawRrule = vtodo.getFirstPropertyValue('rrule')
+  if (rawRrule != null) {
+    const s = asString(rawRrule)?.trim()
+    if (s) rrule = s
+  }
+
   return {
     uid: String(uid),
     summary,
@@ -168,6 +187,9 @@ function strictParseVTodo(raw: string): VTodo | null {
     comment,
     resources: resources.length > 0 ? resources : undefined,
     relatedTo: relatedTo.length > 0 ? relatedTo : undefined,
+    sortOrder,
+    rrule,
+    recurring: rrule != null,
     raw,
     }
   } catch {
@@ -228,6 +250,7 @@ export function parseVTodo(raw: string): VTodo | null {
     status,
     priority: 0,
     categories: [],
+    recurring: false,
     raw,
     broken: true,
   }
@@ -252,11 +275,21 @@ export interface NewVTodoArgs {
   description?: string
   due?: string
   priority?: Priority
+  // RRULE value (no "RRULE:" prefix), e.g. "FREQ=WEEKLY".
+  rrule?: string
+  // Force a specific VTODO UID instead of a random one. Blueprints use a
+  // deterministic uid (bp_<id>_<yyyymmdd>) so a given day is spawned once.
+  uid?: string
+  // CATEGORIES to stamp on the task.
+  categories?: string[]
+  // Extra raw properties (e.g. X-ETE-BLUEPRINT markers), keyed by property
+  // name. Values are written verbatim; names are lower-cased for jCal.
+  extraProps?: Record<string, string>
 }
 
 // Build a fresh VCALENDAR + VTODO string for a new task.
 export function buildVTodo(args: NewVTodoArgs): { uid: string; raw: string } {
-  const uid = newUid()
+  const uid = args.uid ?? newUid()
   const stamp = icalUtcNow()
 
   const cal = new ICAL.Component(['vcalendar', [], []])
@@ -279,9 +312,22 @@ export function buildVTodo(args: NewVTodoArgs): { uid: string; raw: string } {
   if (args.due) {
     vtodo.updatePropertyWithValue('due', args.due)
   }
+  if (args.rrule) {
+    vtodo.updatePropertyWithValue('rrule', ICAL.Recur.fromString(args.rrule))
+  }
   if (args.parentUid) {
     const prop = vtodo.addPropertyWithValue('related-to', args.parentUid)
     prop.setParameter('reltype', 'PARENT')
+  }
+  if (args.categories && args.categories.length > 0) {
+    const prop = new ICAL.Property('categories', vtodo)
+    prop.setValues(args.categories)
+    vtodo.addProperty(prop)
+  }
+  if (args.extraProps) {
+    for (const [name, value] of Object.entries(args.extraProps)) {
+      vtodo.updatePropertyWithValue(name.toLowerCase(), value)
+    }
   }
 
   cal.addSubcomponent(vtodo)
@@ -321,6 +367,12 @@ export interface VTodoPatch {
   relatedTo?: RelatedLink[]
   // null clears the parent (root). undefined leaves it untouched.
   parentUid?: string | null
+  // Manual sort position → X-APPLE-SORT-ORDER. null clears; undefined
+  // leaves untouched.
+  sortOrder?: number | null
+  // RRULE value (no prefix). '' or null clears (makes the task one-shot);
+  // undefined leaves it untouched.
+  rrule?: string | null
 }
 
 function toIcalTime(v: DateValue): ICAL.Time {
@@ -456,6 +508,24 @@ export function updateVTodo(raw: string, patch: VTodoPatch): string {
     for (const link of patch.relatedTo) {
       const prop = vtodo.addPropertyWithValue('related-to', link.uid)
       prop.setParameter('reltype', link.reltype)
+    }
+  }
+  if (patch.sortOrder !== undefined) {
+    if (patch.sortOrder === null) {
+      vtodo.removeAllProperties('x-apple-sort-order')
+    } else {
+      // Integer key; ical.js would serialize a JS number as a float
+      // (`12.0`), so write the rounded value as a string.
+      vtodo.updatePropertyWithValue(
+        'x-apple-sort-order',
+        String(Math.round(patch.sortOrder)),
+      )
+    }
+  }
+  if (patch.rrule !== undefined) {
+    if (!patch.rrule) vtodo.removeAllProperties('rrule')
+    else {
+      vtodo.updatePropertyWithValue('rrule', ICAL.Recur.fromString(patch.rrule))
     }
   }
   if (patch.parentUid !== undefined) {

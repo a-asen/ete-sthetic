@@ -10,7 +10,10 @@ import type {
 import type { DateValue, VTodoPatch } from '../services/vtodo'
 import { CalendarPopover } from './CalendarPopover'
 import { ConfirmModal } from './ConfirmModal'
+import { RecurrenceEditor } from './RecurrenceEditor'
 import { useInactiveOpacities } from '../hooks/useInactiveOpacities'
+import { useUndoableValue } from '../hooks/useUndoableValue'
+import { registerUnsavedGuard } from '../services/unsavedGuard'
 
 interface Props {
   task: TaskItem | null
@@ -41,8 +44,11 @@ interface Props {
   // navigation is disabled.
   onNavigateTask?: (delta: -1 | 1) => void
   // Resize support. When showing the full panel the parent controls the
-  // width (px); a leftward drag on the handle grows the panel.
+  // width (px); a leftward drag on the handle grows the panel. `focusedWidth`
+  // is used when focused; `collapsedWidth` is the narrower pinned-but-not-
+  // focused "peek" width. Both are independently adjustable via the handle.
   focusedWidth?: number
+  collapsedWidth?: number
   onResizeStart?: (e: React.MouseEvent) => void
   // True while the drag is in flight — suppresses the width transition.
   isResizing?: boolean
@@ -57,6 +63,7 @@ interface Draft {
   priority: Priority
   dueDate: string // YYYY-MM-DD or ''
   dueTime: string // HH:MM or ''
+  rrule: string // RRULE value or '' (does not repeat)
   categories: string[]
   // Advanced
   startDate: string
@@ -178,6 +185,7 @@ function draftFromTask(task: TaskItem): Draft {
     priority: t.priority,
     dueDate: due.date,
     dueTime: due.time,
+    rrule: t.rrule ?? '',
     categories: t.categories.slice(),
     startDate: start.date,
     startTime: start.time,
@@ -226,6 +234,10 @@ function buildPatch(task: TaskItem, draft: Draft): VTodoPatch {
     patch.dtStart = draft.startDate
       ? toDateValue(draft.startDate, draft.startTime)
       : null
+  }
+
+  if (draft.rrule !== (t.rrule ?? '')) {
+    patch.rrule = draft.rrule === '' ? null : draft.rrule
   }
 
   if (!strArrEqual(draft.categories, t.categories)) {
@@ -317,6 +329,7 @@ export function DetailPanel({
   onSaveRaw,
   onNavigateTask,
   focusedWidth,
+  collapsedWidth,
   onResizeStart,
   isResizing = false,
   pending = false,
@@ -518,6 +531,36 @@ export function DetailPanel({
     return () => window.removeEventListener('keydown', handler)
   }, [focused, task, requestExit, requestNavigate])
 
+  // Register as the active unsaved-changes guard so switching modules prompts
+  // to save/discard this task's edits instead of dropping them. isDirty gates
+  // the prompt, so a merely-selected (unedited) task never blocks a switch.
+  const guardRef = useRef({
+    isDirty: () => false,
+    save: (): boolean => true,
+    discard: () => {},
+  })
+  useEffect(() => {
+    guardRef.current = {
+      isDirty: () => isDirty,
+      save: () => {
+        commitSave()
+        return true
+      },
+      discard: () => {
+        blurInsidePanel()
+        onExit()
+      },
+    }
+  })
+  useEffect(() => {
+    return registerUnsavedGuard({
+      kind: 'task',
+      isDirty: () => guardRef.current.isDirty(),
+      save: () => guardRef.current.save(),
+      discard: () => guardRef.current.discard(),
+    })
+  }, [])
+
   function commitSave() {
     if (!task || !draft) {
       setConfirming(false)
@@ -548,6 +591,12 @@ export function DetailPanel({
     update(key, [...list, v])
   }
 
+  // Undo/redo for the Title field — controlled inputs lose the browser's
+  // native Ctrl+Z, so clearing a title and undoing wouldn't bring it back.
+  const summaryUndo = useUndoableValue(draft?.summary ?? '', (v) =>
+    update('summary', v),
+  )
+
   const depCandidates = useMemo(() => {
     if (!task) return []
     const q = depQuery.trim().toLowerCase()
@@ -568,9 +617,10 @@ export function DetailPanel({
 
   const collapsedTitle = task?.todo.summary || '(no task selected)'
   const showFullPanel = focused || pinned
-  // Width: drag-controlled px when expanded, fixed thin strip when
-  // collapsed. Class stays w-10 in collapsed mode so we don't conflict
-  // with the inline style.
+  // Width mirrors the sidebar's two-width model: drag-controlled focused
+  // width when focused, a narrower (also drag-controlled) "peek" width when
+  // pinned-but-not-focused so the panel recedes toward the right edge, and
+  // the fixed thin strip (w-10) when unpinned and not focused.
   // The collapsed-strip opacity is a fixed treatment unrelated to the
   // user's inactive-fade pref (the strip is half-hidden by design,
   // not because the panel is "inactive"). Pinned-but-not-focused
@@ -580,17 +630,21 @@ export function DetailPanel({
     : pinned && !focused
       ? inactiveOpacities.detail
       : 1
-  const asideClasses = !showFullPanel
-    ? 'w-10'
-    : pinned && !focused
-      ? 'translate-x-1'
-      : ''
-  const widthPx = showFullPanel ? (focusedWidth ?? 320) : undefined
+  const asideClasses = !showFullPanel ? 'w-10' : ''
+  const widthPx = focused
+    ? (focusedWidth ?? 320)
+    : pinned
+      ? (collapsedWidth ?? 240)
+      : undefined
 
   return (
     <aside
       data-detail-zone
-      onMouseDownCapture={() => {
+      onMouseDownCapture={(e) => {
+        // A mousedown on the resize handle adjusts the current width (the
+        // pinned "peek" width when unfocused); don't let it pull focus and
+        // expand the panel out from under the drag.
+        if ((e.target as HTMLElement).closest('[role="separator"]')) return
         if (!focused) onRequestFocus()
       }}
       style={{
@@ -786,8 +840,10 @@ export function DetailPanel({
                 <input
                   ref={summaryRef}
                   type="text"
+                  spellCheck
                   value={draft.summary}
-                  onChange={(e) => update('summary', e.target.value)}
+                  onChange={(e) => summaryUndo.onChange(e.target.value)}
+                  onKeyDown={summaryUndo.onKeyDown}
                   onFocus={() => {
                     lastFocusedRef.current = 'summary'
                   }}
@@ -797,6 +853,7 @@ export function DetailPanel({
                 <label className={`mt-3 ${labelClass}`}>Notes</label>
                 <textarea
                   ref={descriptionRef}
+                  spellCheck
                   value={draft.description}
                   onChange={(e) => update('description', e.target.value)}
                   onFocus={() => {
@@ -918,6 +975,14 @@ export function DetailPanel({
                       onClose={() => setDueCalOpen(false)}
                     />
                   )}
+                </div>
+
+                <div className="mt-3">
+                  <RecurrenceEditor
+                    value={draft.rrule}
+                    hasAnchor={!!(draft.dueDate || draft.startDate)}
+                    onChange={(rrule) => update('rrule', rrule)}
+                  />
                 </div>
 
                 <label className={`mt-3 ${labelClass}`}>Tags</label>
@@ -1172,6 +1237,7 @@ export function DetailPanel({
                     <div>
                       <label className={labelClass}>Comment</label>
                       <textarea
+                        spellCheck
                         value={draft.comment}
                         onChange={(e) => update('comment', e.target.value)}
                         rows={3}

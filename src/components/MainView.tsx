@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createCollection,
   createTask,
+  createTaskFrom,
   deleteCollection,
   deleteTasks,
   listCollections,
@@ -9,7 +10,6 @@ import {
   logout,
   moveTasksToCollection,
   updateTaskRaw,
-  toggleComplete,
   updateCollectionMeta,
   updateTask,
 } from '../services/etebase'
@@ -23,6 +23,13 @@ import {
   getAncestorChain,
 } from '../services/tree'
 import { parseVTodo, updateVTodo, type VTodoPatch } from '../services/vtodo'
+import { rollForwardOnComplete } from '../services/rrule'
+import { BLUEPRINTS_SPAWNED_EVENT } from '../services/blueprints'
+import { matchesBinding } from '../services/keybindings'
+import {
+  TASK_ROW_SETTINGS_CHANGED_EVENT,
+  readShowSidebarSyncAge,
+} from '../services/taskRowSettings'
 import {
   type CollectionSnapshot,
   deleteSnapshot,
@@ -50,6 +57,8 @@ import {
   type TaskNode,
   type TaskSort,
   type TaskSortSpec,
+  type TaskStatus,
+  type VTodo,
 } from '../types'
 import { ConfirmModal } from './ConfirmModal'
 import { DetailPanel } from './DetailPanel'
@@ -59,6 +68,7 @@ import {
   type ContextMenuItem,
   type ContextMenuState,
 } from './ContextMenu'
+import { GlobalSearchModal } from './GlobalSearchModal'
 import { SettingsPopover } from './SettingsPopover'
 import { SidebarSettingsPopover } from './SidebarSettingsPopover'
 import { Hint } from './Hint'
@@ -75,16 +85,20 @@ import { TaskTree } from './TaskTree'
 import { readTaskSort, writeTaskSort } from '../services/sort'
 import {
   applyAccent,
-  applyTheme,
+  applyStoredTheme,
   readStoredAccent,
-  readStoredTheme,
+  readStoredThemePref,
   writeStoredAccent,
-  writeStoredTheme,
-  type Theme,
+  writeStoredThemePref,
+  type ThemePref,
 } from '../services/theme'
 
 interface Props {
   onLoggedOut: () => void
+  // "Reveal this task" from the global meta-search: switch to its list and
+  // select it. Consumed once via onPendingOpenConsumed.
+  pendingOpen?: { collectionUid: string; taskUid: string } | null
+  onPendingOpenConsumed?: () => void
 }
 
 const HIDE_COMPLETED_KEY = 'ete-sthetic.hideCompleted'
@@ -103,9 +117,9 @@ const SWITCH_FRESH_KEY = 'ete-sthetic.switchFreshMin'
 const ACTIVE_SYNC_OPTIONS = [0, 1, 5, 15, 30, 60] as const
 const BG_SYNC_OPTIONS = [0, 30, 60, 240, 720, 1440] as const
 const SWITCH_FRESH_OPTIONS = [0, 15, 30, 60, 240] as const
-const DEFAULT_ACTIVE_SYNC_MIN = 5
+const DEFAULT_ACTIVE_SYNC_MIN = 15
 const DEFAULT_BG_SYNC_MIN = 240
-const DEFAULT_SWITCH_FRESH_MIN = 60
+const DEFAULT_SWITCH_FRESH_MIN = 30
 
 function readIntPref(
   key: string,
@@ -206,7 +220,18 @@ const TASK_SORT_OPTIONS: Array<SortOption<TaskSort>> = [
     label: 'Title (A–Z)',
     hint: 'Alphabetical, case-insensitive.',
   },
+  {
+    value: 'manual',
+    label: 'Manual',
+    hint: 'Your order. Alt+Shift+↑/↓ to move a row; synced across devices.',
+  },
 ]
+
+// Secondary "Then by" tiebreaker options — the primary set minus 'manual'
+// (a hand-arranged order isn't a meaningful tiebreaker). Hints are dropped:
+// the secondary is a compact dropdown, not radio rows.
+const TASK_SECONDARY_SORT_OPTIONS: Array<SortOption<TaskSort>> =
+  TASK_SORT_OPTIONS.filter((o) => o.value !== 'manual')
 
 const SIDEBAR_SORT_OPTIONS: Array<SortOption<SidebarSort>> = [
   {
@@ -253,10 +278,17 @@ function writeSidebarSort(v: SidebarSortSpec) {
 const SIDEBAR_FOCUSED_WIDTH_KEY = 'ete-sthetic.sidebarFocusedWidth'
 const SIDEBAR_COLLAPSED_WIDTH_KEY = 'ete-sthetic.sidebarCollapsedWidth'
 const DETAIL_FOCUSED_WIDTH_KEY = 'ete-sthetic.detailFocusedWidth'
+const DETAIL_COLLAPSED_WIDTH_KEY = 'ete-sthetic.detailCollapsedWidth'
 // Detail panel resize bounds. Default matches the prior w-80 (320 px).
 const DETAIL_MIN_WIDTH = 240
 const DETAIL_MAX_WIDTH = 720
 const DETAIL_DEFAULT_WIDTH = 320
+// When the panel is pinned but not focused it recedes to a narrower
+// "peek" width (still showing the detail, just out of the way). Its own
+// adjustable width, mirroring the sidebar's collapsed width. The min is
+// lower than the focused min so the peek can be shrunk well past it.
+const DETAIL_COLLAPSED_MIN_WIDTH = 140
+const DETAIL_COLLAPSED_DEFAULT_WIDTH = 240
 // Sidebar resize bounds. Min keeps the colored dot + open-count visible;
 // max stops the user shoving it past half the typical window.
 const SIDEBAR_MIN_WIDTH = 32
@@ -352,6 +384,21 @@ function readPhonePriority(): boolean {
   }
 }
 
+// Compact relative-time formatter for the sidebar list-row "Xm" badge.
+// Differs from `formatSyncAge` (which is verbose — "Synced Xm ago" —
+// for the global pill) in that the sidebar has ~3 chars of room.
+function compactSyncAge(syncedAt: number, now: number): string {
+  const diff = Math.max(0, Math.floor((now - syncedAt) / 1000))
+  if (diff < 60) return `${diff}s`
+  const mins = Math.floor(diff / 60)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  if (days < 365) return `${days}d`
+  return `${Math.floor(days / 365)}y`
+}
+
 function writePhonePriority(value: boolean) {
   try {
     localStorage.setItem(PHONE_PRIORITY_KEY, value ? 'true' : 'false')
@@ -380,20 +427,20 @@ function writeSidebarWidth(key: string, value: number) {
   }
 }
 
-function readDetailWidth(): number {
+function readDetailWidth(key: string, fallback: number, min: number): number {
   try {
-    const raw = localStorage.getItem(DETAIL_FOCUSED_WIDTH_KEY)
-    if (raw == null) return DETAIL_DEFAULT_WIDTH
+    const raw = localStorage.getItem(key)
+    if (raw == null) return fallback
     const n = Number(raw)
-    if (!Number.isFinite(n)) return DETAIL_DEFAULT_WIDTH
-    return Math.max(DETAIL_MIN_WIDTH, Math.min(DETAIL_MAX_WIDTH, n))
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(min, Math.min(DETAIL_MAX_WIDTH, n))
   } catch {
-    return DETAIL_DEFAULT_WIDTH
+    return fallback
   }
 }
-function writeDetailWidth(value: number) {
+function writeDetailWidth(key: string, value: number) {
   try {
-    localStorage.setItem(DETAIL_FOCUSED_WIDTH_KEY, String(Math.round(value)))
+    localStorage.setItem(key, String(Math.round(value)))
   } catch {
     // not fatal
   }
@@ -436,7 +483,11 @@ function writeZoom(zone: ZoomZone, value: number) {
   }
 }
 
-export function MainView({ onLoggedOut }: Props) {
+export function MainView({
+  onLoggedOut,
+  pendingOpen,
+  onPendingOpenConsumed,
+}: Props) {
   // Seed initial state from the process-lifetime task memory cache so
   // switching back from the calendar module is instant (no spinner, no
   // disk reread). The state-mirror effect below keeps the cache in sync.
@@ -566,8 +617,11 @@ export function MainView({ onLoggedOut }: Props) {
     null,
   )
   const [confirmDelete, setConfirmDelete] = useState<{
-    node: TaskNode
-    descendantCount: number
+    // Outermost subtrees to remove (one for a single row, several for a
+    // multi-selection). Each carries its whole subtree.
+    roots: TaskNode[]
+    // Total items removed (roots + every descendant), de-duplicated.
+    totalCount: number
   } | null>(null)
   // Move-task picker state. itemUids covers the selected node + its
   // whole subtree (parent moves take their children with them).
@@ -576,10 +630,82 @@ export function MainView({ onLoggedOut }: Props) {
   const [selectedTaskUid, setSelectedTaskUid] = useState<string | null>(
     () => m0.selectedTaskUid,
   )
+  // Multi-selection: the full set of selected VTODO uids (always includes
+  // `selectedTaskUid`, the cursor, when non-empty). Size ≤ 1 is an ordinary
+  // single selection. `selectionAnchor` is the fixed end of a Shift-range;
+  // the range itself is computed in TaskTree (it owns the visible order) and
+  // reported back via `handleSelectRange`.
+  const [selectedTaskUids, setSelectedTaskUids] = useState<ReadonlySet<string>>(
+    () => new Set(m0.selectedTaskUid ? [m0.selectedTaskUid] : []),
+  )
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(
+    () => m0.selectedTaskUid,
+  )
+
+  // Single-select: move the cursor and collapse any multi-selection down to
+  // just this row (it also becomes the new Shift-range anchor). Every
+  // ordinary selection change — arrow nav, click, typeahead, navigate,
+  // create, delete-recovery, move-follow — routes through here so the
+  // multi-selection set never goes stale behind the cursor.
+  const selectSingle = useCallback((uid: string | null) => {
+    setSelectedTaskUid(uid)
+    setSelectedTaskUids(new Set(uid ? [uid] : []))
+    setSelectionAnchor(uid)
+  }, [])
+
+  // Shift-range select (reported by TaskTree, which owns the visible order):
+  // set the explicit selection set and move the cursor, leaving the anchor.
+  const handleSelectRange = useCallback(
+    (uids: string[], cursor: string) => {
+      setSelectedTaskUids(new Set(uids))
+      setSelectedTaskUid(cursor)
+      setFocusZone('tasks')
+    },
+    [],
+  )
+
+  // Ctrl/Cmd+click toggles one row in/out of the selection. The set never
+  // goes empty (a deselect that would empty it stays single on that row),
+  // and removing the cursor moves it to another still-selected row so the
+  // cursor invariant (cursor ∈ set) holds.
+  const handleToggleSelect = useCallback(
+    (uid: string) => {
+      setFocusZone('tasks')
+      setSelectionAnchor(uid)
+      const next = new Set(selectedTaskUids)
+      if (next.has(uid)) {
+        next.delete(uid)
+        if (next.size === 0) {
+          next.add(uid)
+          setSelectedTaskUid(uid)
+        } else if (selectedTaskUid === uid) {
+          setSelectedTaskUid(next.values().next().value as string)
+        }
+      } else {
+        next.add(uid)
+        setSelectedTaskUid(uid)
+      }
+      setSelectedTaskUids(next)
+    },
+    [selectedTaskUids, selectedTaskUid],
+  )
   const [focusZone, setFocusZone] = useState<'tasks' | 'sidebar' | 'details'>(
     'tasks',
   )
+  // Reveal a task from the global meta-search: switch to its list (which
+  // loads it), then select + focus it once that list is active.
+  useEffect(() => {
+    if (!pendingOpen) return
+    if (activeUid !== pendingOpen.collectionUid) {
+      setActiveUid(pendingOpen.collectionUid)
+      return
+    }
+    selectSingle(pendingOpen.taskUid)
+    setFocusZone('tasks')
+    onPendingOpenConsumed?.()
+  }, [pendingOpen, activeUid, selectSingle, onPendingOpenConsumed])
   const [showKeybindings, setShowKeybindings] = useState(false)
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   // Per-collection sync progress (items received from the server so far on
   // the in-flight pull). Cleared when the sync finishes/aborts/errors. The
   // header shows the active uid's entry as "Syncing… N items".
@@ -596,14 +722,14 @@ export function MainView({ onLoggedOut }: Props) {
       return next
     })
   }, [])
-  const [theme, setThemeState] = useState<Theme>(() => readStoredTheme())
-  const toggleTheme = useCallback(() => {
-    setThemeState((cur) => {
-      const next: Theme = cur === 'dark' ? 'light' : 'dark'
-      writeStoredTheme(next)
-      applyTheme(next)
-      return next
-    })
+  const [themePref, setThemePrefState] = useState<ThemePref>(() =>
+    readStoredThemePref(),
+  )
+  const setThemePref = useCallback((pref: ThemePref) => {
+    writeStoredThemePref(pref)
+    // Re-read + apply the resolved theme (handles 'system' → OS setting).
+    applyStoredTheme()
+    setThemePrefState(pref)
   }, [])
   const [accent, setAccentState] = useState<string | null>(() =>
     readStoredAccent(),
@@ -635,6 +761,34 @@ export function MainView({ onLoggedOut }: Props) {
       return next
     })
   }, [])
+  // Per-list "Xm" age badge in the sidebar. Off by default; flipped
+  // from the settings popover (Display pane). Subscribes to the
+  // taskRow settings event so a toggle there takes effect without
+  // remount.
+  const [showSidebarSyncAge, setShowSidebarSyncAge] = useState(
+    readShowSidebarSyncAge,
+  )
+  useEffect(() => {
+    const refresh = () => setShowSidebarSyncAge(readShowSidebarSyncAge())
+    window.addEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
+    return () =>
+      window.removeEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
+  }, [])
+  // Low-frequency tick (30 s) that re-renders the sidebar so the "Xm"
+  // labels age in real time. Only runs when the feature is on, so the
+  // off path costs nothing.
+  const [sidebarAgeTick, setSidebarAgeTick] = useState(0)
+  useEffect(() => {
+    if (!showSidebarSyncAge) return
+    const id = window.setInterval(
+      () => setSidebarAgeTick((n) => n + 1),
+      30_000,
+    )
+    return () => window.clearInterval(id)
+  }, [showSidebarSyncAge])
+  // Read referenced so React doesn't optimise the dep away (the value
+  // itself drives the periodic re-render).
+  void sidebarAgeTick
   const [sidebarSort, setSidebarSortState] = useState<SidebarSortSpec>(() =>
     readSidebarSort(),
   )
@@ -711,7 +865,18 @@ export function MainView({ onLoggedOut }: Props) {
 
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [detailFocusedWidth, setDetailFocusedWidth] = useState<number>(() =>
-    readDetailWidth(),
+    readDetailWidth(
+      DETAIL_FOCUSED_WIDTH_KEY,
+      DETAIL_DEFAULT_WIDTH,
+      DETAIL_MIN_WIDTH,
+    ),
+  )
+  const [detailCollapsedWidth, setDetailCollapsedWidth] = useState<number>(() =>
+    readDetailWidth(
+      DETAIL_COLLAPSED_WIDTH_KEY,
+      DETAIL_COLLAPSED_DEFAULT_WIDTH,
+      DETAIL_COLLAPSED_MIN_WIDTH,
+    ),
   )
   const [isResizingDetail, setIsResizingDetail] = useState(false)
   const handleSidebarResizeStart = useCallback(
@@ -753,31 +918,42 @@ export function MainView({ onLoggedOut }: Props) {
 
   // Detail panel resize. The panel hugs the window's right edge, so a
   // leftward drag *increases* the width (delta is inverted vs sidebar).
+  // Like the sidebar, the handle adjusts whichever width is live: the
+  // focused width when the panel is focused, otherwise the pinned "peek"
+  // width — so both states are independently adjustable.
   const handleDetailResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
+      const detailFocused = focusZone === 'details'
       const startX = e.clientX
-      const startWidth = detailFocusedWidth
+      const startWidth = detailFocused ? detailFocusedWidth : detailCollapsedWidth
+      const min = detailFocused ? DETAIL_MIN_WIDTH : DETAIL_COLLAPSED_MIN_WIDTH
       let latest = startWidth
       setIsResizingDetail(true)
       const onMove = (ev: MouseEvent) => {
         const next = Math.max(
-          DETAIL_MIN_WIDTH,
+          min,
           Math.min(DETAIL_MAX_WIDTH, startWidth - (ev.clientX - startX)),
         )
         latest = next
-        setDetailFocusedWidth(next)
+        if (detailFocused) setDetailFocusedWidth(next)
+        else setDetailCollapsedWidth(next)
       }
       const onUp = () => {
         setIsResizingDetail(false)
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
-        writeDetailWidth(latest)
+        writeDetailWidth(
+          detailFocused
+            ? DETAIL_FOCUSED_WIDTH_KEY
+            : DETAIL_COLLAPSED_WIDTH_KEY,
+          latest,
+        )
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [detailFocusedWidth],
+    [focusZone, detailFocusedWidth, detailCollapsedWidth],
   )
   // When Hide-done is on, completed tasks linger for a grace window before
   // disappearing so a misclicked checkbox can be untoggled. Map value is the
@@ -821,6 +997,12 @@ export function MainView({ onLoggedOut }: Props) {
   // handleSaveDetails's identity.
   const handleSaveDetailsRef =
     useRef<((patch: VTodoPatch) => Promise<void>) | null>(null)
+
+  // Forward ref to the manual-reorder handler (Shift+↑/↓), same rationale
+  // as handleSaveDetailsRef — the global keybindings effect calls it
+  // without re-subscribing whenever the handler's identity changes.
+  const handleReorderSelectedRef =
+    useRef<((direction: -1 | 1) => void) | null>(null)
 
   useEffect(() => {
     cancelledRef.current = false
@@ -1319,6 +1501,21 @@ export function MainView({ onLoggedOut }: Props) {
     [],
   )
 
+  // When the blueprint engine spawns instances into a list we're currently
+  // showing, delta-sync just that list so the new tasks appear without a
+  // manual refresh. Lists we haven't hydrated yet pick them up on first open.
+  useEffect(() => {
+    const onSpawned = (e: Event) => {
+      const detail = (e as CustomEvent<{ listUids: string[] }>).detail
+      if (!detail?.listUids) return
+      for (const uid of detail.listUids) {
+        if (itemsByUidRef.current.has(uid)) void fetchCollection(uid)
+      }
+    }
+    window.addEventListener(BLUEPRINTS_SPAWNED_EVENT, onSpawned)
+    return () => window.removeEventListener(BLUEPRINTS_SPAWNED_EVENT, onSpawned)
+  }, [fetchCollection])
+
   // Load collections on mount, and again whenever the user toggles
   // "show deleted lists" — the server response is different in that mode
   // (tombstones included).
@@ -1434,8 +1631,18 @@ export function MainView({ onLoggedOut }: Props) {
   // No AbortController: an in-flight sync keeps running when you switch
   // away (aborts only on unmount via cancelledRef); fetchCollection's
   // inFlightRef dedupe means switching back never restarts it.
+  //
+  // Intentionally NOT gated on `hydrated`. The disk-hydration pass is
+  // a pure cache-warmup optimisation; the fetch and hydration can race
+  // safely (both write into `itemsByUid` via upsert / replace, and a
+  // straggling hydration just refreshes the bucket the fetch has been
+  // filling). Previously we gated on hydrated to avoid that race, but
+  // a bug where hydrated occasionally stays false on cold start (even
+  // with the 2 s safety timer) left the pane stuck at "Loading
+  // tasks…" until the user clicked Sync. Dropping the gate makes the
+  // trigger robust to any setHydrated misfire.
   useEffect(() => {
-    if (!hydrated || !activeUid) return
+    if (!activeUid) return
     const last = syncedAtRef.current.get(activeUid)
     const freshMs = switchFreshMin * 60_000
     const needInitial = !loadedUids.has(activeUid)
@@ -1446,7 +1653,7 @@ export function MainView({ onLoggedOut }: Props) {
     // loadedUids intentionally omitted: only react to a real list
     // switch, not to a background sync flipping it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeUid, hydrated, fetchCollection, switchFreshMin])
+  }, [activeUid, fetchCollection, switchFreshMin])
 
   // Periodic background refresh of the ACTIVE list while it's open
   // (fast cadence). Disabled when 0 ("manual").
@@ -1555,6 +1762,32 @@ export function MainView({ onLoggedOut }: Props) {
     () => (activeItems ? buildTree(activeItems, activeSort) : []),
     [activeItems, activeSort],
   )
+
+  // From the multi-selection, keep only the outermost selected subtrees:
+  // drop any selected uid that has another selected uid among its ancestors
+  // (its subtree already travels with that ancestor). Returns the matching
+  // TaskNodes from the full tree.
+  const topLevelSelectedRoots = useCallback((): TaskNode[] => {
+    const sel = selectedTaskUids
+    if (sel.size === 0) return []
+    const underAnotherSelected = (uid: string): boolean => {
+      let cursor = uid
+      for (let i = 0; i < 256; i++) {
+        const loc = findParentAndSiblings(fullTree, cursor)
+        if (!loc || !loc.parent) return false
+        if (sel.has(loc.parent.todo.uid)) return true
+        cursor = loc.parent.todo.uid
+      }
+      return false
+    }
+    const out: TaskNode[] = []
+    for (const uid of sel) {
+      if (underAnotherSelected(uid)) continue
+      const node = findNodeByUid(fullTree, uid)
+      if (node) out.push(node)
+    }
+    return out
+  }, [selectedTaskUids, fullTree])
   // Sidebar lists, sorted by the user-picked axis + reverse flag. Open
   // and total counts come from itemsByUid; lists we haven't hydrated yet
   // sort as zero so they don't reshuffle as prefetch fills in. For
@@ -1777,9 +2010,9 @@ export function MainView({ onLoggedOut }: Props) {
       if (i < 0) return
       const j = Math.max(0, Math.min(uids.length - 1, i + delta))
       const next = uids[j]
-      if (next && next !== selectedTaskUid) setSelectedTaskUid(next)
+      if (next && next !== selectedTaskUid) selectSingle(next)
     },
-    [selectedTaskUid],
+    [selectedTaskUid, selectSingle],
   )
 
   const handleQuickAddRoot = useCallback(
@@ -1797,7 +2030,7 @@ export function MainView({ onLoggedOut }: Props) {
           next.set(colUid, [...items, newItem])
           return next
         })
-        setSelectedTaskUid(newItem.todo.uid)
+        selectSingle(newItem.todo.uid)
       } catch (err) {
         if (cancelledRef.current) return
         setMutationError(
@@ -1805,7 +2038,7 @@ export function MainView({ onLoggedOut }: Props) {
         )
       }
     },
-    [activeUid],
+    [activeUid, selectSingle],
   )
 
   const handleQuickAddRootAndOpen = useCallback(
@@ -1818,29 +2051,51 @@ export function MainView({ onLoggedOut }: Props) {
   )
 
   // Logseq-style status cycle: NEEDS-ACTION → IN-PROCESS → COMPLETED →
-  // NEEDS-ACTION. CANCELLED rejoins the cycle at the top (it's set
-  // deliberately via the detail panel, so cycling out of it lands on
-  // NEEDS-ACTION rather than IN-PROCESS). Bound to Ctrl+Enter in the
-  // global keyboard handler below — declared up here so that effect's
-  // dep array can list it without hitting the TDZ.
-  const handleCycleStatus = useCallback(
-    async (task: TaskItem) => {
-      if (!activeUid) return
-      const colUid = activeUid
-      const itemUid = task.itemUid
-      const original: TaskItem = task
-      const nextStatus: TaskItem['todo']['status'] =
-        task.todo.status === 'NEEDS-ACTION'
-          ? 'IN-PROCESS'
-          : task.todo.status === 'IN-PROCESS'
-            ? 'COMPLETED'
-            : 'NEEDS-ACTION'
+  // NEEDS-ACTION. CANCELLED rejoins the cycle at the top (so cycling out
+  // of it lands on NEEDS-ACTION rather than IN-PROCESS).
+  const nextCycleStatus = (s: TaskStatus): TaskStatus =>
+    s === 'NEEDS-ACTION'
+      ? 'IN-PROCESS'
+      : s === 'IN-PROCESS'
+        ? 'COMPLETED'
+        : 'NEEDS-ACTION'
+
+  // Completing a *recurring* task rolls it forward to its next occurrence
+  // (status stays NEEDS-ACTION, due/start advance) instead of marking it
+  // done; non-recurring tasks — and an exhausted series (COUNT/UNTIL) —
+  // complete normally. Returns the patch to persist plus the optimistic
+  // todo (computed exactly the way the server will: patch the raw, re-parse).
+  const completionPatch = useCallback(
+    (todo: VTodo): { patch: VTodoPatch; todo: VTodo; rolledForward: boolean } => {
+      const roll = rollForwardOnComplete(todo)
+      const patch: VTodoPatch = roll ?? { status: 'COMPLETED' }
+      let next = todo
+      try {
+        const parsed = parseVTodo(updateVTodo(todo.raw, patch))
+        if (parsed) next = parsed
+      } catch {
+        next = { ...todo, status: roll ? todo.status : 'COMPLETED' }
+      }
+      return { patch, todo: next, rolledForward: roll != null }
+    },
+    [],
+  )
+
+  // Apply a single status change to one task (optimistic, with rollback and
+  // hide-grace bookkeeping). Shared by the cycle / toggle / multi-select
+  // paths. Completing routes through completionPatch so recurring tasks roll
+  // forward; the grace timer only fires when the task actually completed.
+  const applyStatusChange = useCallback(
+    async (colUid: string, itemUid: string, todo: VTodo, target: TaskStatus) => {
+      const original: TaskItem = { itemUid, todo }
+      const completion = target === 'COMPLETED' ? completionPatch(todo) : null
+      const patch: VTodoPatch = completion ? completion.patch : { status: target }
       const optimistic: TaskItem = {
         itemUid,
-        todo: { ...task.todo, status: nextStatus },
+        todo: completion ? completion.todo : { ...todo, status: target },
       }
+      const actuallyCompleted = completion ? !completion.rolledForward : false
 
-      setMutationError(null)
       setPendingItemUids((prev) => {
         const next = new Set(prev)
         next.add(itemUid)
@@ -1848,26 +2103,21 @@ export function MainView({ onLoggedOut }: Props) {
       })
       replaceCachedItem(colUid, itemUid, optimistic)
 
-      // Grace-period bookkeeping mirrors handleToggleComplete: a new
-      // COMPLETED gets the hide-grace timer; leaving COMPLETED clears it.
-      if (nextStatus === 'COMPLETED' && task.todo.status !== 'COMPLETED') {
-        markRecentlyCompleted(task.todo.uid)
-      } else if (
-        task.todo.status === 'COMPLETED' &&
-        nextStatus !== 'COMPLETED'
-      ) {
-        clearRecentlyCompleted(task.todo.uid)
+      if (actuallyCompleted && todo.status !== 'COMPLETED') {
+        markRecentlyCompleted(todo.uid)
+      } else if (todo.status === 'COMPLETED' && target !== 'COMPLETED') {
+        clearRecentlyCompleted(todo.uid)
       }
 
       try {
-        const result = await updateTask(colUid, itemUid, { status: nextStatus })
+        const result = await updateTask(colUid, itemUid, patch)
         if (cancelledRef.current) return
         replaceCachedItem(colUid, itemUid, result)
       } catch (err) {
         if (cancelledRef.current) return
         replaceCachedItem(colUid, itemUid, original)
-        if (nextStatus === 'COMPLETED' && task.todo.status !== 'COMPLETED') {
-          clearRecentlyCompleted(task.todo.uid)
+        if (actuallyCompleted && todo.status !== 'COMPLETED') {
+          clearRecentlyCompleted(todo.uid)
         }
         setMutationError(
           err instanceof Error ? err.message : 'Failed to update task',
@@ -1882,7 +2132,39 @@ export function MainView({ onLoggedOut }: Props) {
         }
       }
     },
-    [activeUid, markRecentlyCompleted, clearRecentlyCompleted],
+    [completionPatch, markRecentlyCompleted, clearRecentlyCompleted],
+  )
+
+  // Bound to Enter / Ctrl+Enter — declared up here so the global keyboard
+  // effect's dep array can list it without hitting the TDZ.
+  const handleCycleStatus = useCallback(
+    async (task: TaskItem) => {
+      if (!activeUid) return
+      setMutationError(null)
+      await applyStatusChange(
+        activeUid,
+        task.itemUid,
+        task.todo,
+        nextCycleStatus(task.todo.status),
+      )
+    },
+    [activeUid, applyStatusChange],
+  )
+
+  // Multi-select Enter: drive every selected task to the *same* next status
+  // derived from the cursor row, so the group moves in lockstep (completing
+  // recurring members rolls each forward individually).
+  const handleCycleStatusSelected = useCallback(
+    async (cursor: TaskNode, selected: TaskNode[]) => {
+      if (!activeUid) return
+      const colUid = activeUid
+      const target = nextCycleStatus(cursor.todo.status)
+      setMutationError(null)
+      await Promise.all(
+        selected.map((n) => applyStatusChange(colUid, n.itemUid, n.todo, target)),
+      )
+    },
+    [activeUid, applyStatusChange],
   )
 
   const handleStartCreateChild = useCallback(
@@ -1918,7 +2200,7 @@ export function MainView({ onLoggedOut }: Props) {
         })
         // Follow the new task: select it so the tree's auto-focus +
         // scrollIntoView take the user to wherever it lands after sorting.
-        setSelectedTaskUid(newItem.todo.uid)
+        selectSingle(newItem.todo.uid)
       } catch (err) {
         if (cancelledRef.current) return
         setMutationError(
@@ -1926,8 +2208,71 @@ export function MainView({ onLoggedOut }: Props) {
         )
       }
     },
-    [activeUid, creating],
+    [activeUid, creating, selectSingle],
   )
+
+  // In-memory clipboard for a single copied task. Holds a snapshot of the
+  // source task's content (not a live reference), so a later paste survives
+  // edits or deletion of the original. Paste drops it in as a sibling of
+  // the current selection with a fresh UID and uncompleted status.
+  const taskClipboardRef = useRef<{
+    summary: string
+    description?: string
+    due?: string
+    priority: Priority
+    rrule?: string
+  } | null>(null)
+
+  const handleCopyTask = useCallback(() => {
+    const it = selectedTaskItem
+    if (!it) return false
+    const t = it.todo
+    taskClipboardRef.current = {
+      summary: t.summary,
+      description: t.description,
+      due: t.due,
+      priority: t.priority,
+      rrule: t.rrule,
+    }
+    // Best-effort: also push the summary onto the system clipboard so it can
+    // be pasted into other apps. Ignore failures (locked-down webviews).
+    void navigator.clipboard?.writeText?.(t.summary).catch(() => {})
+    return true
+  }, [selectedTaskItem])
+
+  const handlePasteTask = useCallback(async () => {
+    const snap = taskClipboardRef.current
+    if (!snap || !activeUid) return false
+    const colUid = activeUid
+    // Paste as a sibling of the current selection (same parent); root when
+    // nothing is selected.
+    const parentUid = selectedTaskItem?.todo.parentUid
+    try {
+      const newItem = await createTaskFrom(colUid, {
+        summary: snap.summary,
+        description: snap.description,
+        due: snap.due,
+        priority: snap.priority,
+        rrule: snap.rrule,
+        parentUid,
+      })
+      if (cancelledRef.current) return true
+      setItemsByUid((prev) => {
+        const items = prev.get(colUid) ?? []
+        const next = new Map(prev)
+        next.set(colUid, [...items, newItem])
+        return next
+      })
+      // Follow the pasted task so the tree scrolls to wherever it lands.
+      selectSingle(newItem.todo.uid)
+    } catch (err) {
+      if (cancelledRef.current) return true
+      setMutationError(
+        err instanceof Error ? err.message : 'Failed to paste task',
+      )
+    }
+    return true
+  }, [activeUid, selectedTaskItem, selectSingle])
 
   // Commit an inline (sub)task then open ITS detail panel (Ctrl+→ while
   // typing). handleConfirmCreate already selects the new task.
@@ -1940,21 +2285,33 @@ export function MainView({ onLoggedOut }: Props) {
     [handleConfirmCreate],
   )
 
-  const handleDeleteRequest = useCallback((node: TaskNode) => {
-    const descendants = collectDescendantItemUids(node)
-    setConfirmDelete({ node, descendantCount: descendants.length - 1 })
-  }, [])
+  const handleDeleteRequest = useCallback(
+    (node: TaskNode) => {
+      // If the row is part of a multi-selection, delete the whole selection
+      // (outermost subtrees only — a selected child travels with its selected
+      // ancestor); otherwise just this row's subtree.
+      const sel = selectedTaskUids
+      let roots: TaskNode[] =
+        sel.size > 1 && sel.has(node.todo.uid) ? topLevelSelectedRoots() : [node]
+      if (roots.length === 0) roots = [node]
+      const totalCount = new Set(
+        roots.flatMap((n) => collectDescendantItemUids(n)),
+      ).size
+      setConfirmDelete({ roots, totalCount })
+    },
+    [selectedTaskUids, topLevelSelectedRoots],
+  )
 
   // Enter the tasks zone and make sure something is selected so the user
   // lands on the first task instead of a selection-less list they'd have
   // to arrow into. Keeps the current selection if it's still visible.
   const focusTasks = useCallback(() => {
     setFocusZone('tasks')
-    setSelectedTaskUid((cur) => {
-      if (cur && findNodeByUid(visibleTree, cur)) return cur
-      return visibleTree[0]?.todo.uid ?? cur
-    })
-  }, [visibleTree])
+    const cur = selectedTaskUid
+    if (cur && findNodeByUid(visibleTree, cur)) return
+    const next = visibleTree[0]?.todo.uid ?? cur
+    if (next) selectSingle(next)
+  }, [visibleTree, selectedTaskUid, selectSingle])
 
   // Per-collection cursor memory. When the user switches lists, restore
   // the last task they had selected in the new list; while they're
@@ -1966,8 +2323,14 @@ export function MainView({ onLoggedOut }: Props) {
     if (prevActiveUidRef.current === activeUid) return
     prevActiveUidRef.current = activeUid
     const saved = getTaskMemory().lastSelectedByCollection.get(activeUid)
-    if (saved) setSelectedTaskUid(saved)
-  }, [activeUid])
+    if (saved) selectSingle(saved)
+    else {
+      // New list with no remembered cursor — drop any multi-selection so it
+      // never carries across lists.
+      setSelectedTaskUids(new Set())
+      setSelectionAnchor(null)
+    }
+  }, [activeUid, selectSingle])
   useEffect(() => {
     if (!activeUid) return
     if (prevActiveUidRef.current !== activeUid) return
@@ -2160,35 +2523,42 @@ export function MainView({ onLoggedOut }: Props) {
         }
       }
 
-      // Ctrl/Cmd+F → open Filter and focus search (override browser find).
-      // Honored even from inside text inputs.
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+      // Named command shortcuts route through `matchesBinding` so the
+      // user can rebind them under Settings → Advanced → Keyboard
+      // shortcuts. Defaults match the labels printed in
+      // KeybindingsModal. Listed in order of "more specific first" so
+      // e.g. Ctrl+Shift+F's match is checked before Ctrl+F's.
+
+      // Search every list — cross-list global search modal.
+      if (matchesBinding(e, 'search.all')) {
+        e.preventDefault()
+        setGlobalSearchOpen(true)
+        return
+      }
+
+      // Filter — per-list filter popover with the search input focused.
+      // Honored even from inside text inputs (override of browser find).
+      if (matchesBinding(e, 'filter')) {
         e.preventDefault()
         setFilterOpen(true)
         setFilterFocusKey((k) => k + 1)
         return
       }
 
-      // Ctrl/Cmd+L → focus the sidebar (list of task lists). Honored
-      // even from inside text inputs so it works as a universal
-      // "jump to lists" shortcut.
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
+      // Focus the lists sidebar.
+      if (matchesBinding(e, 'focus.lists')) {
         e.preventDefault()
         setFocusZone('sidebar')
         return
       }
-      // Ctrl/Cmd+T → focus the task pane.
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        !e.shiftKey &&
-        (e.key === 't' || e.key === 'T')
-      ) {
+      // Focus the task pane.
+      if (matchesBinding(e, 'focus.tasks')) {
         e.preventDefault()
         focusTasks()
         return
       }
-      // Ctrl/Cmd+E → open the detail panel for the selected task.
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'e' || e.key === 'E')) {
+      // Open the detail panel for the selected task.
+      if (matchesBinding(e, 'focus.details')) {
         if (!selectedTaskUid) return
         e.preventDefault()
         setFocusZone('details')
@@ -2205,6 +2575,19 @@ export function MainView({ onLoggedOut }: Props) {
       const inTextField =
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
+      // Escape in the tasks zone collapses a multi-selection back to just
+      // the cursor (only when more than one row is selected, so it doesn't
+      // swallow Escape from other consumers when nothing's multi-selected).
+      if (
+        e.key === 'Escape' &&
+        !inTextField &&
+        focusZone === 'tasks' &&
+        selectedTaskUids.size > 1
+      ) {
+        e.preventDefault()
+        selectSingle(selectedTaskUid)
+        return
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight') {
         if (inTextField || focusZone === 'details') return
         e.preventDefault()
@@ -2227,6 +2610,39 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
+      // Ctrl/Cmd+ArrowUp/Down in the sidebar pages the active-list
+      // selection by 10 entries, mirroring TaskTree's own Ctrl+arrow
+      // alias for PageUp/PageDown. Without this, the sidebar's switch
+      // block (further down, which doesn't see modifier chords) would
+      // miss it and the chord would be a no-op. Sibling Alt-arrows are
+      // a reparent op for tasks, not navigation, so they're not in
+      // play here.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        !e.shiftKey &&
+        focusZone === 'sidebar' &&
+        (e.key === 'ArrowDown' || e.key === 'ArrowUp') &&
+        sortedCollections &&
+        sortedCollections.length > 0
+      ) {
+        if (inTextField) return
+        e.preventDefault()
+        const list = sortedCollections
+        const idx = list.findIndex((c) => c.uid === activeUid)
+        const PAGE = 10
+        const next =
+          e.key === 'ArrowDown'
+            ? idx < 0
+              ? 0
+              : Math.min(list.length - 1, idx + PAGE)
+            : idx <= 0
+              ? 0
+              : Math.max(0, idx - PAGE)
+        setActiveUid(list[next].uid)
+        return
+      }
+
       // Ctrl/Cmd+Enter opens the detail panel for the selected task
       // (plain Enter now cycles status, so Ctrl+Enter is the "open card"
       // accelerator, mirroring Ctrl+→). The detail panel reuses
@@ -2239,29 +2655,43 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      // Ctrl/Cmd+Shift+S → force a sync-all (every list refreshes now,
-      // bypassing the staleness windows). The per-row spinners and the
-      // sidebar's sync-all spinner light up the same way as the toolbar
-      // button. Handled before the bare Ctrl+S so the Shift variant
-      // doesn't fall through to the sort popover.
+      // Ctrl/Cmd+C / Ctrl/Cmd+V copy & paste the selected task as a
+      // sibling. Tasks zone only; never from text fields (native copy/paste
+      // wins there), and copy defers to a real text selection if one exists.
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.shiftKey &&
-        (e.key === 's' || e.key === 'S')
+        !e.altKey &&
+        !e.shiftKey &&
+        focusZone === 'tasks' &&
+        !inTextField
       ) {
+        if (e.key === 'c' || e.key === 'C') {
+          if (window.getSelection()?.toString()) return
+          if (handleCopyTask()) e.preventDefault()
+          return
+        }
+        if (e.key === 'v' || e.key === 'V') {
+          if (taskClipboardRef.current) {
+            e.preventDefault()
+            void handlePasteTask()
+          }
+          return
+        }
+      }
+
+      // Sync just the active list — force-refresh, bypassing staleness
+      // windows. (Ctrl/Cmd+Alt+S, handled globally in App, force-syncs
+      // every list across all modules.) Listed before the sort binding so
+      // the Shift variant of S doesn't fall through.
+      if (matchesBinding(e, 'sync.active')) {
         e.preventDefault()
-        syncAll()
+        if (activeUid) void fetchCollection(activeUid)
         return
       }
 
-      // Ctrl/Cmd+S → jump to the sorting menu (overrides browser Save).
-      // In the list view that's the sidebar list-settings popover (sort
-      // lists / show deleted); elsewhere it's the task sort popover.
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        !e.shiftKey &&
-        (e.key === 's' || e.key === 'S')
-      ) {
+      // Sort — sidebar list-settings popover when sidebar-focused;
+      // otherwise the task sort popover for the active list.
+      if (matchesBinding(e, 'sort')) {
         e.preventDefault()
         if (focusZone === 'sidebar') {
           setSidebarSettingsOpen(true)
@@ -2273,9 +2703,8 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      // Ctrl/Cmd+N → focus the quick-add row (plain `n` is task-view
-      // typeahead now).
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+      // New task — focus the quick-add row.
+      if (matchesBinding(e, 'new.task')) {
         if (!activeUid || !activeItems) return
         e.preventDefault()
         setFocusZone('tasks')
@@ -2283,29 +2712,79 @@ export function MainView({ onLoggedOut }: Props) {
         return
       }
 
-      // Ctrl/Cmd+M → move the selected task, staying on the source list
-      //   (the "get this off my plate" path — the common case).
-      // Ctrl/Cmd+Shift+M → move AND follow the task to the destination
-      //   list so the user can keep working on it where it landed.
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'm' || e.key === 'M')) {
+      // Move task — opens the picker. The same handler reads `e.shiftKey`
+      // separately to decide whether to follow the task to its new list
+      // (Ctrl+Shift+M by default), so we keep the bare-move binding
+      // shift-agnostic when reading it. Only fire when the captured
+      // chord matches `move.task` *or* the same chord plus Shift.
+      const moveBinding = matchesBinding(e, 'move.task')
+      const moveFollow =
+        e.shiftKey &&
+        // Recompute with shift forced off so a "Ctrl+M" default matches
+        // even when Shift is held. This is the only action where the
+        // Shift modifier conveys *behaviour* rather than identity.
+        matchesBinding(
+          new KeyboardEvent('keydown', {
+            key: e.key,
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+            shiftKey: false,
+            altKey: e.altKey,
+          }),
+          'move.task',
+        )
+      if (moveBinding || moveFollow) {
         if (!selectedTaskUid || !activeUid) return
-        const node = findNodeByUid(fullTree, selectedTaskUid)
-        if (!node) return
-        const itemUids = collectDescendantItemUids(node)
+        // Operate on the whole multi-selection (outermost subtrees only);
+        // falls back to the single selected node when nothing else is picked.
+        const roots = topLevelSelectedRoots()
+        const moveRoots =
+          roots.length > 0
+            ? roots
+            : (() => {
+                const n = findNodeByUid(fullTree, selectedTaskUid)
+                return n ? [n] : []
+              })()
+        if (moveRoots.length === 0) return
+        const itemUids = Array.from(
+          new Set(moveRoots.flatMap((n) => collectDescendantItemUids(n))),
+        )
         e.preventDefault()
         setMoving({
           itemUids,
-          rootVtodoUid: node.todo.uid,
-          summary: node.todo.summary,
-          descendantCount: itemUids.length - 1,
+          rootVtodoUid: moveRoots[0].todo.uid,
+          summary:
+            moveRoots.length > 1
+              ? `${moveRoots.length} tasks`
+              : moveRoots[0].todo.summary,
+          descendantCount:
+            moveRoots.length > 1 ? 0 : itemUids.length - 1,
           follow: e.shiftKey,
         })
         return
       }
 
-      // Alt+arrow on the selected task: pure parentUid edits that reuse
-      // handleSaveDetails's optimistic + rollback path. Sibling reorder
-      // is still deferred (needs the per-list manual-order store), so
+      // Alt+Shift+↑/↓ reorders the selected task within its sibling group —
+      // a true position swap, only under the 'manual' sort (other sorts own
+      // the order). Plain Shift+↑/↓ is multi-select (owned by TaskTree), so
+      // reorder lives on the Alt+Shift chord. Scoped to the tasks zone and
+      // skipped in text fields so Alt+Shift+arrow stays available there.
+      if (
+        e.shiftKey &&
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        focusZone === 'tasks' &&
+        !inTextField &&
+        selectedTaskUid &&
+        activeSort.sort === 'manual' &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+      ) {
+        e.preventDefault()
+        handleReorderSelectedRef.current?.(e.key === 'ArrowUp' ? -1 : 1)
+        return
+      }
+
       // Alt+↑/↓ here is a *reparent*, not a swap.
       //   Alt+←  outdent — become a sibling of the current parent
       //   Alt+→  indent  — become a child of the previous visible sibling
@@ -2339,12 +2818,16 @@ export function MainView({ onLoggedOut }: Props) {
           const newParentUid: string | null = grand?.parent?.todo.uid ?? null
           void save({ parentUid: newParentUid })
         } else if (e.key === 'ArrowRight') {
-          // Indent: become a child of the previous visible sibling. No-op
-          // for the first sibling (nothing to slot under).
-          if (loc.index === 0) return
+          // Indent: become a child of the previous visible sibling. At the
+          // top of a sort group there is no previous, so fall back to the
+          // next sibling — under priority sort a high-priority subtask gets
+          // sorted to the top and would otherwise be stuck. Only no-op
+          // when both neighbours are missing (single-child row).
+          const target =
+            loc.siblings[loc.index - 1] ?? loc.siblings[loc.index + 1]
+          if (!target) return
           e.preventDefault()
-          const prev = loc.siblings[loc.index - 1]
-          void save({ parentUid: prev.todo.uid })
+          void save({ parentUid: target.todo.uid })
         } else {
           // Alt+↑/↓: step the *parent reference* one position through the
           // parent's siblings — same depth, new branch. Under priority
@@ -2411,7 +2894,7 @@ export function MainView({ onLoggedOut }: Props) {
             const ci = matches.findIndex((m) => m.uid === selectedTaskUid)
             if (ci >= 0) pick = matches[(ci + 1) % matches.length]
           }
-          setSelectedTaskUid(pick.uid)
+          selectSingle(pick.uid)
         }
         return
       }
@@ -2557,11 +3040,17 @@ export function MainView({ onLoggedOut }: Props) {
     sortedCollections,
     activeUid,
     activeItems,
+    activeSort,
     selectedTaskUid,
+    selectedTaskUids,
+    selectSingle,
     selectedTaskItem,
     visibleTree,
     fullTree,
+    topLevelSelectedRoots,
     handleCycleStatus,
+    handleCopyTask,
+    handlePasteTask,
     handleStartCreateRoot,
     startCreateList,
     startRenameList,
@@ -2622,12 +3111,21 @@ export function MainView({ onLoggedOut }: Props) {
             // Follow the task: switch to the destination list and
             // re-select it by its preserved VTODO uid.
             setActiveUid(destUid)
-            setSelectedTaskUid(cur.rootVtodoUid)
+            selectSingle(cur.rootVtodoUid)
+            // If the moved task is completed, restart its hide-grace
+            // countdown so it lingers in the destination (time to reconsider
+            // the move) instead of being hidden the moment we arrive.
+            const root = movedItems.find(
+              (it) => it.todo.uid === cur.rootVtodoUid,
+            )
+            if (root?.todo.status === 'COMPLETED') {
+              markRecentlyCompleted(cur.rootVtodoUid)
+            }
           } else {
-            // Stay on the source. The moved row is gone from the source's
+            // Stay on the source. The moved rows are gone from the source's
             // visible items, so clear selection rather than leaving a
             // dangling uid that arrow-nav would have to recover from.
-            setSelectedTaskUid(null)
+            selectSingle(null)
           }
         }
       } catch (err) {
@@ -2683,7 +3181,7 @@ export function MainView({ onLoggedOut }: Props) {
         }
       }
     },
-    [activeItems],
+    [activeItems, selectSingle, markRecentlyCompleted],
   )
 
   // Move-picker pick → move the selected payload.
@@ -2699,30 +3197,148 @@ export function MainView({ onLoggedOut }: Props) {
   )
 
   // Drop a dragged task (by VTODO uid) onto a sidebar list → move its
-  // whole subtree there, reusing the verified move path (no picker).
+  // whole subtree there, reusing the verified move path (no picker). When
+  // the dragged row is part of a multi-selection, the whole selection moves.
   const handleDropTaskOnList = useCallback(
     (destUid: string, draggedUid: string) => {
       const srcUid = activeUid
       if (!srcUid || destUid === srcUid) return
-      const node = findNodeByUid(fullTree, draggedUid)
-      if (!node) return
-      const itemUids = collectDescendantItemUids(node)
+      const sel = selectedTaskUids
+      const roots =
+        sel.size > 1 && sel.has(draggedUid)
+          ? topLevelSelectedRoots()
+          : (() => {
+              const n = findNodeByUid(fullTree, draggedUid)
+              return n ? [n] : []
+            })()
+      if (roots.length === 0) return
+      const itemUids = Array.from(
+        new Set(roots.flatMap((n) => collectDescendantItemUids(n))),
+      )
       // Drag-to-list keeps the legacy follow behaviour — the drop's
       // destination is the user's pointer goal, so jumping there is what
       // they asked for. (Keyboard Ctrl+M is the "stay" path.)
       void performMove(
         {
           itemUids,
-          rootVtodoUid: node.todo.uid,
-          summary: node.todo.summary,
-          descendantCount: itemUids.length - 1,
+          rootVtodoUid: roots[0].todo.uid,
+          summary:
+            roots.length > 1 ? `${roots.length} tasks` : roots[0].todo.summary,
+          descendantCount: roots.length > 1 ? 0 : itemUids.length - 1,
           follow: true,
         },
         srcUid,
         destUid,
       )
     },
-    [activeUid, fullTree, performMove],
+    [activeUid, fullTree, performMove, selectedTaskUids, topLevelSelectedRoots],
+  )
+
+  // Reparent a dragged task (and any multi-selection it belongs to) under a
+  // target row — the "move to a sub-item" drop. Writes parentUid on each
+  // outermost selected root (optimistic + rollback per row, mirroring
+  // commitSiblingOrder). Skips targets that are the node itself or one of
+  // its own descendants so we never create a cycle.
+  const handleReparentDrop = useCallback(
+    (draggedUid: string, targetUid: string) => {
+      if (!activeUid || draggedUid === targetUid) return
+      const colUid = activeUid
+      const sel = selectedTaskUids
+      const roots =
+        sel.size > 1 && sel.has(draggedUid)
+          ? topLevelSelectedRoots()
+          : (() => {
+              const n = findNodeByUid(fullTree, draggedUid)
+              return n ? [n] : []
+            })()
+      if (roots.length === 0) return
+
+      const writes = roots
+        .map((node) => {
+          // No-op if already a direct child of the target.
+          if (node.todo.parentUid === targetUid) return null
+          // Disallow dropping a node onto itself or its own descendant.
+          const descendants = new Set<string>()
+          const collect = (n: TaskNode) => {
+            descendants.add(n.todo.uid)
+            for (const c of n.children) collect(c)
+          }
+          collect(node)
+          if (descendants.has(targetUid)) return null
+          return { itemUid: node.itemUid, original: { itemUid: node.itemUid, todo: node.todo } }
+        })
+        .filter((w): w is NonNullable<typeof w> => w !== null)
+      if (writes.length === 0) return
+
+      setMutationError(null)
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        writes.forEach((w) => next.add(w.itemUid))
+        return next
+      })
+      // Optimistic: reparent each row locally via the same raw-VTODO path
+      // the server uses, then re-parse so every derived field stays right.
+      writes.forEach((w) => {
+        let optimisticTodo = w.original.todo
+        try {
+          const parsed = parseVTodo(
+            updateVTodo(w.original.todo.raw, { parentUid: targetUid }),
+          )
+          if (parsed) optimisticTodo = parsed
+        } catch {
+          // keep original
+        }
+        replaceCachedItem(colUid, w.itemUid, {
+          itemUid: w.itemUid,
+          todo: optimisticTodo,
+        })
+      })
+
+      void Promise.all(
+        writes.map(async (w) => {
+          try {
+            const result = await updateTask(colUid, w.itemUid, {
+              parentUid: targetUid,
+            })
+            if (cancelledRef.current) return
+            replaceCachedItem(colUid, w.itemUid, result)
+          } catch (err) {
+            if (cancelledRef.current) return
+            replaceCachedItem(colUid, w.itemUid, w.original)
+            setMutationError(
+              err instanceof Error ? err.message : 'Failed to move task',
+            )
+          } finally {
+            if (!cancelledRef.current) {
+              setPendingItemUids((prev) => {
+                const next = new Set(prev)
+                next.delete(w.itemUid)
+                return next
+              })
+            }
+          }
+        }),
+      )
+
+      // Restart the hide-grace countdown for any completed task we just
+      // moved so it doesn't vanish mid-move — time to reconsider the move.
+      for (const w of writes) {
+        if (w.original.todo.status === 'COMPLETED') {
+          markRecentlyCompleted(w.original.todo.uid)
+        }
+      }
+
+      // Collapse the selection to the dragged root now that it's reparented.
+      selectSingle(draggedUid)
+    },
+    [
+      activeUid,
+      fullTree,
+      selectedTaskUids,
+      topLevelSelectedRoots,
+      selectSingle,
+      markRecentlyCompleted,
+    ],
   )
 
   const handleConfirmDelete = useCallback(async () => {
@@ -2730,8 +3346,52 @@ export function MainView({ onLoggedOut }: Props) {
     setConfirmDelete(null)
     if (!target || !activeUid) return
     const colUid = activeUid
-    const itemUidsToDelete = collectDescendantItemUids(target.node)
+    const itemUidsToDelete = Array.from(
+      new Set(target.roots.flatMap((n) => collectDescendantItemUids(n))),
+    )
     const deleteSet = new Set(itemUidsToDelete)
+
+    // If the selection sits inside any subtree we're about to remove, move
+    // it to the nearest surviving visible task — the one just above the
+    // topmost deleted row, or the one just below if those are gone too.
+    // Without this the selection points at a now-gone uid and the user has
+    // to arrow back in from the top. Read the rendered rows (same source as
+    // navigateTask) so the order matches what's on screen.
+    const deletedTodoUids = new Set<string>()
+    const collectTodoUids = (n: TaskNode) => {
+      deletedTodoUids.add(n.todo.uid)
+      for (const child of n.children) collectTodoUids(child)
+    }
+    target.roots.forEach(collectTodoUids)
+    if (selectedTaskUid && deletedTodoUids.has(selectedTaskUid)) {
+      const uids = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-task-uid]'),
+      )
+        .map((n) => n.dataset.taskUid)
+        .filter((u): u is string => !!u)
+      // Anchor on the topmost deleted root so "nearest above" is stable
+      // regardless of which row the cursor was on within the selection.
+      const rootIdxs = target.roots
+        .map((r) => uids.indexOf(r.todo.uid))
+        .filter((i) => i >= 0)
+      const rootIdx = rootIdxs.length > 0 ? Math.min(...rootIdxs) : -1
+      let nextSel: string | null = null
+      for (let i = rootIdx - 1; i >= 0; i--) {
+        if (!deletedTodoUids.has(uids[i])) {
+          nextSel = uids[i]
+          break
+        }
+      }
+      if (nextSel === null) {
+        for (let i = rootIdx + 1; i < uids.length; i++) {
+          if (!deletedTodoUids.has(uids[i])) {
+            nextSel = uids[i]
+            break
+          }
+        }
+      }
+      selectSingle(nextSel)
+    }
 
     setMutationError(null)
     setItemsByUid((prev) => {
@@ -2765,7 +3425,7 @@ export function MainView({ onLoggedOut }: Props) {
         // best effort; leave the optimistic state in place
       }
     }
-  }, [activeUid, confirmDelete])
+  }, [activeUid, confirmDelete, selectedTaskUid, selectSingle])
 
   const handleChangePriority = useCallback(
     async (node: TaskNode, newPriority: Priority) => {
@@ -2809,21 +3469,43 @@ export function MainView({ onLoggedOut }: Props) {
     [activeUid],
   )
 
+  // Multi-select +/−: apply each row's pre-computed target priority. Runs
+  // the same optimistic-then-server path as the single bump, once per row
+  // (mirrors handleCycleStatusSelected's fan-out).
+  const handleChangePrioritySelected = useCallback(
+    async (updates: Array<{ node: TaskNode; priority: Priority }>) => {
+      await Promise.all(
+        updates.map((u) => handleChangePriority(u.node, u.priority)),
+      )
+    },
+    [handleChangePriority],
+  )
+
   const requestMoveNode = useCallback(
     (node: TaskNode) => {
       if (!activeUid) return
-      const itemUids = collectDescendantItemUids(node)
+      // When the right-clicked row is part of a multi-selection, move the
+      // whole selection (outermost subtrees); otherwise just this node.
+      const sel = selectedTaskUids
+      const roots =
+        sel.size > 1 && sel.has(node.todo.uid)
+          ? topLevelSelectedRoots()
+          : [node]
+      const itemUids = Array.from(
+        new Set(roots.flatMap((n) => collectDescendantItemUids(n))),
+      )
       // Right-click "Move" defaults to stay-on-source (the common case);
       // Ctrl+Shift+M is the path to also follow the task to its new list.
       setMoving({
         itemUids,
-        rootVtodoUid: node.todo.uid,
-        summary: node.todo.summary,
-        descendantCount: itemUids.length - 1,
+        rootVtodoUid: roots[0].todo.uid,
+        summary:
+          roots.length > 1 ? `${roots.length} tasks` : roots[0].todo.summary,
+        descendantCount: roots.length > 1 ? 0 : itemUids.length - 1,
         follow: false,
       })
     },
-    [activeUid],
+    [activeUid, selectedTaskUids, topLevelSelectedRoots],
   )
 
   // ---- Right-click context menus ----
@@ -2836,6 +3518,8 @@ export function MainView({ onLoggedOut }: Props) {
         onSelect: () => void handleChangePriority(node, p),
         disabled: node.todo.priority === p,
       })
+      const multi =
+        selectedTaskUids.size > 1 && selectedTaskUids.has(node.todo.uid)
       setMenu({
         x,
         y,
@@ -2845,7 +3529,9 @@ export function MainView({ onLoggedOut }: Props) {
             onSelect: () => handleStartCreateChild(node),
           },
           {
-            label: 'Move to another list…',
+            label: multi
+              ? `Move ${selectedTaskUids.size} tasks to another list…`
+              : 'Move to another list…',
             onSelect: () => requestMoveNode(node),
           },
           prio(1),
@@ -2865,6 +3551,7 @@ export function MainView({ onLoggedOut }: Props) {
       handleStartCreateChild,
       requestMoveNode,
       handleDeleteRequest,
+      selectedTaskUids,
     ],
   )
 
@@ -2999,6 +3686,14 @@ export function MainView({ onLoggedOut }: Props) {
         original.todo.status === 'COMPLETED'
       ) {
         clearRecentlyCompleted(original.todo.uid)
+      } else if (
+        patch.parentUid !== undefined &&
+        original.todo.status === 'COMPLETED'
+      ) {
+        // Reparenting (Alt+←/→/↑/↓) an already-completed task restarts its
+        // hide-grace countdown so it doesn't vanish mid-move — giving time
+        // to reconsider where it landed.
+        markRecentlyCompleted(original.todo.uid)
       }
 
       try {
@@ -3044,6 +3739,143 @@ export function MainView({ onLoggedOut }: Props) {
     handleSaveDetailsRef.current = handleSaveDetails
   }, [handleSaveDetails])
 
+  // Persist a hand-arranged sibling order: normalize the group to
+  // sequential X-APPLE-SORT-ORDER values matching `orderedUids` and write
+  // only the rows whose value actually changed — so after the first pass
+  // (which seeds the whole group) a single adjacent move costs two writes.
+  // Optimistic with per-row rollback; the synced sortOrder means the
+  // order follows the user across devices.
+  const commitSiblingOrder = useCallback(
+    (colUid: string, siblings: TaskNode[], orderedUids: string[]) => {
+      const writes = orderedUids
+        .map((uid, i) => {
+          const sib = siblings.find((s) => s.todo.uid === uid)
+          if (!sib || sib.todo.sortOrder === i) return null
+          return { itemUid: sib.itemUid, value: i, original: sib }
+        })
+        .filter((w): w is NonNullable<typeof w> => w !== null)
+      if (writes.length === 0) return
+
+      setMutationError(null)
+      setPendingItemUids((prev) => {
+        const next = new Set(prev)
+        writes.forEach((w) => next.add(w.itemUid))
+        return next
+      })
+      // Optimistic: paint the new order immediately.
+      writes.forEach((w) => {
+        replaceCachedItem(colUid, w.itemUid, {
+          itemUid: w.itemUid,
+          todo: { ...w.original.todo, sortOrder: w.value },
+        })
+      })
+
+      void Promise.all(
+        writes.map(async (w) => {
+          try {
+            const result = await updateTask(colUid, w.itemUid, {
+              sortOrder: w.value,
+            })
+            if (cancelledRef.current) return
+            replaceCachedItem(colUid, w.itemUid, result)
+          } catch (err) {
+            if (cancelledRef.current) return
+            // Roll this row back to its pre-move sortOrder.
+            replaceCachedItem(colUid, w.itemUid, {
+              itemUid: w.itemUid,
+              todo: w.original.todo,
+            })
+            setMutationError(
+              err instanceof Error ? err.message : 'Failed to reorder task',
+            )
+          } finally {
+            if (!cancelledRef.current) {
+              setPendingItemUids((prev) => {
+                const next = new Set(prev)
+                next.delete(w.itemUid)
+                return next
+              })
+            }
+          }
+        }),
+      )
+    },
+    [],
+  )
+
+  // Manual reorder (Shift+↑/↓). Only meaningful under the 'manual' sort.
+  // Swaps the selected task with its adjacent sibling in the *full* tree
+  // (so hidden siblings keep a coherent position).
+  const handleReorderSelected = useCallback(
+    (direction: -1 | 1) => {
+      if (!activeUid || activeSort.sort !== 'manual' || !selectedTaskUid) return
+      const colUid = activeUid
+      const loc = findParentAndSiblings(fullTree, selectedTaskUid)
+      if (!loc) return
+      const { siblings, index } = loc
+      const target = index + direction
+      if (target < 0 || target >= siblings.length) return
+      const order = siblings.map((n) => n.todo.uid)
+      ;[order[index], order[target]] = [order[target], order[index]]
+      commitSiblingOrder(colUid, siblings, order)
+    },
+    [activeUid, activeSort, selectedTaskUid, fullTree, commitSiblingOrder],
+  )
+
+  useEffect(() => {
+    handleReorderSelectedRef.current = handleReorderSelected
+  }, [handleReorderSelected])
+
+  // Bulk manual reorder (Ctrl+↑/↓): slot the selected task `step` positions
+  // up/down within its sibling group in one keystroke, clamped to the group
+  // ends (a multi-row version of handleReorderSelected). Remove-then-insert
+  // at the clamped target index works for both directions.
+  const handleMoveSelectedBySteps = useCallback(
+    (direction: -1 | 1, step: number) => {
+      if (!activeUid || activeSort.sort !== 'manual' || !selectedTaskUid) return
+      const colUid = activeUid
+      const loc = findParentAndSiblings(fullTree, selectedTaskUid)
+      if (!loc) return
+      const { siblings, index } = loc
+      const targetIndex = Math.max(
+        0,
+        Math.min(siblings.length - 1, index + direction * step),
+      )
+      if (targetIndex === index) return
+      const order = siblings.map((n) => n.todo.uid)
+      order.splice(index, 1)
+      order.splice(targetIndex, 0, selectedTaskUid)
+      commitSiblingOrder(colUid, siblings, order)
+    },
+    [activeUid, activeSort, selectedTaskUid, fullTree, commitSiblingOrder],
+  )
+
+  // Drag-to-position. Drops the dragged task before/after a target row in
+  // the same sibling group (cross-parent drops are ignored — repositioning
+  // is a sibling-order op; use the Alt+arrows / list drag to reparent).
+  // No-op unless the active sort is 'manual'.
+  const handleReorderDrop = useCallback(
+    (draggedUid: string, targetUid: string, place: 'before' | 'after') => {
+      if (!activeUid || activeSort.sort !== 'manual') return
+      if (draggedUid === targetUid) return
+      const colUid = activeUid
+      const dragLoc = findParentAndSiblings(fullTree, draggedUid)
+      const dropLoc = findParentAndSiblings(fullTree, targetUid)
+      if (!dragLoc || !dropLoc) return
+      // Same sibling group only (same parent — null parent = both roots).
+      if ((dragLoc.parent?.todo.uid ?? null) !== (dropLoc.parent?.todo.uid ?? null))
+        return
+      const order = dropLoc.siblings
+        .map((n) => n.todo.uid)
+        .filter((uid) => uid !== draggedUid)
+      const targetIdx = order.indexOf(targetUid)
+      if (targetIdx < 0) return
+      order.splice(place === 'before' ? targetIdx : targetIdx + 1, 0, draggedUid)
+      commitSiblingOrder(colUid, dropLoc.siblings, order)
+    },
+    [activeUid, activeSort, fullTree, commitSiblingOrder],
+  )
+
   // Raw passthrough save for `broken` items: store the hand-edited iCal
   // verbatim, then re-parse (leniently) to refresh the row.
   const handleSaveRaw = useCallback(
@@ -3084,81 +3916,67 @@ export function MainView({ onLoggedOut }: Props) {
   const handleToggleComplete = useCallback(
     async (node: TaskNode) => {
       if (!activeUid) return
-      const colUid = activeUid
-      const itemUid = node.itemUid
-      const original: TaskItem = { itemUid, todo: node.todo }
-      const nextStatus =
-        node.todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED'
-      const optimistic: TaskItem = {
-        itemUid,
-        todo: { ...node.todo, status: nextStatus },
-      }
-
       setMutationError(null)
-      setPendingItemUids((prev) => {
-        const next = new Set(prev)
-        next.add(itemUid)
-        return next
-      })
-      replaceCachedItem(colUid, itemUid, optimistic)
-
-      // Grace-period bookkeeping: keep newly-completed tasks visible briefly
-      // when Hide-done is on; clear the timer if the user is uncompleting.
-      if (nextStatus === 'COMPLETED') {
-        markRecentlyCompleted(node.todo.uid)
-      } else {
-        clearRecentlyCompleted(node.todo.uid)
-      }
-
-      try {
-        const result = await toggleComplete(colUid, itemUid, node.todo.status)
-        if (cancelledRef.current) return
-        replaceCachedItem(colUid, itemUid, result)
-      } catch (err) {
-        if (cancelledRef.current) return
-        replaceCachedItem(colUid, itemUid, original)
-        // Roll back the grace-period state too on failure.
-        if (nextStatus === 'COMPLETED') {
-          clearRecentlyCompleted(node.todo.uid)
-        }
-        setMutationError(
-          err instanceof Error ? err.message : 'Failed to update task',
-        )
-      } finally {
-        if (!cancelledRef.current) {
-          setPendingItemUids((prev) => {
-            const next = new Set(prev)
-            next.delete(itemUid)
-            return next
-          })
-        }
-      }
+      const target: TaskStatus =
+        node.todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED'
+      await applyStatusChange(activeUid, node.itemUid, node.todo, target)
     },
-    [activeUid, markRecentlyCompleted, clearRecentlyCompleted],
+    [activeUid, applyStatusChange],
   )
 
   return (
-    <div className="flex h-screen bg-bg text-text">
+    <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-bg text-text">
       {showKeybindings && (
         <KeybindingsModal onClose={() => setShowKeybindings(false)} />
       )}
-      {confirmDelete && (
-        <ConfirmModal
-          title={`Delete "${confirmDelete.node.todo.summary || '(untitled)'}"?`}
-          body={
-            confirmDelete.descendantCount > 0
-              ? `This will permanently delete this task and ${
-                  confirmDelete.descendantCount
-                } subtask${confirmDelete.descendantCount === 1 ? '' : 's'}.`
-              : 'This will permanently delete this task.'
-          }
-          confirmLabel="Delete"
-          destructive
-          zoom={zoom.tasks}
-          onCancel={() => setConfirmDelete(null)}
-          onConfirm={handleConfirmDelete}
+      {globalSearchOpen && (
+        <GlobalSearchModal
+          itemsByCollection={itemsByUid}
+          collections={collections ?? []}
+          loadedUids={loadedUids}
+          onRequestSyncAll={syncAll}
+          onPick={(colUid, taskUid) => {
+            setGlobalSearchOpen(false)
+            if (colUid !== activeUid) setActiveUid(colUid)
+            selectSingle(taskUid)
+            setFocusZone('tasks')
+          }}
+          onClose={() => setGlobalSearchOpen(false)}
         />
       )}
+      {confirmDelete &&
+        (() => {
+          const rootCount = confirmDelete.roots.length
+          // Subtasks beyond the explicitly chosen roots.
+          const extra = confirmDelete.totalCount - rootCount
+          const title =
+            rootCount === 1
+              ? `Delete "${confirmDelete.roots[0].todo.summary || '(untitled)'}"?`
+              : `Delete ${rootCount} tasks?`
+          const body =
+            rootCount === 1
+              ? extra > 0
+                ? `This will permanently delete this task and ${extra} subtask${
+                    extra === 1 ? '' : 's'
+                  }.`
+                : 'This will permanently delete this task.'
+              : extra > 0
+                ? `This will permanently delete ${rootCount} selected tasks and ${extra} subtask${
+                    extra === 1 ? '' : 's'
+                  } (${confirmDelete.totalCount} items total).`
+                : `This will permanently delete ${rootCount} selected tasks.`
+          return (
+            <ConfirmModal
+              title={title}
+              body={body}
+              confirmLabel="Delete"
+              destructive
+              zoom={zoom.tasks}
+              onCancel={() => setConfirmDelete(null)}
+              onConfirm={handleConfirmDelete}
+            />
+          )
+        })()}
       {deletingList && (
         <ConfirmModal
           title={`Delete list "${deletingList.name || '(untitled)'}"?`}
@@ -3680,6 +4498,23 @@ export function MainView({ onLoggedOut }: Props) {
                           </span>
                         )
                       )}
+                      {showSidebarSyncAge &&
+                        showFull &&
+                        !isPlaceholder &&
+                        !deleted &&
+                        (() => {
+                          const ts = syncedAtRef.current.get(c.uid)
+                          if (!ts) return null
+                          const label = compactSyncAge(ts, Date.now())
+                          return (
+                            <span
+                              className="shrink-0 text-[10px] tabular-nums text-text-faint"
+                              title={`Synced ${new Date(ts).toLocaleString()}`}
+                            >
+                              {label}
+                            </span>
+                          )
+                        })()}
                       <span
                         className={`shrink-0 text-xs tabular-nums ${
                           isActive ? 'text-text-muted' : 'text-text-faint'
@@ -3751,11 +4586,11 @@ export function MainView({ onLoggedOut }: Props) {
           // the first task so arrow keys work immediately — no need to
           // press Down first. An existing valid selection is kept.
           if (!t.closest('[data-task-uid]')) {
-            setSelectedTaskUid((cur) =>
-              cur && findNodeByUid(visibleTree, cur)
-                ? cur
-                : (visibleTree[0]?.todo.uid ?? cur),
-            )
+            const cur = selectedTaskUid
+            if (!(cur && findNodeByUid(visibleTree, cur))) {
+              const next = visibleTree[0]?.todo.uid ?? cur
+              if (next) selectSingle(next)
+            }
           }
         }}
       >
@@ -3914,6 +4749,7 @@ export function MainView({ onLoggedOut }: Props) {
                 <SortPopover
                   title="Sort tasks"
                   options={TASK_SORT_OPTIONS}
+                  secondaryOptions={TASK_SECONDARY_SORT_OPTIONS}
                   spec={activeSort}
                   onChange={setActiveSort}
                   onClose={() => setSortOpen(false)}
@@ -3960,8 +4796,8 @@ export function MainView({ onLoggedOut }: Props) {
                   }
                   phonePriority={phonePriority}
                   onTogglePhonePriority={togglePhonePriority}
-                  theme={theme}
-                  onToggleTheme={toggleTheme}
+                  themePref={themePref}
+                  onSetThemePref={setThemePref}
                   accent={accent}
                   accentPresets={ACCENT_PRESETS}
                   onSetAccent={setAccent}
@@ -3980,6 +4816,7 @@ export function MainView({ onLoggedOut }: Props) {
                   switchFreshMin={switchFreshMin}
                   switchFreshOptions={SWITCH_FRESH_OPTIONS}
                   onSetSwitchFresh={setSwitchFreshMin}
+                  onShowKeybindings={() => setShowKeybindings(true)}
                   onLogout={handleLogout}
                   onClose={() => setSettingsOpen(false)}
                 />
@@ -4041,6 +4878,7 @@ export function MainView({ onLoggedOut }: Props) {
               roots={visibleTree}
               onToggleComplete={handleToggleComplete}
               onCycleStatus={handleCycleStatus}
+              onCycleStatusSelected={handleCycleStatusSelected}
               pendingUids={pendingItemUids}
               creatingParent={creating ? creating.parentUid : undefined}
               onAddChild={handleStartCreateChild}
@@ -4053,8 +4891,13 @@ export function MainView({ onLoggedOut }: Props) {
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}
               onChangePriority={handleChangePriority}
+              onChangePrioritySelected={handleChangePrioritySelected}
               onRowContextMenu={openTaskMenu}
               taskDndMime={TASK_DND_MIME}
+              manualReorder={activeSort.sort === 'manual'}
+              onReorderDrop={handleReorderDrop}
+              onReparentDrop={handleReparentDrop}
+              onReorderBySteps={handleMoveSelectedBySteps}
               onLeaveLeft={() => setFocusZone('sidebar')}
               fadingExpires={fadingExpires}
               activelyFading={fadingActiveUids}
@@ -4063,10 +4906,14 @@ export function MainView({ onLoggedOut }: Props) {
               onToggleBranchReveal={handleToggleBranchReveal}
               phonePriority={phonePriority}
               selectedUid={selectedTaskUid}
+              selectedUids={selectedTaskUids}
+              anchorUid={selectionAnchor}
               onSelectChange={(uid) => {
-                setSelectedTaskUid(uid)
+                selectSingle(uid)
                 setFocusZone('tasks')
               }}
+              onSelectRange={handleSelectRange}
+              onToggleSelect={handleToggleSelect}
               inactive={focusZone !== 'tasks'}
             />
           )}
@@ -4107,6 +4954,7 @@ export function MainView({ onLoggedOut }: Props) {
         onSaveRaw={handleSaveRaw}
         onNavigateTask={navigateTask}
         focusedWidth={detailFocusedWidth}
+        collapsedWidth={detailCollapsedWidth}
         onResizeStart={handleDetailResizeStart}
         isResizing={isResizingDetail}
         pending={

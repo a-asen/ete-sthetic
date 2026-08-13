@@ -20,6 +20,10 @@ export async function saveCollectionsList(
     list,
     savedAt: Date.now(),
   } satisfies CollectionsListCache)
+  // Flush to disk explicitly. autoSave alone wasn't surviving a dev
+  // rebuild (the process is killed before the debounced write lands), so
+  // the cache appeared to "always refetch". saveSession already does this.
+  await store.save()
 }
 
 export async function loadCollectionsList(): Promise<CollectionInfo[] | null> {
@@ -52,6 +56,10 @@ export async function saveSnapshot(snapshot: CollectionSnapshot): Promise<void> 
     ...snapshot,
     version: SNAPSHOT_VERSION,
   })
+  // Force the write to disk so a dev rebuild (or quit) can't drop it — see
+  // saveCollectionsList. The MainView callers already debounce these, so a
+  // full-file flush here stays cheap.
+  await store.save()
 }
 
 export async function deleteSnapshot(uid: string): Promise<void> {

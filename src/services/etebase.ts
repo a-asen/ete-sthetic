@@ -7,7 +7,13 @@ import type {
   TaskItem,
   VCard,
 } from '../types'
-import { buildVTodo, parseVTodo, updateVTodo, type VTodoPatch } from './vtodo'
+import {
+  buildVTodo,
+  parseVTodo,
+  updateVTodo,
+  type NewVTodoArgs,
+  type VTodoPatch,
+} from './vtodo'
 import {
   buildVEvent,
   parseVEvent,
@@ -19,6 +25,7 @@ import { parseVCard, serializeVCard } from './vcard'
 import { clearSession, loadSession, saveSession } from './store'
 import { clearAllSnapshots } from './snapshots'
 import { clearAllCalSnapshots } from './calsnapshot'
+import { clearAllSubSnapshots } from './icsSubscriptionSnapshot'
 import { clearAllContactSnapshots } from './contactsnapshot'
 import { resetCalMemory } from './calstore'
 import { resetContactMemory } from './contactstore'
@@ -119,10 +126,35 @@ export async function logout(): Promise<void> {
   await clearAllSnapshots()
   await clearAllCalSnapshots()
   await clearAllContactSnapshots()
+  await clearAllSubSnapshots()
 }
 
 export function isAuthenticated(): boolean {
   return account !== null
+}
+
+export interface AccountInfo {
+  username: string
+  email: string
+  serverUrl: string
+}
+
+// Identity of the signed-in account, for the home page's "you're logged in
+// as…" card. Resolves null when there's no usable session (the caller then
+// shows a sign-in prompt). Goes through ensureAccount so a null module-level
+// `account` after an HMR reload still yields the restored identity rather
+// than a spurious "not logged in".
+export async function getAccountInfo(): Promise<AccountInfo | null> {
+  try {
+    const acc = await ensureAccount()
+    return {
+      username: acc.user.username,
+      email: acc.user.email,
+      serverUrl: acc.serverUrl,
+    }
+  } catch {
+    return null
+  }
 }
 
 async function ensureAccount(): Promise<Etebase.Account> {
@@ -313,6 +345,58 @@ export async function createTask(
   return { itemUid: item.uid, todo }
 }
 
+// Create a task from a full set of fields (summary + the optional
+// properties buildVTodo understands). Used for copy/paste duplication,
+// where we carry over the source task's text, priority, due, and
+// recurrence into a fresh, uncompleted VTODO with a brand-new UID.
+export async function createTaskFrom(
+  collectionUid: string,
+  args: NewVTodoArgs,
+): Promise<TaskItem> {
+  const im = await getItemManager(collectionUid)
+  const { raw } = buildVTodo(args)
+
+  const item = await im.create({ name: args.summary, mtime: Date.now() }, raw)
+  await im.transaction([item])
+  itemHandles.set(itemKey(collectionUid, item.uid), item)
+
+  const todo = parseVTodo(raw)
+  if (!todo) throw new Error('Built VTODO failed to parse')
+  return { itemUid: item.uid, todo }
+}
+
+// Create several related VTODOs into one collection in a single commit.
+// Used by Task Blueprints to materialise a parent + nested subtask tree
+// atomically. Each spec carries its own fixed VTODO uid (deterministic per
+// day) and PARENT link so the tree resolves once synced. All items are
+// committed together via one im.transaction — either the whole tree lands
+// or none of it does.
+export async function createTasksBatch(
+  collectionUid: string,
+  specs: NewVTodoArgs[],
+): Promise<TaskItem[]> {
+  if (specs.length === 0) return []
+  const im = await getItemManager(collectionUid)
+  const items: Etebase.Item[] = []
+  const results: TaskItem[] = []
+  for (const spec of specs) {
+    const { raw } = buildVTodo(spec)
+    const item = await im.create(
+      { name: spec.summary, mtime: Date.now() },
+      raw,
+    )
+    const todo = parseVTodo(raw)
+    if (!todo) throw new Error('Built blueprint VTODO failed to parse')
+    items.push(item)
+    results.push({ itemUid: item.uid, todo })
+  }
+  await im.transaction(items)
+  for (const item of items) {
+    itemHandles.set(itemKey(collectionUid, item.uid), item)
+  }
+  return results
+}
+
 export function updateTask(
   collectionUid: string,
   itemUid: string,
@@ -418,8 +502,13 @@ export async function moveTasksToCollection(
     throw new Error('Source and destination collections are the same')
   }
 
+  // Fetch the source items FRESH from the server (not the cached handles)
+  // so both the copied content and the later delete reflect current
+  // server state — a stale cached handle is what made the delete reject
+  // and leave a duplicate (see the delete block below).
+  const sourceIm = await getItemManager(sourceCollectionUid)
   const sourceItems = await Promise.all(
-    itemUids.map((uid) => getItem(sourceCollectionUid, uid)),
+    itemUids.map((uid) => sourceIm.fetch(uid)),
   )
 
   // Snapshot content + meta from the source side before touching anything.
@@ -447,10 +536,15 @@ export async function moveTasksToCollection(
     itemHandles.set(itemKey(destCollectionUid, newItem.uid), newItem)
   }
 
-  // Now delete the source items.
-  for (const item of sourceItems) item.delete()
-  const sourceIm = await getItemManager(sourceCollectionUid)
-  await sourceIm.transaction(sourceItems)
+  // Now delete the source items (the handles fetched fresh above carry
+  // the current etag). `batch` force-writes the deletion so an unrelated
+  // change to the collection can't block a removal we definitely intend —
+  // a rejected delete here, with the destination copies already
+  // committed, is what left the same item in BOTH lists (the duplicate
+  // bug). The verify-and-retry below re-fetches if the first pass misses.
+  const toDelete = sourceItems.filter((it) => !it.isDeleted)
+  for (const it of toDelete) it.delete()
+  if (toDelete.length > 0) await sourceIm.batch(toDelete)
 
   // VERIFY the server actually recorded the deletions. Copy-then-delete
   // must not silently leave the originals behind: the copies already
@@ -475,7 +569,7 @@ export async function moveTasksToCollection(
     // One retry with fresh handles (handles a stale-etag race).
     const retry = await Promise.all(stuck.map((uid) => sourceIm.fetch(uid)))
     for (const it of retry) it.delete()
-    await sourceIm.transaction(retry)
+    await sourceIm.batch(retry)
     stuck = await stillPresent()
   }
   if (stuck.length > 0) {
@@ -799,6 +893,12 @@ export async function deleteEvent(
 // Move one event to another calendar. Same copy-then-delete strategy as
 // moveTasksToCollection (Etebase has no native move); destination commits
 // first so a failure can't lose data. Returns the new EventItem.
+//
+// Hardened identically to the task/contact move (see moveTasksToCollection):
+// the source is fetched FRESH and deleted with batch() + verify/retry, so a
+// stale cached etag can't make the delete silently reject and leave the same
+// event in BOTH calendars — the cross-client duplicate that shows once here
+// (this app renders per calendar) but twice on a phone that sees both.
 export async function moveEventToCollection(
   sourceCollectionUid: string,
   destCollectionUid: string,
@@ -807,10 +907,15 @@ export async function moveEventToCollection(
   if (sourceCollectionUid === destCollectionUid) {
     throw new Error('Source and destination collections are the same')
   }
-  const source = await getItem(sourceCollectionUid, itemUid)
+
+  // Fetch the source FRESH from the server (not the cached handle) so both
+  // the copied content and the later delete carry the current etag.
+  const sourceIm = await getItemManager(sourceCollectionUid)
+  const source = await sourceIm.fetch(itemUid)
   const content = await source.getContent(Etebase.OutputFormat.String)
   const meta = source.getMeta<Record<string, unknown>>()
 
+  // Copy into the destination first — if this fails the original is intact.
   const acc = await ensureAccount()
   const destCollection = await getCollection(destCollectionUid)
   const destIm = acc.getCollectionManager().getItemManager(destCollection)
@@ -818,9 +923,39 @@ export async function moveEventToCollection(
   await destIm.transaction([created])
   itemHandles.set(itemKey(destCollectionUid, created.uid), created)
 
-  source.delete()
-  const sourceIm = await getItemManager(sourceCollectionUid)
-  await sourceIm.transaction([source])
+  // Delete the source with the fresh handle via batch(): force-write the
+  // deletion so an unrelated change to the source calendar can't block a
+  // removal we definitely intend (the copy is already committed).
+  if (!source.isDeleted) {
+    source.delete()
+    await sourceIm.batch([source])
+  }
+
+  // Verify the server actually recorded the delete (fetch bypasses the
+  // handle cache; a deleted item returns isDeleted=true). Retry once, then
+  // fail loudly rather than silently leave a duplicate across clients.
+  const stillThere = async (): Promise<boolean> => {
+    try {
+      const fresh = await sourceIm.fetch(itemUid)
+      return !fresh.isDeleted
+    } catch {
+      return false
+    }
+  }
+  if (await stillThere()) {
+    const retry = await sourceIm.fetch(itemUid)
+    if (!retry.isDeleted) {
+      retry.delete()
+      await sourceIm.batch([retry])
+    }
+    if (await stillThere()) {
+      throw new Error(
+        'Move incomplete: the event is still in the source calendar on the ' +
+          'server (a copy was created in the destination). Re-open the ' +
+          'source calendar and move it again.',
+      )
+    }
+  }
   itemHandles.delete(itemKey(sourceCollectionUid, itemUid))
 
   const event = parseVEvent(content)
@@ -907,7 +1042,10 @@ export async function listContactItems(
       const card = parseVCard(raw)
       if (!card) continue
       itemHandles.set(itemKey(collectionUid, item.uid), item)
-      pendingBatch.push({ itemUid: item.uid, card })
+      const meta = item.getMeta<Record<string, unknown>>()
+      const mtime =
+        typeof meta.mtime === 'number' ? (meta.mtime as number) : null
+      pendingBatch.push({ itemUid: item.uid, card, mtime })
       if (pendingBatch.length >= BATCH_SIZE) {
         flush()
         await yieldToEventLoop()
@@ -928,12 +1066,13 @@ export async function createContact(
 ): Promise<ContactItem> {
   const im = await getItemManager(collectionUid)
   const raw = serializeVCard(card)
-  const item = await im.create({ name: card.fn, mtime: Date.now() }, raw)
+  const mtime = Date.now()
+  const item = await im.create({ name: card.fn, mtime }, raw)
   await im.transaction([item])
   itemHandles.set(itemKey(collectionUid, item.uid), item)
   const parsed = parseVCard(raw)
   if (!parsed) throw new Error('Built vCard failed to parse')
-  return { itemUid: item.uid, card: parsed }
+  return { itemUid: item.uid, card: parsed, mtime }
 }
 
 // Update a contact from an edited model. The previous raw text is passed
@@ -955,7 +1094,10 @@ export function updateContact(
 
     const parsed = parseVCard(newRaw)
     if (!parsed) throw new Error('Updated vCard failed to parse')
-    return { itemUid: item.uid, card: parsed }
+    const meta = item.getMeta<Record<string, unknown>>()
+    const mtime =
+      typeof meta.mtime === 'number' ? (meta.mtime as number) : Date.now()
+    return { itemUid: item.uid, card: parsed, mtime }
   })
 }
 
@@ -968,4 +1110,94 @@ export async function deleteContact(
   const im = await getItemManager(collectionUid)
   await im.transaction([item])
   itemHandles.delete(itemKey(collectionUid, itemUid))
+}
+
+// Move contacts between address books. Mirror of moveTasksToCollection:
+// copy-then-delete with a server-side verify so we never leave the source
+// copies behind (which would show the same contact in two books across
+// every client). Destination create commits first, so a mid-way failure
+// loses no data (worst case = a duplicate the user can retry).
+export async function moveContactsToCollection(
+  sourceCollectionUid: string,
+  destCollectionUid: string,
+  itemUids: string[],
+): Promise<ContactItem[]> {
+  if (itemUids.length === 0) return []
+  if (sourceCollectionUid === destCollectionUid) {
+    throw new Error('Source and destination address books are the same')
+  }
+
+  // Fetch fresh (not cached handles) so content + delete reflect current
+  // server state — a stale handle made the delete reject and left a
+  // duplicate across both books (see moveTasksToCollection).
+  const sourceIm = await getItemManager(sourceCollectionUid)
+  const sourceItems = await Promise.all(
+    itemUids.map((uid) => sourceIm.fetch(uid)),
+  )
+  const payloads = await Promise.all(
+    sourceItems.map(async (item) => ({
+      content: await item.getContent(Etebase.OutputFormat.String),
+      meta: item.getMeta<Record<string, unknown>>(),
+    })),
+  )
+
+  const acc = await ensureAccount()
+  const destCollection = await getCollection(destCollectionUid)
+  const destIm = acc.getCollectionManager().getItemManager(destCollection)
+  const created: Etebase.Item[] = []
+  for (const { content, meta } of payloads) {
+    const newItem = await destIm.create({ ...meta, mtime: Date.now() }, content)
+    created.push(newItem)
+  }
+  await destIm.transaction(created)
+  for (const newItem of created) {
+    itemHandles.set(itemKey(destCollectionUid, newItem.uid), newItem)
+  }
+
+  // Force-write the deletion (batch) with the fresh handles above.
+  const toDelete = sourceItems.filter((it) => !it.isDeleted)
+  for (const it of toDelete) it.delete()
+  if (toDelete.length > 0) await sourceIm.batch(toDelete)
+
+  // Verify the server recorded the deletions (see moveTasksToCollection).
+  const stillPresent = async (): Promise<string[]> => {
+    const remaining: string[] = []
+    for (const uid of itemUids) {
+      try {
+        const fresh = await sourceIm.fetch(uid)
+        if (!fresh.isDeleted) remaining.push(uid)
+      } catch {
+        // Unfetchable → treat as gone.
+      }
+    }
+    return remaining
+  }
+  let stuck = await stillPresent()
+  if (stuck.length > 0) {
+    const retry = await Promise.all(stuck.map((uid) => sourceIm.fetch(uid)))
+    for (const it of retry) it.delete()
+    await sourceIm.batch(retry)
+    stuck = await stillPresent()
+  }
+  if (stuck.length > 0) {
+    throw new Error(
+      `Move incomplete: ${stuck.length} contact(s) are still in the source ` +
+        `book on the server (copies were created in the destination). ` +
+        `Re-open the source book and move the remaining contact(s) again.`,
+    )
+  }
+
+  for (const uid of itemUids) {
+    itemHandles.delete(itemKey(sourceCollectionUid, uid))
+  }
+
+  const out: ContactItem[] = []
+  for (let i = 0; i < created.length; i++) {
+    const card = parseVCard(payloads[i].content)
+    if (!card) continue
+    const meta = payloads[i].meta
+    const mtime = typeof meta.mtime === 'number' ? (meta.mtime as number) : null
+    out.push({ itemUid: created[i].uid, card, mtime })
+  }
+  return out
 }

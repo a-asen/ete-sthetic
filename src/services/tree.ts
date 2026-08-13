@@ -36,13 +36,29 @@ export function buildTree(
     b: MutableNode,
   ) => number
 
+  // One node per item, keyed by itemUid (the Etebase resource id), so two
+  // items that share a VTODO UID each survive as their own node instead of
+  // colliding in a uid-keyed map and silently vanishing.
+  const nodes: MutableNode[] = items.map((item) => ({
+    ...item,
+    children: [],
+    depth: 0,
+  }))
+
+  // uid → node, for resolving PARENT/CHILD links (which reference VTODO
+  // UIDs). When duplicate UIDs exist this is last-wins — the link can only
+  // point at one node — and every node sharing that UID is flagged below so
+  // the ambiguity surfaces in the UI rather than dropping items.
   const byUid = new Map<string, MutableNode>()
-  for (const item of items) {
-    byUid.set(item.todo.uid, {
-      ...item,
-      children: [],
-      depth: 0,
-    })
+  const sharingUid = new Map<string, MutableNode[]>()
+  for (const node of nodes) {
+    byUid.set(node.todo.uid, node)
+    const peers = sharingUid.get(node.todo.uid)
+    if (peers) peers.push(node)
+    else sharingUid.set(node.todo.uid, [node])
+  }
+  for (const peers of sharingUid.values()) {
+    if (peers.length > 1) for (const n of peers) n.duplicateUid = true
   }
 
   // Some clients express the hierarchy the other way round:
@@ -92,12 +108,16 @@ export function buildTree(
   }
 
   const roots: MutableNode[] = []
-  for (const node of byUid.values()) {
+  for (const node of nodes) {
     const parentUid = safeParent(node.todo.uid)
-    if (parentUid && byUid.has(parentUid)) {
-      byUid.get(parentUid)!.children.push(node)
+    const parent = parentUid ? byUid.get(parentUid) : undefined
+    // Don't let a node parent itself onto its own UID-twin: when the link
+    // resolves to a node sharing this node's UID, treat it as a root so
+    // duplicates sit side by side instead of nesting into each other.
+    if (parent && parent !== node && parent.todo.uid !== node.todo.uid) {
+      parent.children.push(node)
     } else {
-      // Parent unknown / self-referential / cyclic → bubble to root.
+      // Parent unknown / self-referential / cyclic / a UID-twin → bubble to root.
       roots.push(node)
     }
   }
