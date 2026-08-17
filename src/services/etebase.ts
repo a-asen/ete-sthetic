@@ -467,7 +467,14 @@ export async function deleteTasks(
   const items = await Promise.all(
     itemUids.map((uid) => getItem(collectionUid, uid)),
   )
-  for (const item of items) item.delete()
+  // preserveContent=true keeps the VTODO blob in the tombstone so the
+  // calcarddav bridge (tasks.org / DAVx5 / Apple Reminders / etc.) can
+  // match the tombstone to the CalDAV VTODO by UID and propagate the
+  // delete. The SDK default (preserveContent=false) strips the content,
+  // leaving a tombstone the bridge can't identify — the task then
+  // vanishes here but lingers on every CalDAV client until it's purged
+  // from the server. See moveTasksToCollection for the full story.
+  for (const item of items) item.delete(true)
   const im = await getItemManager(collectionUid)
   await im.transaction(items)
   for (const uid of itemUids) {
@@ -542,8 +549,18 @@ export async function moveTasksToCollection(
   // a rejected delete here, with the destination copies already
   // committed, is what left the same item in BOTH lists (the duplicate
   // bug). The verify-and-retry below re-fetches if the first pass misses.
+  //
+  // `preserveContent = true` keeps the VTODO blob in the tombstone. The
+  // etesync-calcarddav bridge (which tasks.org / Apple Reminders / etc.
+  // sit behind) matches tombstones to CalDAV VTODOs by the UID *inside*
+  // the content. A content-less tombstone (the SDK default) reaches the
+  // bridge with no UID to match, so the bridge can't tell the CalDAV
+  // client to delete the original — the moved task then shows in BOTH
+  // lists on the phone while ete-sthetic (which keys off the etebase
+  // tombstone flag, not the content) looks clean. Preserving the content
+  // is the standard etebase pattern for cross-client deletes.
   const toDelete = sourceItems.filter((it) => !it.isDeleted)
-  for (const it of toDelete) it.delete()
+  for (const it of toDelete) it.delete(true)
   if (toDelete.length > 0) await sourceIm.batch(toDelete)
 
   // VERIFY the server actually recorded the deletions. Copy-then-delete
@@ -567,8 +584,10 @@ export async function moveTasksToCollection(
   let stuck = await stillPresent()
   if (stuck.length > 0) {
     // One retry with fresh handles (handles a stale-etag race).
+    // preserveContent=true for the same reason as the first pass — the
+    // calcarddav bridge needs the VTODO UID inside the tombstone.
     const retry = await Promise.all(stuck.map((uid) => sourceIm.fetch(uid)))
-    for (const it of retry) it.delete()
+    for (const it of retry) it.delete(true)
     await sourceIm.batch(retry)
     stuck = await stillPresent()
   }
@@ -884,7 +903,10 @@ export async function deleteEvent(
   itemUid: string,
 ): Promise<void> {
   const item = await getItem(collectionUid, itemUid)
-  item.delete()
+  // preserveContent=true keeps the VEVENT blob in the tombstone so the
+  // calcarddav bridge can match by UID and propagate the delete to
+  // DAVx5 / Apple Calendar / etc. — see moveTasksToCollection.
+  item.delete(true)
   const im = await getItemManager(collectionUid)
   await im.transaction([item])
   itemHandles.delete(itemKey(collectionUid, itemUid))
@@ -926,8 +948,13 @@ export async function moveEventToCollection(
   // Delete the source with the fresh handle via batch(): force-write the
   // deletion so an unrelated change to the source calendar can't block a
   // removal we definitely intend (the copy is already committed).
+  // preserveContent=true keeps the VEVENT blob in the tombstone so the
+  // calcarddav bridge (DAVx5 / Apple Calendar / etc.) can match the
+  // tombstone to the CalDAV VEVENT by UID and propagate the delete —
+  // without it the bridge sees a content-less tombstone and the moved
+  // event lingers on the phone as a duplicate.
   if (!source.isDeleted) {
-    source.delete()
+    source.delete(true)
     await sourceIm.batch([source])
   }
 
@@ -945,7 +972,7 @@ export async function moveEventToCollection(
   if (await stillThere()) {
     const retry = await sourceIm.fetch(itemUid)
     if (!retry.isDeleted) {
-      retry.delete()
+      retry.delete(true)
       await sourceIm.batch([retry])
     }
     if (await stillThere()) {
@@ -1106,7 +1133,10 @@ export async function deleteContact(
   itemUid: string,
 ): Promise<void> {
   const item = await getItem(collectionUid, itemUid)
-  item.delete()
+  // preserveContent=true keeps the vCard blob in the tombstone so the
+  // calcarddav bridge can match by UID and propagate the delete to
+  // DAVx5 / Apple Contacts / etc. — see moveTasksToCollection.
+  item.delete(true)
   const im = await getItemManager(collectionUid)
   await im.transaction([item])
   itemHandles.delete(itemKey(collectionUid, itemUid))
@@ -1155,8 +1185,12 @@ export async function moveContactsToCollection(
   }
 
   // Force-write the deletion (batch) with the fresh handles above.
+  // preserveContent=true keeps the vCard blob in the tombstone so the
+  // calcarddav bridge (DAVx5 / Apple Contacts / etc.) can match by UID
+  // and propagate the delete — see moveTasksToCollection for the full
+  // rationale.
   const toDelete = sourceItems.filter((it) => !it.isDeleted)
-  for (const it of toDelete) it.delete()
+  for (const it of toDelete) it.delete(true)
   if (toDelete.length > 0) await sourceIm.batch(toDelete)
 
   // Verify the server recorded the deletions (see moveTasksToCollection).
@@ -1175,7 +1209,7 @@ export async function moveContactsToCollection(
   let stuck = await stillPresent()
   if (stuck.length > 0) {
     const retry = await Promise.all(stuck.map((uid) => sourceIm.fetch(uid)))
-    for (const it of retry) it.delete()
+    for (const it of retry) it.delete(true)
     await sourceIm.batch(retry)
     stuck = await stillPresent()
   }

@@ -2100,6 +2100,35 @@ existing verify-and-retry (re-fetch + re-delete, then a loud "move
 incomplete" error) stays as the backstop; on failure the worst case is
 a recoverable duplicate, never data loss.
 
+### Moved task still showed on the phone (calcarddav bridge can't match content-less tombstones) — ✅ fixed 2026-08-17
+The 2026-06-06 fix made the server-side delete reliable, but a deeper
+issue remained: a task moved on the computer (weekly → monthly) showed
+in BOTH lists on the phone, while ete-sthetic itself looked clean.
+
+Root cause: `Item.delete()` defaults to `preserveContent = false`, which
+strips the VTODO/VEVENT/vCard blob from the tombstone. The phone
+(tasks.org, via the `etesync-calcarddav` bridge) matches tombstones to
+CalDAV entries by the UID **inside the content**. A content-less
+tombstone has no UID to match, so the bridge can't tell tasks.org which
+VTODO to delete — the original task lingers on the phone forever. The
+desktop keys off the etebase `isDeleted` flag (not the content), so it
+drops the tombstoned item from its cache and looks clean.
+
+Confirmed against the server: the WEEKLY collection had a tombstone for
+the moved item with `deleted = true` but empty content. The phone's
+tasks.org cache kept showing the original revision because the bridge
+never told it to delete.
+
+**Fix:** every item-level delete now calls `item.delete(true)` (preserve
+content) so the tombstone keeps the original VTODO/VEVENT/vCard blob.
+The bridge reads the UID out of the preserved content, matches the
+CalDAV entry, and propagates the delete. Applied to:
+`moveTasksToCollection`, `moveEventToCollection`,
+`moveContactsToCollection` (first pass + retry), `deleteTasks`,
+`deleteEvent`, `deleteContact`. The collection-level `deleteCollection`
+is left as-is — collection tombstones are matched by collection UID,
+not item content.
+
 ### Settings (sort, zoom, widths, …) reset on every relaunch — ✅ fixed 2026-06-06
 Root cause: settings live in the WebView's `localStorage`, which is keyed
 by **origin**. Launching from a dev server (`http://localhost:5173`) vs.
