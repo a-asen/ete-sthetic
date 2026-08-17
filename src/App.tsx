@@ -11,6 +11,7 @@ import { restoreSession } from './services/etebase'
 import {
   syncCalendarsInBackground,
   syncContactsInBackground,
+  syncTasksInBackground,
 } from './services/backgroundSync'
 import {
   MODULE_FLAGS_CHANGED_EVENT,
@@ -244,8 +245,26 @@ function MainApp() {
   // a reload. The service-level in-flight guards dedupe re-renders.
   useEffect(() => {
     if (auth !== 'authenticated') return
+    if (readModuleEnabled('tasks')) void syncTasksInBackground()
     if (readModuleEnabled('calendar')) void syncCalendarsInBackground()
     if (readModuleEnabled('contacts')) void syncContactsInBackground()
+  }, [auth, enabledModules])
+
+  // Periodic background sync for the tasks module at the App level, so
+  // it keeps running even when MainView is unmounted (the user switched
+  // to calendar/contacts). MainView's own timers still handle the
+  // active-list fast cadence while it's mounted; this covers the gap
+  // while it's not. Reads the same bgSyncMin pref MainView uses.
+  useEffect(() => {
+    if (auth !== 'authenticated') return
+    if (!readModuleEnabled('tasks')) return
+    const raw = Number(localStorage.getItem('ete-sthetic.bgSyncMin'))
+    const min = Number.isFinite(raw) && raw > 0 ? raw : 240
+    const ms = min * 60_000
+    const id = setInterval(() => {
+      if (readModuleEnabled('tasks')) void syncTasksInBackground()
+    }, ms)
+    return () => clearInterval(id)
   }, [auth, enabledModules])
 
   // Task Blueprints: materialise any due blueprint for *today* on launch,

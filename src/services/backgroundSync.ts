@@ -1,13 +1,21 @@
 import {
   listAddressBooks,
   listCalendars,
+  listCollections,
   listContactItems,
   listEventItems,
+  listTaskItems,
 } from './etebase'
+import {
+  loadCollectionsList,
+  loadSnapshot,
+  saveSnapshot,
+} from './snapshots'
 import { loadCalSnapshot, saveCalSnapshot } from './calsnapshot'
 import { loadContactSnapshot, saveContactSnapshot } from './contactsnapshot'
 import { getCalMemory, patchCalMemory } from './calstore'
 import { getContactMemory, patchContactMemory } from './contactstore'
+import { getTaskMemory, patchTaskMemory } from './taskstore'
 import {
   logSyncFailure,
   setModuleSyncFailed,
@@ -16,7 +24,7 @@ import {
 
 const msgOf = (e: unknown): string =>
   e instanceof Error ? e.message : String(e)
-import type { ContactItem, EventItem } from '../types'
+import type { CollectionInfo, ContactItem, EventItem, TaskItem } from '../types'
 
 // Headless equivalents of CalendarView.loadAll / ContactsView's mount sync,
 // callable before the lazy module Views have mounted. Lets the app start a
@@ -185,4 +193,123 @@ export function syncContactsInBackground(
     }
   })()
   return contactsInFlight
+}
+
+// ---- Tasks ---------------------------------------------------------------
+
+let tasksInFlight: Promise<void> | null = null
+
+async function syncOneTaskCollection(
+  uid: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const mem = getTaskMemory()
+  const existing = mem.itemsByUid.get(uid) ?? []
+  let fromStoken = mem.stokenByUid.get(uid)
+
+  // Cold (no memory seed): pull the disk snapshot for a stoken so the
+  // first network round-trip is a delta rather than a full re-sync.
+  // Only use the snapshot's stoken when it also has items — a 0-item
+  // snapshot with a stoken is poisoned (see MainView's fetchCollection).
+  if (existing.length === 0 && !fromStoken) {
+    const snap = await loadSnapshot(uid)
+    if (snap && !signal.aborted) {
+      if (snap.items.length > 0) {
+        mem.itemsByUid.set(uid, snap.items)
+        fromStoken = snap.stoken
+        if (snap.lastSyncedAt) mem.syncedAt.set(uid, snap.lastSyncedAt)
+      }
+    }
+  }
+
+  const acc = new Map<string, TaskItem>(
+    (mem.itemsByUid.get(uid) ?? []).map((t) => [t.itemUid, t]),
+  )
+  const isFullSync = fromStoken === undefined
+  const seenItemUids = new Set<string>()
+
+  const result = await listTaskItems(uid, {
+    signal,
+    fromStoken,
+    onBatch: (batch) => {
+      if (signal.aborted) return
+      if (isFullSync) {
+        for (const t of batch) seenItemUids.add(t.itemUid)
+      }
+      for (const t of batch) acc.set(t.itemUid, t)
+      mem.itemsByUid.set(uid, [...acc.values()])
+    },
+  })
+  if (signal.aborted) return
+
+  if (isFullSync) {
+    // Purge items the server no longer has.
+    for (const uid of acc.keys()) {
+      if (!seenItemUids.has(uid)) acc.delete(uid)
+    }
+    mem.itemsByUid.set(uid, [...acc.values()])
+  } else {
+    for (const removed of result.removed) acc.delete(removed)
+    mem.itemsByUid.set(uid, [...acc.values()])
+  }
+
+  // Only save the stoken when we have items (poisoned-snapshot guard).
+  const finalItems = [...acc.values()]
+  if (finalItems.length > 0 && result.stoken) {
+    mem.stokenByUid.set(uid, result.stoken)
+  }
+  const now = Date.now()
+  mem.syncedAt.set(uid, now)
+  mem.loadedUids.add(uid)
+
+  // Persist the snapshot (with the same guard: items > 0 for stoken).
+  if (finalItems.length > 0) {
+    void saveSnapshot({
+      version: 1,
+      uid,
+      items: finalItems,
+      stoken: finalItems.length > 0 ? result.stoken || undefined : undefined,
+      lastSyncedAt: now,
+    })
+  }
+}
+
+export function syncTasksInBackground(signal?: AbortSignal): Promise<void> {
+  if (tasksInFlight) return tasksInFlight
+  const ac = signal ?? new AbortController().signal
+  tasksInFlight = (async () => {
+    setModuleSyncing('tasks', true)
+    try {
+      const mem = getTaskMemory()
+      let collections: CollectionInfo[] | null = mem.collections
+      if (!collections) {
+        // Hydrate from disk first, then network.
+        const cached = await loadCollectionsList()
+        if (!ac.aborted && cached && cached.length > 0) {
+          collections = cached
+          patchTaskMemory({ collections })
+        }
+        collections = await listCollections({ includeDeleted: false })
+        if (ac.aborted) return
+        patchTaskMemory({ collections })
+      }
+      const live = collections.filter((c) => !c.isDeleted)
+      await Promise.all(
+        live.map((c) =>
+          syncOneTaskCollection(c.uid, ac).catch((e) => {
+            setModuleSyncFailed('tasks', true)
+            logSyncFailure('tasks', `${c.name}: ${msgOf(e)}`)
+          }),
+        ),
+      )
+      patchTaskMemory({ warmed: true })
+    } catch (e) {
+      setModuleSyncFailed('tasks', true)
+      logSyncFailure('tasks', msgOf(e))
+    } finally {
+      setModuleSyncing('tasks', false)
+      tasksInFlight = null
+    }
+  })()
+  return tasksInFlight
 }

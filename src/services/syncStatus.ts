@@ -1,7 +1,16 @@
 import { getCalMemory } from './calstore'
 import { getContactMemory } from './contactstore'
-import { readModuleEnabled, type ModuleName } from './moduleFlags'
+import {
+  ALL_MODULES,
+  readModuleEnabled,
+  type ModuleName,
+} from './moduleFlags'
 import { getTaskMemory } from './taskstore'
+import {
+  syncCalendarsInBackground,
+  syncContactsInBackground,
+  syncTasksInBackground,
+} from './backgroundSync'
 
 // Global "last synced" rollup across whichever modules are enabled.
 // Returns the *oldest* lastSyncedAt across all collections in those
@@ -132,6 +141,19 @@ export async function triggerSyncAll(): Promise<void> {
       // Synchronous throw shouldn't happen — handlers wrap their own
       // work — but swallow defensively so one bad module can't sink
       // the others.
+    }
+  }
+  // Fallback: if a module has no registered handler (its View is
+  // unmounted), use the background sync so a sync-all still covers it.
+  for (const m of ALL_MODULES) {
+    if (!readModuleEnabled(m)) continue
+    if (handlers.has(m)) continue // already handled above
+    if (m === 'tasks') {
+      tasks.push(syncTasksInBackground().catch(() => {}))
+    } else if (m === 'calendar') {
+      tasks.push(syncCalendarsInBackground().catch(() => {}))
+    } else if (m === 'contacts') {
+      tasks.push(syncContactsInBackground().catch(() => {}))
     }
   }
   await Promise.all(tasks)
