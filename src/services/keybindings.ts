@@ -73,9 +73,9 @@ const ACTIONS: Record<KeybindingAction, ActionDef> = {
     default: { key: 's', ctrl: true, shift: false, alt: false },
   },
   'sync.active': {
-    label: 'Sync active list',
+    label: 'Sync active list/calendar',
     description:
-      'Sync just the active list now. (Ctrl/Cmd+Alt+S force-syncs every list across all modules.)',
+      'Sync just the active list (tasks) or the selected calendar (Ctrl+↑/↓ cycles it) now. Ctrl/Cmd+Alt+S force-syncs every list and calendar across all modules.',
     default: { key: 's', ctrl: true, shift: true, alt: false },
   },
   'new.task': {
