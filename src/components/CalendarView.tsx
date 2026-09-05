@@ -106,6 +106,7 @@ import { TimeGrid } from './calendar/TimeGrid'
 import { YearGrid } from './calendar/YearGrid'
 import { CalendarSidebar } from './calendar/CalendarSidebar'
 import { CalendarSettingsPopover } from './calendar/CalendarSettingsPopover'
+import { YearPickerPopover } from './calendar/YearPickerPopover'
 import { EventComposer } from './calendar/EventComposer'
 import { ConflictModal } from './calendar/ConflictModal'
 import { EventPopover } from './calendar/EventPopover'
@@ -114,6 +115,7 @@ import {
   RecurrenceScopeModal,
   type RecurScope,
 } from './calendar/RecurrenceScopeModal'
+import { matchesBinding } from '../services/keybindings'
 import { expandEvents } from '../services/recurrence'
 import { startAlarmScheduler } from '../services/alarms'
 import { buildIcs, splitIcs } from '../services/ics'
@@ -165,6 +167,13 @@ const HOUR_PX_DEFAULT = 44
 const ZOOM_MIN = 0.7
 const ZOOM_MAX = 1.6
 const ZOOM_DEFAULT = 1
+
+// Days in a given month (0-indexed month). Used by the year-picker jump
+// to clamp the day when the target month is shorter than the current
+// (e.g. Jan 31 → Feb would otherwise roll into March).
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate()
+}
 
 // Turn a sync / load failure into a human-readable toast message. Etebase
 // and the underlying fetch surface network failures as terse strings
@@ -926,6 +935,10 @@ export function CalendarView({
     })
   }, [])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Click-to-pick-year popover on the calendar title. Mirrors the
+  // settings popover toggle pattern. Lets the user jump to any year
+  // without paging ‹/› month-by-month or typing into the date input.
+  const [yearPickerOpen, setYearPickerOpen] = useState(false)
 
   async function handleLogout() {
     await logout()
@@ -1950,18 +1963,31 @@ export function CalendarView({
     )
   }, [])
 
-  const goToday = useCallback(() => setAnchor(startOfDay(new Date())), [])
+  const goToday = useCallback(() => {
+    const td = startOfDay(new Date())
+    setAnchor(td)
+    setSelected(td)
+  }, [])
   const step = useCallback(
     (dir: 1 | -1) => setAnchor((a) => stepAnchor(view, a, dir)),
     [view],
   )
+  // Click a day: jump the view AND move the keyboard cursor there.
+  // The cursor (selected) must follow the click, or the next arrow
+  // keypress computes `addDays(selected, delta)` from the STALE cursor
+  // and snaps the user back to "one day from where they were previously
+  // started" — the symptom that drove this fix.
   const pickDay = useCallback((d: Date) => {
-    setAnchor(startOfDay(d))
+    const nd = startOfDay(d)
+    setAnchor(nd)
+    setSelected(nd)
     setView('day')
   }, [])
   const pickMonth = useCallback(
     (mo: number) => {
-      setAnchor(new Date(anchor.getFullYear(), mo, 1))
+      const nd = new Date(anchor.getFullYear(), mo, 1)
+      setAnchor(nd)
+      setSelected(nd)
       setView('month')
     },
     [anchor],
@@ -2088,9 +2114,34 @@ export function CalendarView({
     }
   }, [])
 
+  // Calendars the user can write to, in the same order as the sidebar
+  // (so the composer's "Add to" dropdown follows the chosen sort). Locked
+  // and deleted calendars are excluded — neither is a valid target. Also
+  // the cycle pool for Ctrl+↑/↓ (selected-calendar cycling).
+  const writableCalendars = useMemo(
+    () =>
+      (sortedCalendars ?? []).filter(
+        (c) => !c.isDeleted && !isCalLocked(c.uid),
+      ),
+    [sortedCalendars, isCalLocked],
+  )
+
+  // Target for new events: the user's chosen default if it's writable,
+  // otherwise the first visible writable calendar, otherwise the first
+  // writable one. Locked calendars never qualify. Also the "selected"
+  // calendar that Ctrl+↑/↓ cycles and Ctrl+Shift+S syncs.
+  const defaultCalUid =
+    (defaultCalPref &&
+      writableCalendars.find((c) => c.uid === defaultCalPref)?.uid) ||
+    writableCalendars.find((c) => !hidden.has(c.uid))?.uid ||
+    writableCalendars[0]?.uid ||
+    ''
+
   // Keyboard shortcuts. Disabled while a modal owns the keyboard or focus
   // is in a form field. Arrow keys move the selected day and the view
   // pages to keep it visible; Shift+arrow pages by the view's unit.
+  // Ctrl+↑/↓ cycles the selected (default) calendar in the sidebar —
+  // which becomes the target for new events and for Ctrl+Shift+S.
   useEffect(() => {
     if (composer || conflict) return
     const handler = (e: KeyboardEvent) => {
@@ -2103,6 +2154,16 @@ export function CalendarView({
           t.isContentEditable)
       )
         return
+
+      // Ctrl/Cmd+Shift+S → sync the SELECTED calendar only. Mirrors the
+      // tasks module's `sync.active` (which syncs the active task list).
+      // Ctrl/Cmd+Alt+S (handled in App) syncs every calendar — keep that.
+      if (matchesBinding(e, 'sync.active')) {
+        e.preventDefault()
+        if (defaultCalUid) void handleSyncCalendar(defaultCalUid)
+        return
+      }
+
       // Command shortcuts are Ctrl-prefixed across the app so bare letters
       // can be reserved for future typeahead (e.g. event search).
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
@@ -2118,13 +2179,26 @@ export function CalendarView({
           setComposer({ mode: 'new', date: selected })
           return
         }
-        // Ctrl/Cmd+←/→ pages by the current view's unit — next/prev week in
-        // week view, day in day view, month in month view, etc. (mirrors
-        // Shift+←/→, just on the modifier the user reaches for).
-        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // Ctrl/Cmd+↑/↓ cycles the selected (default) calendar in the
+        // sidebar — the calendar new events go into and Ctrl+Shift+S
+        // syncs. The cycle pool is `writableCalendars` (excludes locked
+        // + deleted), in sidebar sort order. Wraps. The ★ highlight and
+        // the EventComposer's initial calendar follow automatically via
+        // the existing `defaultCalUid` derivation.
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault()
-          const dir = e.key === 'ArrowLeft' ? -1 : 1
-          setAnchor((a) => stepAnchor(view, a, dir))
+          const pool = writableCalendars
+          if (pool.length === 0) return
+          const curIdx =
+            defaultCalUid
+              ? pool.findIndex((c) => c.uid === defaultCalUid)
+              : -1
+          const dir = e.key === 'ArrowDown' ? 1 : -1
+          const nextIdx =
+            curIdx < 0
+              ? 0
+              : (curIdx + dir + pool.length) % pool.length
+          chooseDefaultCal(pool[nextIdx].uid)
           return
         }
       }
@@ -2177,28 +2251,17 @@ export function CalendarView({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [view, anchor, selected, composer, conflict])
-
-  // Calendars the user can write to, in the same order as the sidebar
-  // (so the composer's "Add to" dropdown follows the chosen sort). Locked
-  // and deleted calendars are excluded — neither is a valid target.
-  const writableCalendars = useMemo(
-    () =>
-      (sortedCalendars ?? []).filter(
-        (c) => !c.isDeleted && !isCalLocked(c.uid),
-      ),
-    [sortedCalendars, isCalLocked],
-  )
-
-  // Target for new events: the user's chosen default if it's writable,
-  // otherwise the first visible writable calendar, otherwise the first
-  // writable one. Locked calendars never qualify.
-  const defaultCalUid =
-    (defaultCalPref &&
-      writableCalendars.find((c) => c.uid === defaultCalPref)?.uid) ||
-    writableCalendars.find((c) => !hidden.has(c.uid))?.uid ||
-    writableCalendars[0]?.uid ||
-    ''
+  }, [
+    view,
+    anchor,
+    selected,
+    composer,
+    conflict,
+    defaultCalUid,
+    writableCalendars,
+    chooseDefaultCal,
+    handleSyncCalendar,
+  ])
 
   const handleCreate = useCallback(
     async (calUid: string, args: NewVEventArgs) => {
@@ -2615,7 +2678,11 @@ export function CalendarView({
         locked={lockedCals}
         onToggle={toggleCal}
         onToggleLock={toggleLock}
-        onPickDay={(d) => setAnchor(startOfDay(d))}
+        onPickDay={(d) => {
+          const nd = startOfDay(d)
+          setAnchor(nd)
+          setSelected(nd)
+        }}
         onExportCalendar={handleExportCalendar}
         onImportCalendar={handleImportCalendar}
         onRenameCalendar={handleRenameCalendar}
@@ -2709,9 +2776,38 @@ export function CalendarView({
               className="ml-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-muted"
             />
           </div>
-          <h1 className="truncate text-sm font-semibold">
-            {rangeTitle(view, anchor)}
-          </h1>
+          <div className="relative">
+            <button
+              type="button"
+              data-year-picker-toggle
+              onClick={() => setYearPickerOpen((o) => !o)}
+              aria-expanded={yearPickerOpen}
+              aria-label="Pick year"
+              title="Pick year"
+              className="truncate rounded px-1 py-0.5 text-sm font-semibold transition-colors hover:bg-surface-2"
+            >
+              {rangeTitle(view, anchor)}
+            </button>
+            {yearPickerOpen && (
+              <YearPickerPopover
+                year={anchor.getFullYear()}
+                onPick={(y) => {
+                  // Jump anchor + selected to the same month/day in the
+                  // chosen year. setSelected must accompany setAnchor or
+                  // the cursor stays on the old day and the next arrow
+                  // keypress snaps back (see pickDay's comment).
+                  const nd = new Date(
+                    y,
+                    anchor.getMonth(),
+                    Math.min(anchor.getDate(), daysInMonth(y, anchor.getMonth())),
+                  )
+                  setAnchor(nd)
+                  setSelected(nd)
+                }}
+                onClose={() => setYearPickerOpen(false)}
+              />
+            )}
+          </div>
 
           <div className="ml-auto flex items-center gap-0.5 rounded-md border border-border p-0.5 text-xs">
             {VIEWS.map((v) => (
