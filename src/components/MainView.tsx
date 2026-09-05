@@ -5024,6 +5024,7 @@ export function MainView({
               revealedBranches={revealedForView}
               onToggleBranchReveal={handleToggleBranchReveal}
               phonePriority={phonePriority}
+              collectionUid={activeUid ?? undefined}
               selectedUid={selectedTaskUid}
               selectedUids={selectedTaskUids}
               anchorUid={selectionAnchor}

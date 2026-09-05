@@ -18,6 +18,7 @@ import {
   readShowTaskDetails,
   readShowTotalSubtaskCount,
 } from '../services/taskRowSettings'
+import { readCollapsed, rememberCollapsed } from '../services/taskstore'
 
 // Walk up from `el` to find the nearest scrolling ancestor. The task
 // pane has overflow-y-auto on the wrapper that holds the tree; that's
@@ -194,6 +195,11 @@ interface Props {
   // of stepping one level at a time. Mirrors the detail panel's
   // phone-friendly dropdown.
   phonePriority?: boolean
+  // The active collection's uid. Used to persist the per-collection
+  // collapsed-uid set (so module switches / app restarts preserve the
+  // user's collapses). When undefined, collapse state is not persisted
+  // (TaskTree falls back to the in-memory-only default behaviour).
+  collectionUid?: string
 }
 
 // Map a typed digit to a priority value. In phone mode only 0–3 are
@@ -478,13 +484,48 @@ export function TaskTree({
   revealedBranches,
   onToggleBranchReveal,
   phonePriority = false,
+  collectionUid,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
-    // Default: expand all roots one level
+    // If we have a persisted collapsed-uid set for this collection, seed
+    // `expanded` as the complement: every root and every descendant we
+    // can resolve, minus the collapsed uids. This preserves the user's
+    // collapses across module switches (TaskTree unmount → remount) and
+    // app restarts. New tasks (never seen before) default to expanded,
+    // which is the natural expectation.
+    const collapsed = collectionUid ? readCollapsed(collectionUid) : null
+    if (collapsed && collapsed.size > 0) {
+      const initial = new Set<string>()
+      const walk = (n: TaskNode) => {
+        if (!collapsed.has(n.todo.uid)) initial.add(n.todo.uid)
+        for (const c of n.children) walk(c)
+      }
+      for (const r of roots) walk(r)
+      return initial
+    }
+    // No persisted collapses: default to expanding all roots one level.
     const initial = new Set<string>()
     for (const r of roots) initial.add(r.todo.uid)
     return initial
   })
+  // Persist the collapsed-uid set (the complement of `expanded`) to
+  // TaskMemory + localStorage whenever `expanded` changes, so module
+  // switches (TaskTree unmount → remount) and app restarts preserve the
+  // user's collapses. Computed against the current `roots` so uids that
+  // no longer exist are dropped (e.g. after a task is deleted or moved
+  // to another list — keeping them around would resurrect a collapse
+  // if the uid ever reappeared, which is harmless but noisy).
+  useEffect(() => {
+    if (!collectionUid) return
+    const expandedUids = expanded
+    const collapsed = new Set<string>()
+    const walk = (n: TaskNode) => {
+      if (!expandedUids.has(n.todo.uid)) collapsed.add(n.todo.uid)
+      for (const c of n.children) walk(c)
+    }
+    for (const r of roots) walk(r)
+    rememberCollapsed(collectionUid, collapsed)
+  }, [collectionUid, expanded, roots])
   const selected = selectedUid
   const setSelected = onSelectChange
   const [editingUid, setEditingUid] = useState<string | null>(null)
