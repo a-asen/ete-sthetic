@@ -2169,6 +2169,18 @@ export function MainView({
     [handleQuickAddRoot],
   )
 
+  // Ctrl/Cmd+Shift+Enter in quick-add: commit and follow the new task
+  // (select + scroll) but stay in the task pane — the quick-add row keeps
+  // working as a rapid-entry surface instead of yanking focus to details.
+  const handleQuickAddRootFollow = useCallback(
+    async (summary: string) => {
+      await handleQuickAddRoot(summary)
+      if (cancelledRef.current) return
+      setFocusZone('tasks')
+    },
+    [handleQuickAddRoot],
+  )
+
   // Logseq-style status cycle: NEEDS-ACTION → IN-PROCESS → COMPLETED →
   // NEEDS-ACTION. CANCELLED rejoins the cycle at the top (so cycling out
   // of it lands on NEEDS-ACTION rather than IN-PROCESS).
@@ -2400,6 +2412,19 @@ export function MainView({
       await handleConfirmCreate(summary)
       if (cancelledRef.current) return
       setFocusZone('details')
+    },
+    [handleConfirmCreate],
+  )
+
+  // Commit an inline (sub)task and follow it (select + scroll) but stay in
+  // the task pane — Ctrl/Cmd+Shift+Enter while typing. The tree's
+  // select-scroll effect takes the viewport to the new row; unlike
+  // handleConfirmCreateAndOpen we deliberately do NOT jump to details.
+  const handleConfirmCreateFollow = useCallback(
+    async (summary: string) => {
+      await handleConfirmCreate(summary)
+      if (cancelledRef.current) return
+      setFocusZone('tasks')
     },
     [handleConfirmCreate],
   )
@@ -5003,9 +5028,11 @@ export function MainView({
               onAddChild={handleStartCreateChild}
               onConfirmCreate={handleConfirmCreate}
               onConfirmCreateAndOpen={handleConfirmCreateAndOpen}
+              onConfirmCreateFollow={handleConfirmCreateFollow}
               onCancelCreate={handleCancelCreate}
               onQuickAdd={handleQuickAddRoot}
               onQuickAddAndOpen={handleQuickAddRootAndOpen}
+              onQuickAddFollow={handleQuickAddRootFollow}
               quickAddRef={quickAddRef}
               onRenameTask={handleRenameTask}
               onDeleteRequest={handleDeleteRequest}

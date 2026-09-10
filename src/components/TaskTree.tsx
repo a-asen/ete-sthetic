@@ -136,10 +136,15 @@ interface Props {
   onAddChild?: (parent: TaskNode) => void
   onConfirmCreate?: (summary: string) => void
   onConfirmCreateAndOpen?: (summary: string) => void
+  // Ctrl/Cmd+Shift+Enter while typing: commit and follow (select + scroll
+  // to the new task) but stay in the task pane — no detail panel.
+  onConfirmCreateFollow?: (summary: string) => void
   onCancelCreate?: () => void
   // Persistent quick-add row at the top of the list (root tasks).
   onQuickAdd?: (summary: string) => void
   onQuickAddAndOpen?: (summary: string) => void
+  // Ctrl/Cmd+Shift+Enter in quick-add: commit and follow, stay in tasks.
+  onQuickAddFollow?: (summary: string) => void
   quickAddRef?: React.Ref<HTMLInputElement>
   onRenameTask?: (node: TaskNode, newSummary: string) => void
   onDeleteRequest?: (node: TaskNode) => void
@@ -235,6 +240,7 @@ function InlineCreate({
   onConfirm,
   onCancel,
   onConfirmAndOpen,
+  onConfirmFollow,
 }: {
   depth: number
   // Root creates render as a centred "compose" box in the task pane;
@@ -245,6 +251,9 @@ function InlineCreate({
   // Ctrl/Cmd+→ while typing: commit this (sub)task and follow it into
   // the detail panel, instead of the global handler opening the parent.
   onConfirmAndOpen?: (summary: string) => void
+  // Ctrl/Cmd+Shift+Enter while typing: commit and follow (select + scroll
+  // to the new task) but stay in the task pane.
+  onConfirmFollow?: (summary: string) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -260,13 +269,15 @@ function InlineCreate({
         return
       }
       // Ctrl/Cmd+Enter commits this (sub)task and follows it into details;
-      // plain Enter just commits. stopPropagation on the chord so the
-      // global Ctrl+Enter handler doesn't also fire (it would open the
-      // *parent's* detail). Ctrl+←/→ are left to the browser as native
-      // word-jump so they never create the task or destroy a draft.
+      // Ctrl/Cmd+Shift+Enter commits and follows (select + scroll) but stays
+      // in the task pane; plain Enter just commits. stopPropagation on the
+      // chords so the global Ctrl+Enter handler doesn't also fire (it would
+      // open the *parent's* detail). Ctrl+←/→ are left to the browser as
+      // native word-jump so they never create the task or destroy a draft.
       if (e.ctrlKey || e.metaKey) {
         e.stopPropagation()
-        if (onConfirmAndOpen) onConfirmAndOpen(value)
+        if (e.shiftKey && onConfirmFollow) onConfirmFollow(value)
+        else if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
       } else {
         onConfirm(value)
@@ -342,8 +353,9 @@ const QuickAdd = forwardRef<
   {
     onConfirm: (summary: string) => void
     onConfirmAndOpen?: (summary: string) => void
+    onConfirmFollow?: (summary: string) => void
   }
->(function QuickAdd({ onConfirm, onConfirmAndOpen }, ref) {
+>(function QuickAdd({ onConfirm, onConfirmAndOpen, onConfirmFollow }, ref) {
   const inputRef = useRef<HTMLInputElement>(null)
   useImperativeHandle(ref, () => inputRef.current as HTMLInputElement, [])
 
@@ -352,12 +364,15 @@ const QuickAdd = forwardRef<
       e.preventDefault()
       const value = inputRef.current?.value.trim() ?? ''
       if (!value) return
-      // Ctrl/Cmd+Enter commits and follows into details; plain Enter just
-      // commits. stopPropagation on the chord so the global Ctrl+Enter
-      // handler doesn't also fire. Ctrl+←/→ stay as native word-jump.
+      // Ctrl/Cmd+Enter commits and follows into details; Ctrl/Cmd+Shift+Enter
+      // commits and follows (select + scroll) but stays in the task pane;
+      // plain Enter just commits. stopPropagation on the chords so the
+      // global Ctrl+Enter handler doesn't also fire. Ctrl+←/→ stay as
+      // native word-jump.
       if (e.ctrlKey || e.metaKey) {
         e.stopPropagation()
-        if (onConfirmAndOpen) onConfirmAndOpen(value)
+        if (e.shiftKey && onConfirmFollow) onConfirmFollow(value)
+        else if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
       } else {
         onConfirm(value)
@@ -463,9 +478,11 @@ export function TaskTree({
   onAddChild,
   onConfirmCreate,
   onConfirmCreateAndOpen,
+  onConfirmCreateFollow,
   onCancelCreate,
   onQuickAdd,
   onQuickAddAndOpen,
+  onQuickAddFollow,
   quickAddRef,
   onRenameTask,
   onDeleteRequest,
@@ -1052,6 +1069,7 @@ export function TaskTree({
           ref={quickAddRef}
           onConfirm={onQuickAdd}
           onConfirmAndOpen={onQuickAddAndOpen}
+          onConfirmFollow={onQuickAddFollow}
         />
       )}
       {visible.map((node, i) => {
@@ -1597,6 +1615,7 @@ export function TaskTree({
                 onConfirm={onConfirmCreate!}
                 onCancel={onCancelCreate!}
                 onConfirmAndOpen={onConfirmCreateAndOpen}
+                onConfirmFollow={onConfirmCreateFollow}
               />
             </Fragment>
           )
