@@ -2169,9 +2169,9 @@ export function MainView({
     [handleQuickAddRoot],
   )
 
-  // Ctrl/Cmd+Shift+Enter in quick-add: commit and follow the new task
-  // (select + scroll) but stay in the task pane — the quick-add row keeps
-  // working as a rapid-entry surface instead of yanking focus to details.
+  // Shift+Enter in quick-add: commit and follow the new task (select +
+  // scroll) but stay in the task pane — the quick-add row keeps working as
+  // a rapid-entry surface instead of yanking focus to details.
   const handleQuickAddRootFollow = useCallback(
     async (summary: string) => {
       await handleQuickAddRoot(summary)
@@ -2417,8 +2417,8 @@ export function MainView({
   )
 
   // Commit an inline (sub)task and follow it (select + scroll) but stay in
-  // the task pane — Ctrl/Cmd+Shift+Enter while typing. The tree's
-  // select-scroll effect takes the viewport to the new row; unlike
+  // the task pane — Shift+Enter while typing. The tree's select-scroll
+  // effect takes the viewport to the new row; unlike
   // handleConfirmCreateAndOpen we deliberately do NOT jump to details.
   const handleConfirmCreateFollow = useCallback(
     async (summary: string) => {

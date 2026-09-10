@@ -66,7 +66,7 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
         description: 'While creating: commit and open the new task in details',
       },
       {
-        keys: ['Ctrl+Shift+Enter'],
+        keys: ['Shift+Enter'],
         description:
           'While creating: commit and follow the new task (stay in the list)',
       },

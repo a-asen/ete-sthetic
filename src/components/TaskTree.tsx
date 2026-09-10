@@ -136,14 +136,14 @@ interface Props {
   onAddChild?: (parent: TaskNode) => void
   onConfirmCreate?: (summary: string) => void
   onConfirmCreateAndOpen?: (summary: string) => void
-  // Ctrl/Cmd+Shift+Enter while typing: commit and follow (select + scroll
-  // to the new task) but stay in the task pane — no detail panel.
+  // Shift+Enter while typing: commit and follow (select + scroll to the
+  // new task) but stay in the task pane — no detail panel.
   onConfirmCreateFollow?: (summary: string) => void
   onCancelCreate?: () => void
   // Persistent quick-add row at the top of the list (root tasks).
   onQuickAdd?: (summary: string) => void
   onQuickAddAndOpen?: (summary: string) => void
-  // Ctrl/Cmd+Shift+Enter in quick-add: commit and follow, stay in tasks.
+  // Shift+Enter in quick-add: commit and follow, stay in tasks.
   onQuickAddFollow?: (summary: string) => void
   quickAddRef?: React.Ref<HTMLInputElement>
   onRenameTask?: (node: TaskNode, newSummary: string) => void
@@ -248,11 +248,11 @@ function InlineCreate({
   centered?: boolean
   onConfirm: (summary: string) => void
   onCancel: () => void
-  // Ctrl/Cmd+→ while typing: commit this (sub)task and follow it into
+  // Ctrl/Cmd+Enter while typing: commit this (sub)task and follow it into
   // the detail panel, instead of the global handler opening the parent.
   onConfirmAndOpen?: (summary: string) => void
-  // Ctrl/Cmd+Shift+Enter while typing: commit and follow (select + scroll
-  // to the new task) but stay in the task pane.
+  // Shift+Enter while typing: commit and follow (select + scroll to the
+  // new task) but stay in the task pane.
   onConfirmFollow?: (summary: string) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -269,16 +269,22 @@ function InlineCreate({
         return
       }
       // Ctrl/Cmd+Enter commits this (sub)task and follows it into details;
-      // Ctrl/Cmd+Shift+Enter commits and follows (select + scroll) but stays
-      // in the task pane; plain Enter just commits. stopPropagation on the
-      // chords so the global Ctrl+Enter handler doesn't also fire (it would
+      // Shift+Enter commits and follows (select + scroll) but stays in the
+      // task pane; plain Enter just commits. stopPropagation on the Ctrl
+      // chord so the global Ctrl+Enter handler doesn't also fire (it would
       // open the *parent's* detail). Ctrl+←/→ are left to the browser as
       // native word-jump so they never create the task or destroy a draft.
-      if (e.ctrlKey || e.metaKey) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
         e.stopPropagation()
-        if (e.shiftKey && onConfirmFollow) onConfirmFollow(value)
-        else if (onConfirmAndOpen) onConfirmAndOpen(value)
+        if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
+      } else if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        if (onConfirmFollow) {
+          e.stopPropagation()
+          onConfirmFollow(value)
+        } else {
+          onConfirm(value)
+        }
       } else {
         onConfirm(value)
       }
@@ -364,16 +370,18 @@ const QuickAdd = forwardRef<
       e.preventDefault()
       const value = inputRef.current?.value.trim() ?? ''
       if (!value) return
-      // Ctrl/Cmd+Enter commits and follows into details; Ctrl/Cmd+Shift+Enter
-      // commits and follows (select + scroll) but stays in the task pane;
-      // plain Enter just commits. stopPropagation on the chords so the
-      // global Ctrl+Enter handler doesn't also fire. Ctrl+←/→ stay as
-      // native word-jump.
-      if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+Enter commits and follows into details; Shift+Enter commits
+      // and follows (select + scroll) but stays in the task pane; plain
+      // Enter just commits. stopPropagation on the Ctrl chord so the global
+      // Ctrl+Enter handler doesn't also fire. Ctrl+←/→ stay as native
+      // word-jump.
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
         e.stopPropagation()
-        if (e.shiftKey && onConfirmFollow) onConfirmFollow(value)
-        else if (onConfirmAndOpen) onConfirmAndOpen(value)
+        if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
+      } else if (e.shiftKey && !e.ctrlKey && !e.metaKey && onConfirmFollow) {
+        e.stopPropagation()
+        onConfirmFollow(value)
       } else {
         onConfirm(value)
       }
