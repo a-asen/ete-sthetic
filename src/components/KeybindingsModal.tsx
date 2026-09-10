@@ -62,13 +62,17 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
       },
       { keys: ['Ctrl+N'], description: 'New task at top of list' },
       {
-        keys: ['Ctrl+Enter'],
-        description: 'While creating: commit and open the new task in details',
+        keys: ['Enter'],
+        description:
+          'While creating: commit (behaviour follows the "Enter on new task" setting)',
       },
       {
         keys: ['Shift+Enter'],
-        description:
-          'While creating: commit and follow the new task (stay in the list)',
+        description: 'While creating: commit and follow, staying in the list',
+      },
+      {
+        keys: ['Ctrl+Enter'],
+        description: 'While creating: commit and open in the detail panel',
       },
       {
         keys: ['Ctrl+M'],

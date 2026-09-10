@@ -12,11 +12,13 @@ import { findParentAndSiblings, flattenVisible } from '../services/tree'
 import { humanizeRrule } from '../services/rrule'
 import {
   TASK_ROW_SETTINGS_CHANGED_EVENT,
+  readNewTaskEnterMode,
   readReorderStep,
   readScrollHeadroom,
   readShowCompletedSubtaskCount,
   readShowTaskDetails,
   readShowTotalSubtaskCount,
+  resolveEnterAction,
 } from '../services/taskRowSettings'
 import { readCollapsed, rememberCollapsed } from '../services/taskstore'
 
@@ -248,11 +250,10 @@ function InlineCreate({
   centered?: boolean
   onConfirm: (summary: string) => void
   onCancel: () => void
-  // Ctrl/Cmd+Enter while typing: commit this (sub)task and follow it into
-  // the detail panel, instead of the global handler opening the parent.
+  // Commit and open the new task in the detail panel.
   onConfirmAndOpen?: (summary: string) => void
-  // Shift+Enter while typing: commit and follow (select + scroll to the
-  // new task) but stay in the task pane.
+  // Commit and follow (select + scroll to the new task) but stay in
+  // the task pane.
   onConfirmFollow?: (summary: string) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -268,23 +269,26 @@ function InlineCreate({
         onCancel()
         return
       }
-      // Ctrl/Cmd+Enter commits this (sub)task and follows it into details;
-      // Shift+Enter commits and follows (select + scroll) but stays in the
-      // task pane; plain Enter just commits. stopPropagation on the Ctrl
-      // chord so the global Ctrl+Enter handler doesn't also fire (it would
-      // open the *parent's* detail). Ctrl+←/→ are left to the browser as
-      // native word-jump so they never create the task or destroy a draft.
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      // Plain Enter follows the "new task Enter behaviour" preference;
+      // Ctrl/Cmd+Enter and Shift+Enter always force the two non-default
+      // behaviours (see resolveEnterAction). stopPropagation on the
+      // modifier chords so the global Ctrl+Enter handler doesn't also
+      // fire (it would open the *parent's* detail). Ctrl+←/→ are left to
+      // the browser as native word-jump so they never create the task or
+      // destroy a draft.
+      const action = resolveEnterAction(
+        readNewTaskEnterMode(),
+        e.ctrlKey || e.metaKey,
+        e.shiftKey,
+      )
+      if (action === 'open') {
         e.stopPropagation()
         if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
-      } else if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        if (onConfirmFollow) {
-          e.stopPropagation()
-          onConfirmFollow(value)
-        } else {
-          onConfirm(value)
-        }
+      } else if (action === 'follow') {
+        e.stopPropagation()
+        if (onConfirmFollow) onConfirmFollow(value)
+        else onConfirm(value)
       } else {
         onConfirm(value)
       }
@@ -370,18 +374,24 @@ const QuickAdd = forwardRef<
       e.preventDefault()
       const value = inputRef.current?.value.trim() ?? ''
       if (!value) return
-      // Ctrl/Cmd+Enter commits and follows into details; Shift+Enter commits
-      // and follows (select + scroll) but stays in the task pane; plain
-      // Enter just commits. stopPropagation on the Ctrl chord so the global
-      // Ctrl+Enter handler doesn't also fire. Ctrl+←/→ stay as native
-      // word-jump.
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      // Plain Enter follows the "new task Enter behaviour" preference;
+      // Ctrl/Cmd+Enter and Shift+Enter always force the two non-default
+      // behaviours (see resolveEnterAction in InlineCreate). stopPropagation
+      // on the modifier chords so the global Ctrl+Enter handler doesn't
+      // also fire. Ctrl+←/→ stay as native word-jump.
+      const action = resolveEnterAction(
+        readNewTaskEnterMode(),
+        e.ctrlKey || e.metaKey,
+        e.shiftKey,
+      )
+      if (action === 'open') {
         e.stopPropagation()
         if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
-      } else if (e.shiftKey && !e.ctrlKey && !e.metaKey && onConfirmFollow) {
+      } else if (action === 'follow') {
         e.stopPropagation()
-        onConfirmFollow(value)
+        if (onConfirmFollow) onConfirmFollow(value)
+        else onConfirm(value)
       } else {
         onConfirm(value)
       }

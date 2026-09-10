@@ -43,6 +43,53 @@ const DEFAULT_REORDER_STEP = 5
 export const REORDER_STEP_MIN = 2
 export const REORDER_STEP_MAX = 50
 
+// What pressing Enter does when committing a new task. 'commit' = add the
+// task and stay put (the classic rapid-entry flow); 'follow' = also select
+// + scroll to it; 'open' = also open it in the detail panel. The modifier
+// keys rotate the *other* behaviours: Enter honours the preference, while
+// Ctrl/Cmd+Enter and Shift+Enter always mean the two non-default actions,
+// so either behaviour stays one keystroke away whichever default is set.
+export type NewTaskEnterMode = 'commit' | 'follow' | 'open'
+const KEY_ENTER_MODE = 'ete-sthetic.tasks.newTaskEnterMode'
+const ENTER_MODES: NewTaskEnterMode[] = ['commit', 'follow', 'open']
+
+export function readNewTaskEnterMode(): NewTaskEnterMode {
+  try {
+    const raw = localStorage.getItem(KEY_ENTER_MODE)
+    if (raw && (ENTER_MODES as string[]).includes(raw)) {
+      return raw as NewTaskEnterMode
+    }
+  } catch {
+    // fall through
+  }
+  return 'commit'
+}
+
+export function setNewTaskEnterMode(v: NewTaskEnterMode): void {
+  try {
+    localStorage.setItem(KEY_ENTER_MODE, v)
+    window.dispatchEvent(new CustomEvent(TASK_ROW_SETTINGS_CHANGED_EVENT))
+  } catch {
+    // Quota / disabled storage — drop silently.
+  }
+}
+
+// Resolve what an Enter press should do in a new-task input, from the
+// persisted preference plus the modifiers actually held. Plain Enter
+// follows the preference; Ctrl/Cmd+Enter and Shift+Enter always demand
+// the two NON-default behaviours (open-in-details / follow-in-list), so
+// whichever default the user picks, both other actions stay reachable
+// with a single modifier.
+export function resolveEnterAction(
+  mode: NewTaskEnterMode,
+  ctrl: boolean,
+  shift: boolean,
+): NewTaskEnterMode {
+  if (ctrl) return mode === 'open' ? 'follow' : 'open'
+  if (shift) return mode === 'follow' ? 'open' : 'follow'
+  return mode
+}
+
 function readBool(key: string, fallback: boolean): boolean {
   try {
     const raw = localStorage.getItem(key)

@@ -18,18 +18,21 @@ import {
   SCROLL_HEADROOM_MAX,
   SCROLL_HEADROOM_MIN,
   TASK_ROW_SETTINGS_CHANGED_EVENT,
+  readNewTaskEnterMode,
   readReorderStep,
   readScrollHeadroom,
   readShowCompletedSubtaskCount,
   readShowSidebarSyncAge,
   readShowTaskDetails,
   readShowTotalSubtaskCount,
+  setNewTaskEnterMode,
   setReorderStep,
   setScrollHeadroom,
   setShowCompletedSubtaskCount,
   setShowSidebarSyncAge,
   setShowTaskDetails,
   setShowTotalSubtaskCount,
+  type NewTaskEnterMode,
 } from '../services/taskRowSettings'
 
 interface Props {
@@ -249,6 +252,7 @@ export function SettingsPopover({
     readShowSidebarSyncAge,
   )
   const [reorderStep, setReorderStepState] = useState(readReorderStep)
+  const [enterMode, setEnterModeState] = useState(readNewTaskEnterMode)
   // Reflect changes made from the contacts settings popover (or any
   // future surface that flips hints).
   useEffect(() => {
@@ -266,6 +270,7 @@ export function SettingsPopover({
       setScrollHeadroomState(readScrollHeadroom())
       setShowSidebarSyncAgeState(readShowSidebarSyncAge())
       setReorderStepState(readReorderStep())
+      setEnterModeState(readNewTaskEnterMode())
     }
     window.addEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
     return () =>
@@ -375,6 +380,48 @@ export function SettingsPopover({
           label="Show last-sync age on sidebar list rows"
         />
       </Row>
+      <Row label="Enter on new task">
+        <span className="flex items-center rounded-md border border-border text-[11px] text-text-muted">
+          {(
+            [
+              ['commit', 'Commit'],
+              ['follow', 'Follow'],
+              ['open', 'Open'],
+            ] as Array<[NewTaskEnterMode, string]>
+          ).map(([m, label], i) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setNewTaskEnterMode(m)
+                setEnterModeState(m)
+              }}
+              aria-pressed={enterMode === m}
+              title={
+                m === 'commit'
+                  ? 'Add the task and stay in the list'
+                  : m === 'follow'
+                    ? 'Add, then select + scroll to it'
+                    : 'Add, then open it in the detail panel'
+              }
+              className={`h-6 px-2 transition-colors ${
+                i === 0 ? 'rounded-l-md' : ''
+              } ${i === 2 ? 'rounded-r-md' : 'border-r border-border'} ${
+                enterMode === m
+                  ? 'bg-accent-soft text-accent'
+                  : 'hover:bg-surface-2 hover:text-text'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+      </Row>
+      <p className="px-3 pb-2 pt-0 text-[11px] text-text-faint">
+        What plain <kbd>Enter</kbd> does after typing a new task. The
+        modifier keys (<kbd>Shift</kbd> / <kbd>Ctrl</kbd>) always force
+        one of the other two behaviours.
+      </p>
     </>
   )
 
