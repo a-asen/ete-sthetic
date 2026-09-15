@@ -18,21 +18,28 @@ import {
   SCROLL_HEADROOM_MAX,
   SCROLL_HEADROOM_MIN,
   TASK_ROW_SETTINGS_CHANGED_EVENT,
-  readNewTaskEnterMode,
+  readAutoFocusQuickAdd,
+  readFollowNewTaskOnShiftEnter,
+  readNewTaskFocus,
+  readNewTaskHighlight,
   readReorderStep,
   readScrollHeadroom,
   readShowCompletedSubtaskCount,
   readShowSidebarSyncAge,
   readShowTaskDetails,
   readShowTotalSubtaskCount,
-  setNewTaskEnterMode,
+  setAutoFocusQuickAdd,
+  setFollowNewTaskOnShiftEnter,
+  setNewTaskFocus,
+  setNewTaskHighlight,
   setReorderStep,
   setScrollHeadroom,
   setShowCompletedSubtaskCount,
   setShowSidebarSyncAge,
   setShowTaskDetails,
   setShowTotalSubtaskCount,
-  type NewTaskEnterMode,
+  type NewTaskFocus,
+  type NewTaskHighlight,
 } from '../services/taskRowSettings'
 
 interface Props {
@@ -70,7 +77,7 @@ interface Props {
 // Compact-popover pane ids. The wide SettingsWindow shows every
 // section at once (forced-open SettingsSection blocks), so this
 // navigator state only affects the small floating popover.
-type Pane = 'root' | 'display' | 'zoom' | 'sync' | 'advanced' | 'account'
+type Pane = 'root' | 'display' | 'navigation' | 'zoom' | 'sync' | 'advanced' | 'account'
 
 function durLabel(min: number): string {
   if (min <= 0) return 'Off'
@@ -252,7 +259,15 @@ export function SettingsPopover({
     readShowSidebarSyncAge,
   )
   const [reorderStep, setReorderStepState] = useState(readReorderStep)
-  const [enterMode, setEnterModeState] = useState(readNewTaskEnterMode)
+  const [newTaskHighlight, setNewTaskHighlightState] =
+    useState(readNewTaskHighlight)
+  const [newTaskFocus, setNewTaskFocusState] = useState(readNewTaskFocus)
+  const [followOnShift, setFollowOnShiftState] = useState(
+    readFollowNewTaskOnShiftEnter,
+  )
+  const [autoFocusQuickAdd, setAutoFocusQuickAddState] = useState(
+    readAutoFocusQuickAdd,
+  )
   // Reflect changes made from the contacts settings popover (or any
   // future surface that flips hints).
   useEffect(() => {
@@ -270,7 +285,10 @@ export function SettingsPopover({
       setScrollHeadroomState(readScrollHeadroom())
       setShowSidebarSyncAgeState(readShowSidebarSyncAge())
       setReorderStepState(readReorderStep())
-      setEnterModeState(readNewTaskEnterMode())
+      setNewTaskHighlightState(readNewTaskHighlight())
+      setNewTaskFocusState(readNewTaskFocus())
+      setFollowOnShiftState(readFollowNewTaskOnShiftEnter())
+      setAutoFocusQuickAddState(readAutoFocusQuickAdd())
     }
     window.addEventListener(TASK_ROW_SETTINGS_CHANGED_EVENT, refresh)
     return () =>
@@ -322,6 +340,7 @@ export function SettingsPopover({
   // by hand so the nav reflects the popover layout exactly.
   const SECTIONS = [
     { id: 'tasks.display', label: 'Display' },
+    { id: 'tasks.navigation', label: 'Navigation' },
     { id: 'tasks.zoom', label: 'Zoom' },
     { id: 'tasks.sync', label: 'Sync' },
     { id: 'tasks.accent', label: 'Accent colour' },
@@ -380,48 +399,6 @@ export function SettingsPopover({
           label="Show last-sync age on sidebar list rows"
         />
       </Row>
-      <Row label="Enter on new task">
-        <span className="flex items-center rounded-md border border-border text-[11px] text-text-muted">
-          {(
-            [
-              ['commit', 'Commit'],
-              ['follow', 'Follow'],
-              ['open', 'Open'],
-            ] as Array<[NewTaskEnterMode, string]>
-          ).map(([m, label], i) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => {
-                setNewTaskEnterMode(m)
-                setEnterModeState(m)
-              }}
-              aria-pressed={enterMode === m}
-              title={
-                m === 'commit'
-                  ? 'Add the task and stay in the list'
-                  : m === 'follow'
-                    ? 'Add, then select + scroll to it'
-                    : 'Add, then open it in the detail panel'
-              }
-              className={`h-6 px-2 transition-colors ${
-                i === 0 ? 'rounded-l-md' : ''
-              } ${i === 2 ? 'rounded-r-md' : 'border-r border-border'} ${
-                enterMode === m
-                  ? 'bg-accent-soft text-accent'
-                  : 'hover:bg-surface-2 hover:text-text'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </span>
-      </Row>
-      <p className="px-3 pb-2 pt-0 text-[11px] text-text-faint">
-        What plain <kbd>Enter</kbd> does after typing a new task. The
-        modifier keys (<kbd>Shift</kbd> / <kbd>Ctrl</kbd>) always force
-        one of the other two behaviours.
-      </p>
     </>
   )
 
@@ -537,6 +514,136 @@ export function SettingsPopover({
     </Row>
   )
 
+  const navRows = (
+    <>
+      <Row label="After creating a task">
+        <span className="flex items-center rounded-md border border-border text-[11px] text-text-muted">
+          {(
+            [
+              ['stay', 'Stay'],
+              ['follow', 'Follow'],
+            ] as Array<[NewTaskHighlight, string]>
+          ).map(([m, label], i) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setNewTaskHighlight(m)
+                setNewTaskHighlightState(m)
+              }}
+              aria-pressed={newTaskHighlight === m}
+              title={
+                m === 'stay'
+                  ? 'Keep the highlight where it is'
+                  : 'Jump the highlight to the new task'
+              }
+              className={`h-6 px-2 transition-colors ${
+                i === 0 ? 'rounded-l-md' : ''
+              } ${i === 1 ? 'rounded-r-md' : 'border-r border-border'} ${
+                newTaskHighlight === m
+                  ? 'bg-accent-soft text-accent'
+                  : 'hover:bg-surface-2 hover:text-text'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+      </Row>
+      <Row label="Open in detail panel">
+        <span className="flex items-center rounded-md border border-border text-[11px] text-text-muted">
+          {(
+            [
+              ['stay', 'Stay'],
+              ['details', 'Details'],
+            ] as Array<[NewTaskFocus, string]>
+          ).map(([m, label], i) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setNewTaskFocus(m)
+                setNewTaskFocusState(m)
+              }}
+              aria-pressed={newTaskFocus === m}
+              title={
+                m === 'stay'
+                  ? 'Remain in the list'
+                  : 'Open the new task in the detail panel'
+              }
+              className={`h-6 px-2 transition-colors ${
+                i === 0 ? 'rounded-l-md' : ''
+              } ${i === 1 ? 'rounded-r-md' : 'border-r border-border'} ${
+                newTaskFocus === m
+                  ? 'bg-accent-soft text-accent'
+                  : 'hover:bg-surface-2 hover:text-text'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+      </Row>
+      <Row label="Shift+Enter follows new task">
+        <Toggle
+          on={followOnShift}
+          onClick={() => {
+            setFollowNewTaskOnShiftEnter(!followOnShift)
+            setFollowOnShiftState(!followOnShift)
+          }}
+          label="Shift+Enter follows new task"
+        />
+      </Row>
+      <p className="px-3 pb-2 pt-0 text-[11px] text-text-faint">
+        When on, <kbd>Shift</kbd>+<kbd>Enter</kbd> overrides the segmented
+        prefs and jumps to the new task. When off,{' '}
+        <kbd>Shift</kbd>+<kbd>Enter</kbd> behaves like plain{' '}
+        <kbd>Enter</kbd>.
+      </p>
+      <Row label="Keep typing after commit">
+        <Toggle
+          on={autoFocusQuickAdd}
+          onClick={() => {
+            setAutoFocusQuickAdd(!autoFocusQuickAdd)
+            setAutoFocusQuickAddState(!autoFocusQuickAdd)
+          }}
+          label="Keep typing after commit"
+        />
+      </Row>
+      <p className="px-3 pb-2 pt-0 text-[11px] text-text-faint">
+        After a stay-put commit, return focus to the quick-add / inline input
+        so you can keep adding tasks without reaching for the mouse.
+      </p>
+      <div className="px-3 py-2 text-[11px] text-text-faint">
+        <p className="mb-1 font-medium text-text-muted">
+          How task navigation works
+        </p>
+        <ul className="list-disc space-y-0.5 pl-4">
+          <li>
+            Move the highlight with arrows, Home/End, PgUp/PgDn, click, or
+            type-to-search.
+          </li>
+          <li>
+            Plain <kbd>Enter</kbd> commits a new task and stays put
+            (or follows — see the first setting above).{' '}
+            <kbd>Shift</kbd>+<kbd>Enter</kbd> follows the new task if the
+            toggle above is on. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> opens it
+            in the detail panel.
+          </li>
+          <li>
+            Switch zones with <kbd>Ctrl+L</kbd> (lists),{' '}
+            <kbd>Ctrl+T</kbd> (tasks), <kbd>Ctrl+E</kbd> (details), or{' '}
+            <kbd>Ctrl+←</kbd>/<kbd>→</kbd>.
+          </li>
+          <li>
+            Rebind command shortcuts in Settings → Advanced → Keyboard
+            shortcuts.
+          </li>
+        </ul>
+      </div>
+    </>
+  )
+
   const taskRowRows = (
     <>
       <Row label="Show task details">
@@ -643,6 +750,13 @@ export function SettingsPopover({
       >
         {displayRows}
       </SettingsSection>
+      <SettingsSection
+        id="tasks.navigation"
+        label="Navigation"
+        forceOpen={windowOpen}
+      >
+        {navRows}
+      </SettingsSection>
       <SettingsSection id="tasks.zoom" label="Zoom" forceOpen={windowOpen}>
         {zoomRows}
       </SettingsSection>
@@ -713,6 +827,7 @@ export function SettingsPopover({
             </button>
           </div>
           <NavRow label="Display" onClick={() => setPane('display')} />
+          <NavRow label="Navigation" onClick={() => setPane('navigation')} />
           <NavRow label="Zoom" onClick={() => setPane('zoom')} />
           <NavRow label="Sync" onClick={() => setPane('sync')} />
           <NavRow label="Advanced" onClick={() => setPane('advanced')} />
@@ -724,6 +839,11 @@ export function SettingsPopover({
         <>
           <PaneHeader title="Display" onBack={() => setPane('root')} />
           {displayRows}
+        </>
+      ) : pane === 'navigation' ? (
+        <>
+          <PaneHeader title="Navigation" onBack={() => setPane('root')} />
+          {navRows}
         </>
       ) : pane === 'zoom' ? (
         <>

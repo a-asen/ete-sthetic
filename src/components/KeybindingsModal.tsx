@@ -64,11 +64,11 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
       {
         keys: ['Enter'],
         description:
-          'While creating: commit (behaviour follows the "Enter on new task" setting)',
+          'While creating: commit and stay put',
       },
       {
         keys: ['Shift+Enter'],
-        description: 'While creating: commit and follow, staying in the list',
+        description: 'While creating: commit and follow the new task',
       },
       {
         keys: ['Ctrl+Enter'],
@@ -231,9 +231,33 @@ export function KeybindingsModal({ onClose }: Props) {
             </section>
           ))}
         </div>
-        <p className="shrink-0 border-t border-border px-6 py-3 text-[11px] text-text-faint">
-          Customizable bindings coming in a later update.
-        </p>
+        <div className="shrink-0 space-y-1 border-t border-border px-6 py-3 text-[11px] text-text-faint">
+          <p className="font-medium text-text-muted">How task navigation works</p>
+          <ul className="list-disc space-y-0.5 pl-4">
+            <li>
+              Move the highlight with arrows, Home/End, PgUp/PgDn, click, or
+              type-to-search.
+            </li>
+            <li>
+              Plain <kbd className="font-mono">Enter</kbd> commits a new task
+              and stays put (configurable in Settings → Navigation).{' '}
+              <kbd className="font-mono">Shift+Enter</kbd> follows the new
+              task (when enabled there).{' '}
+              <kbd className="font-mono">Ctrl+Enter</kbd> opens it in the
+              detail panel.
+            </li>
+            <li>
+              Switch zones with <kbd className="font-mono">Ctrl+L</kbd>{' '}
+              (lists), <kbd className="font-mono">Ctrl+T</kbd> (tasks),{' '}
+              <kbd className="font-mono">Ctrl+E</kbd> (details), or{' '}
+              <kbd className="font-mono">Ctrl+←/→</kbd>.
+            </li>
+            <li>
+              Rebind command shortcuts in Settings → Advanced → Keyboard
+              shortcuts.
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
   )

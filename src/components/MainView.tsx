@@ -28,6 +28,7 @@ import { BLUEPRINTS_SPAWNED_EVENT } from '../services/blueprints'
 import { matchesBinding } from '../services/keybindings'
 import {
   TASK_ROW_SETTINGS_CHANGED_EVENT,
+  readAutoFocusQuickAdd,
   readShowSidebarSyncAge,
 } from '../services/taskRowSettings'
 import {
@@ -2186,6 +2187,38 @@ export function MainView({
     [activeUid, selectSingle],
   )
 
+  // Commit a root task without moving the selection or changing focus zone.
+  // Used by the new "stay" navigation path. Focus returns to the QuickAdd
+  // input when autoFocusQuickAdd is enabled (default) so rapid entry keeps working.
+  const handleQuickAddRootStay = useCallback(
+    async (summary: string) => {
+      if (!activeUid) return
+      const trimmed = summary.trim()
+      if (!trimmed) return
+      const colUid = activeUid
+      try {
+        const newItem = await createTask(colUid, trimmed, undefined)
+        if (cancelledRef.current) return
+        setItemsByUid((prev) => {
+          const items = prev.get(colUid) ?? []
+          const next = new Map(prev)
+          next.set(colUid, [...items, newItem])
+          return next
+        })
+        // Stay put: don't selectSingle the new task.
+        if (readAutoFocusQuickAdd()) {
+          requestAnimationFrame(() => quickAddRef.current?.focus())
+        }
+      } catch (err) {
+        if (cancelledRef.current) return
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to create task',
+        )
+      }
+    },
+    [activeUid],
+  )
+
   const handleQuickAddRootAndOpen = useCallback(
     async (summary: string) => {
       await handleQuickAddRoot(summary)
@@ -2366,6 +2399,42 @@ export function MainView({
       }
     },
     [activeUid, creating, selectSingle],
+  )
+
+  // Commit an inline (sub)task without moving the selection or changing the
+  // focus zone. Used by the new "stay" navigation path. The InlineCreate
+  // input unmounts after commit, so focus falls back to the task tree row
+  // that was selected before — which is current behaviour for "commit" mode.
+  const handleConfirmCreateStay = useCallback(
+    async (summary: string) => {
+      const cur = creating
+      setCreating(null)
+      if (!activeUid || !cur) return
+      const trimmed = summary.trim()
+      if (!trimmed) return
+      const colUid = activeUid
+      try {
+        const newItem = await createTask(
+          colUid,
+          trimmed,
+          cur.parentUid ?? undefined,
+        )
+        if (cancelledRef.current) return
+        setItemsByUid((prev) => {
+          const items = prev.get(colUid) ?? []
+          const next = new Map(prev)
+          next.set(colUid, [...items, newItem])
+          return next
+        })
+        // Stay put: do not selectSingle or change focusZone.
+      } catch (err) {
+        if (cancelledRef.current) return
+        setMutationError(
+          err instanceof Error ? err.message : 'Failed to create task',
+        )
+      }
+    },
+    [activeUid, creating],
   )
 
   // In-memory clipboard for a single copied task. Holds a snapshot of the
@@ -5053,10 +5122,12 @@ export function MainView({
               creatingParent={creating ? creating.parentUid : undefined}
               onAddChild={handleStartCreateChild}
               onConfirmCreate={handleConfirmCreate}
+              onConfirmCreateStay={handleConfirmCreateStay}
               onConfirmCreateAndOpen={handleConfirmCreateAndOpen}
               onConfirmCreateFollow={handleConfirmCreateFollow}
               onCancelCreate={handleCancelCreate}
               onQuickAdd={handleQuickAddRoot}
+              onQuickAddStay={handleQuickAddRootStay}
               onQuickAddAndOpen={handleQuickAddRootAndOpen}
               onQuickAddFollow={handleQuickAddRootFollow}
               quickAddRef={quickAddRef}

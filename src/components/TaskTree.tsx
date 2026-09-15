@@ -12,13 +12,13 @@ import { findParentAndSiblings, flattenVisible } from '../services/tree'
 import { humanizeRrule } from '../services/rrule'
 import {
   TASK_ROW_SETTINGS_CHANGED_EVENT,
-  readNewTaskEnterMode,
+  readAutoFocusQuickAdd,
   readReorderStep,
   readScrollHeadroom,
   readShowCompletedSubtaskCount,
   readShowTaskDetails,
   readShowTotalSubtaskCount,
-  resolveEnterAction,
+  resolveNewTaskEnterAction,
 } from '../services/taskRowSettings'
 import { readCollapsed, rememberCollapsed } from '../services/taskstore'
 
@@ -137,6 +137,9 @@ interface Props {
   creatingParent?: string | null
   onAddChild?: (parent: TaskNode) => void
   onConfirmCreate?: (summary: string) => void
+  // Commit without moving the selection / focus zone; used by the new
+  // "stay" navigation path. Falls back to onConfirmCreate when not wired.
+  onConfirmCreateStay?: (summary: string) => void
   onConfirmCreateAndOpen?: (summary: string) => void
   // Shift+Enter while typing: commit and follow (select + scroll to the
   // new task) but stay in the task pane — no detail panel.
@@ -144,6 +147,9 @@ interface Props {
   onCancelCreate?: () => void
   // Persistent quick-add row at the top of the list (root tasks).
   onQuickAdd?: (summary: string) => void
+  // Commit without moving the selection / focus zone; used by the new
+  // "stay" navigation path. Falls back to onQuickAdd when not wired.
+  onQuickAddStay?: (summary: string) => void
   onQuickAddAndOpen?: (summary: string) => void
   // Shift+Enter in quick-add: commit and follow, stay in tasks.
   onQuickAddFollow?: (summary: string) => void
@@ -240,6 +246,7 @@ function InlineCreate({
   depth,
   centered = false,
   onConfirm,
+  onConfirmStay,
   onCancel,
   onConfirmAndOpen,
   onConfirmFollow,
@@ -249,6 +256,8 @@ function InlineCreate({
   // subtask creates stay inline at their indent.
   centered?: boolean
   onConfirm: (summary: string) => void
+  // Commit without moving selection/focus (used by the "stay" nav path).
+  onConfirmStay?: (summary: string) => void
   onCancel: () => void
   // Commit and open the new task in the detail panel.
   onConfirmAndOpen?: (summary: string) => void
@@ -269,26 +278,27 @@ function InlineCreate({
         onCancel()
         return
       }
-      // Plain Enter follows the "new task Enter behaviour" preference;
-      // Ctrl/Cmd+Enter and Shift+Enter always force the two non-default
-      // behaviours (see resolveEnterAction). stopPropagation on the
-      // modifier chords so the global Ctrl+Enter handler doesn't also
-      // fire (it would open the *parent's* detail). Ctrl+←/→ are left to
-      // the browser as native word-jump so they never create the task or
-      // destroy a draft.
-      const action = resolveEnterAction(
-        readNewTaskEnterMode(),
+      // Resolve the chord from the new navigation settings.
+      // Ctrl/Cmd+Enter opens details; Shift+Enter follows when the
+      // override is on; plain Enter uses the highlight/focus prefs.
+      // stopPropagation on the modifier chords so the global Ctrl+Enter
+      // handler doesn't also fire (it would open the *parent's* detail).
+      // Ctrl+←/→ are left to the browser as native word-jump so they never
+      // create the task or destroy a draft.
+      const action = resolveNewTaskEnterAction(
         e.ctrlKey || e.metaKey,
         e.shiftKey,
       )
-      if (action === 'open') {
+      if (action.target === 'details') {
         e.stopPropagation()
         if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
-      } else if (action === 'follow') {
+      } else if (action.highlight === 'follow') {
         e.stopPropagation()
         if (onConfirmFollow) onConfirmFollow(value)
         else onConfirm(value)
+      } else if (onConfirmStay) {
+        onConfirmStay(value)
       } else {
         onConfirm(value)
       }
@@ -362,10 +372,14 @@ const QuickAdd = forwardRef<
   HTMLInputElement,
   {
     onConfirm: (summary: string) => void
+    onConfirmStay?: (summary: string) => void
     onConfirmAndOpen?: (summary: string) => void
     onConfirmFollow?: (summary: string) => void
   }
->(function QuickAdd({ onConfirm, onConfirmAndOpen, onConfirmFollow }, ref) {
+>(function QuickAdd(
+  { onConfirm, onConfirmStay, onConfirmAndOpen, onConfirmFollow },
+  ref,
+) {
   const inputRef = useRef<HTMLInputElement>(null)
   useImperativeHandle(ref, () => inputRef.current as HTMLInputElement, [])
 
@@ -374,26 +388,27 @@ const QuickAdd = forwardRef<
       e.preventDefault()
       const value = inputRef.current?.value.trim() ?? ''
       if (!value) return
-      // Plain Enter follows the "new task Enter behaviour" preference;
-      // Ctrl/Cmd+Enter and Shift+Enter always force the two non-default
-      // behaviours (see resolveEnterAction in InlineCreate). stopPropagation
-      // on the modifier chords so the global Ctrl+Enter handler doesn't
-      // also fire. Ctrl+←/→ stay as native word-jump.
-      const action = resolveEnterAction(
-        readNewTaskEnterMode(),
+      // Resolve the chord from the new navigation settings.
+      const action = resolveNewTaskEnterAction(
         e.ctrlKey || e.metaKey,
         e.shiftKey,
       )
-      if (action === 'open') {
+      if (action.target === 'details') {
         e.stopPropagation()
         if (onConfirmAndOpen) onConfirmAndOpen(value)
         else onConfirm(value)
-      } else if (action === 'follow') {
+      } else if (action.highlight === 'follow') {
         e.stopPropagation()
         if (onConfirmFollow) onConfirmFollow(value)
         else onConfirm(value)
+      } else if (onConfirmStay) {
+        onConfirmStay(value)
       } else {
         onConfirm(value)
+      }
+      // Keep focus in the quick-add row unless we're explicitly leaving it.
+      if (action.target !== 'details' && readAutoFocusQuickAdd()) {
+        requestAnimationFrame(() => inputRef.current?.focus())
       }
       if (inputRef.current) inputRef.current.value = ''
     } else if (e.key === 'Escape') {
@@ -495,10 +510,12 @@ export function TaskTree({
   creatingParent,
   onAddChild,
   onConfirmCreate,
+  onConfirmCreateStay,
   onConfirmCreateAndOpen,
   onConfirmCreateFollow,
   onCancelCreate,
   onQuickAdd,
+  onQuickAddStay,
   onQuickAddAndOpen,
   onQuickAddFollow,
   quickAddRef,
@@ -1086,6 +1103,7 @@ export function TaskTree({
         <QuickAdd
           ref={quickAddRef}
           onConfirm={onQuickAdd}
+          onConfirmStay={onQuickAddStay}
           onConfirmAndOpen={onQuickAddAndOpen}
           onConfirmFollow={onQuickAddFollow}
         />
@@ -1631,6 +1649,7 @@ export function TaskTree({
               <InlineCreate
                 depth={node.depth + 1}
                 onConfirm={onConfirmCreate!}
+                onConfirmStay={onConfirmCreateStay}
                 onCancel={onCancelCreate!}
                 onConfirmAndOpen={onConfirmCreateAndOpen}
                 onConfirmFollow={onConfirmCreateFollow}

@@ -43,12 +43,12 @@ const DEFAULT_REORDER_STEP = 5
 export const REORDER_STEP_MIN = 2
 export const REORDER_STEP_MAX = 50
 
-// What pressing Enter does when committing a new task. 'commit' = add the
-// task and stay put (the classic rapid-entry flow); 'follow' = also select
-// + scroll to it; 'open' = also open it in the detail panel. The modifier
-// keys rotate the *other* behaviours: Enter honours the preference, while
-// Ctrl/Cmd+Enter and Shift+Enter always mean the two non-default actions,
-// so either behaviour stays one keystroke away whichever default is set.
+// Legacy preference: what plain Enter did when committing a new task.
+// Kept for migration only — the UI now uses the split highlight/focus
+// model below. Values:
+//   'commit' = add and stay put
+//   'follow' = add, then select + scroll to the new task
+//   'open'   = add, then open the new task in the detail panel
 export type NewTaskEnterMode = 'commit' | 'follow' | 'open'
 const KEY_ENTER_MODE = 'ete-sthetic.tasks.newTaskEnterMode'
 const ENTER_MODES: NewTaskEnterMode[] = ['commit', 'follow', 'open']
@@ -74,12 +74,9 @@ export function setNewTaskEnterMode(v: NewTaskEnterMode): void {
   }
 }
 
-// Resolve what an Enter press should do in a new-task input, from the
-// persisted preference plus the modifiers actually held. Plain Enter
-// follows the preference; Ctrl/Cmd+Enter and Shift+Enter always demand
-// the two NON-default behaviours (open-in-details / follow-in-list), so
-// whichever default the user picks, both other actions stay reachable
-// with a single modifier.
+// LEGACY resolver kept for any external callers that still import it.
+// Prefer resolveNewTaskEnterAction, which is absolute and matches the
+// new navigation settings.
 export function resolveEnterAction(
   mode: NewTaskEnterMode,
   ctrl: boolean,
@@ -88,6 +85,160 @@ export function resolveEnterAction(
   if (ctrl) return mode === 'open' ? 'follow' : 'open'
   if (shift) return mode === 'follow' ? 'open' : 'follow'
   return mode
+}
+
+// ---- New task navigation preferences (post-migration) ----
+//
+// Two independent axes replace the old single three-way Enter mode:
+//
+//   * Highlight — after creating, does the selection stay where it was or
+//     jump to the newly created task? ('stay' | 'follow')
+//   * Focus     — after creating, does keyboard focus stay in the task
+//     pane or move to the detail panel? ('stay' | 'details')
+//
+// The actual chord table is resolved by resolveNewTaskEnterAction():
+//
+//   Plain Enter        → highlight = highlightPref, target = focusPref
+//   Shift+Enter        → if followNewTaskOnShiftEnter is on,
+//                          force highlight = 'follow' (target unchanged)
+//                        otherwise same as plain Enter
+//   Ctrl/Cmd+Enter     → force target = 'details' and highlight = 'follow'
+//                        (opening the panel implies selecting the new task)
+//
+// Plain Enter NEVER moves the highlight by default (new invariant).
+
+export type NewTaskHighlight = 'stay' | 'follow'
+const KEY_NEW_TASK_HIGHLIGHT = 'ete-sthetic.tasks.newTaskHighlight'
+
+export type NewTaskFocus = 'stay' | 'details'
+const KEY_NEW_TASK_FOCUS = 'ete-sthetic.tasks.newTaskFocus'
+
+export type NewTaskEnterAction = {
+  highlight: NewTaskHighlight
+  target: NewTaskFocus
+}
+
+// Whether Shift+Enter overrides the highlight preference and forces
+// "follow the new task" when creating. Default true so the quick "commit
+// and jump" path is one keystroke away.
+const KEY_FOLLOW_ON_SHIFT_ENTER =
+  'ete-sthetic.tasks.followNewTaskOnShiftEnter'
+
+// After a stay-put commit, return keyboard focus to the quick-add / inline
+// input so the user can keep typing. Default TRUE: currently a root commit
+// via QuickAdd leaves focus in the quick-add row already, and re-focusing
+// the same input is the least surprising continuation for rapid entry.
+const KEY_AUTO_FOCUS_QUICK_ADD = 'ete-sthetic.tasks.autoFocusQuickAdd'
+
+function migrateEnterModeIfNeeded(): void {
+  // One-time migration from the old single three-way setting to the new
+  // split settings. If the old key exists and neither new key has been
+  // written yet, derive sensible defaults and drop the old key.
+  const old = readNewTaskEnterMode()
+  const hasHighlight = localStorage.getItem(KEY_NEW_TASK_HIGHLIGHT) !== null
+  const hasFocus = localStorage.getItem(KEY_NEW_TASK_FOCUS) !== null
+  if (hasHighlight || hasFocus) return
+  // Plain Enter never moves selection in the new model, so the old 'follow'
+  // preference migrates to highlight=stay with the Shift override still on.
+  const highlight: NewTaskHighlight =
+    old === 'follow' ? 'stay' : old === 'open' ? 'stay' : 'stay'
+  const target: NewTaskFocus =
+    old === 'open' ? 'details' : old === 'follow' ? 'stay' : 'stay'
+  try {
+    localStorage.setItem(KEY_NEW_TASK_HIGHLIGHT, highlight)
+    localStorage.setItem(KEY_NEW_TASK_FOCUS, target)
+    // Keep Shift+Enter as the follow override for users coming from the
+    // old "follow" mode; users who picked "commit" also get the override on
+    // so the behaviour is still reachable.
+    localStorage.setItem(KEY_FOLLOW_ON_SHIFT_ENTER, 'true')
+    localStorage.removeItem(KEY_ENTER_MODE)
+  } catch {
+    // Non-fatal — the next read will just fall back to defaults.
+  }
+}
+
+export function readNewTaskHighlight(): NewTaskHighlight {
+  migrateEnterModeIfNeeded()
+  try {
+    const raw = localStorage.getItem(KEY_NEW_TASK_HIGHLIGHT)
+    if (raw === 'stay' || raw === 'follow') return raw
+  } catch {
+    // fall through
+  }
+  return 'stay'
+}
+
+export function setNewTaskHighlight(v: NewTaskHighlight): void {
+  try {
+    localStorage.setItem(KEY_NEW_TASK_HIGHLIGHT, v)
+    window.dispatchEvent(new CustomEvent(TASK_ROW_SETTINGS_CHANGED_EVENT))
+  } catch {
+    // Non-fatal.
+  }
+}
+
+export function readNewTaskFocus(): NewTaskFocus {
+  migrateEnterModeIfNeeded()
+  try {
+    const raw = localStorage.getItem(KEY_NEW_TASK_FOCUS)
+    if (raw === 'stay' || raw === 'details') return raw
+  } catch {
+    // fall through
+  }
+  return 'stay'
+}
+
+export function setNewTaskFocus(v: NewTaskFocus): void {
+  try {
+    localStorage.setItem(KEY_NEW_TASK_FOCUS, v)
+    window.dispatchEvent(new CustomEvent(TASK_ROW_SETTINGS_CHANGED_EVENT))
+  } catch {
+    // Non-fatal.
+  }
+}
+
+export function readFollowNewTaskOnShiftEnter(): boolean {
+  migrateEnterModeIfNeeded()
+  return readBool(KEY_FOLLOW_ON_SHIFT_ENTER, true)
+}
+
+export function setFollowNewTaskOnShiftEnter(v: boolean): void {
+  writeBool(KEY_FOLLOW_ON_SHIFT_ENTER, v)
+}
+
+// After a stay-put commit, should the quick-add / inline input re-receive
+// focus so the user can keep typing? Default TRUE because that matches the
+// current QuickAdd behaviour and is the most natural rapid-entry default.
+export function readAutoFocusQuickAdd(): boolean {
+  return readBool(KEY_AUTO_FOCUS_QUICK_ADD, true)
+}
+
+export function setAutoFocusQuickAdd(v: boolean): void {
+  writeBool(KEY_AUTO_FOCUS_QUICK_ADD, v)
+}
+
+// Resolve what an Enter press should do in a new-task input from the
+// current navigation settings plus held modifiers. This is the single
+// source of truth for the create-input chord table.
+export function resolveNewTaskEnterAction(
+  ctrl: boolean,
+  shift: boolean,
+): NewTaskEnterAction {
+  const highlightPref = readNewTaskHighlight()
+  const targetPref = readNewTaskFocus()
+  const followOnShift = readFollowNewTaskOnShiftEnter()
+
+  if (ctrl) {
+    // Opening details implies selecting the new task.
+    return { highlight: 'follow', target: 'details' }
+  }
+  if (shift && followOnShift) {
+    // Follow override: jump to the new task while keeping the target zone
+    // preference (the default is "stay in task pane").
+    return { highlight: 'follow', target: targetPref }
+  }
+  // Plain Enter (or Shift+Enter when the override is off) uses the prefs.
+  return { highlight: highlightPref, target: targetPref }
 }
 
 function readBool(key: string, fallback: boolean): boolean {
