@@ -24,6 +24,12 @@ the hierarchy intact rather than flattening it.
 - **Create** — start an inline new task at the top of the active list
   (`Ctrl+N`). Creation is *optimistic*: the row appears immediately and
   reconciles when the write lands.
+  - `Enter` commits and keeps the highlight put.
+  - `Shift+Enter` commits and jumps to the new task (toggle in Settings →
+    Navigation).
+  - `Ctrl+Enter` commits and opens the new task in the detail panel.
+  - All three are adjustable in Settings → Navigation — e.g. plain `Enter`
+    can follow the new task instead of staying put.
 - **Rename** — edit the summary inline.
 - **Complete** — toggling completion cascades a fade over the subtree. Tasks
   that recur roll their due/start date forward instead of expanding into

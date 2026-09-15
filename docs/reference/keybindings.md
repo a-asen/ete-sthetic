@@ -43,6 +43,22 @@ registry.
 | `Alt`+`↓`     | Move down among siblings            |
 | *letters*     | Typeahead — jump to a matching item |
 
+## Creating tasks
+
+When a create input is focused (quick-add row or inline subtask input):
+
+| Key              | Action                                      |
+| ---------------- | ------------------------------------------- |
+| `Enter`          | Commit the task and keep the highlight put  |
+| `Shift`+`Enter`  | Commit and jump to the new task (when enabled) |
+| `Ctrl`/`Cmd`+`Enter` | Commit and open the new task in the detail panel |
+
+The exact behaviour is configurable in **Settings → Navigation**. By
+default plain `Enter` never moves the highlight and `Shift+Enter` jumps
+to the new task; you can flip plain `Enter` to follow instead, or turn
+the `Shift+Enter` follow override off. `Ctrl+Enter` always opens the
+detail panel.
+
 ## View / zoom
 
 | Key                        | Action                        |
