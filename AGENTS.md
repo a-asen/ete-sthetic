@@ -21,8 +21,27 @@ Before writing or editing any code:
   destructive git commands (checkout/restore/reset/clean) on uncommitted
   work — ever.
 - Commit only the files relevant to your change; leave unrelated WIP alone.
-- Follow the existing commit style: conventional commits
-  (`fix(tasks): …`, `feat(sync): …`, `docs(keybindings): …`).
+
+## Commit discipline
+
+This applies to every GitHub repo, not just this one.
+
+- Split work into **sufficient commits to discern each change's function**:
+  one logical change per commit (a fix, a feature, a refactor, a docs
+  update), not one giant "did stuff" commit — and not noise-split either.
+- Every commit gets a **descriptive title of at most 50 characters**
+  (conventional commits: `fix(tasks): …`, `feat(sync): …`,
+  `docs(keybindings): …`), **followed by a commit message body** explaining
+  what the change does and why. `git commit` without a body is incomplete —
+  write the body (heredoc, editor, or `-m -m`), never rely on the title
+  alone.
+
+## Branching for large work
+
+- If the requested feature is very large or significantly deviates from
+  the original project, **create a feature branch** instead of committing
+  to `main` (e.g. `feat/<short-name>`). Small fixes and routine changes go
+  straight to `main`.
 
 ## Testing
 
