@@ -1435,6 +1435,32 @@ export function MainView({
             // items the server had all along. Force a full sync instead
             // by leaving fromStoken undefined.
             fromStoken = snap.stoken
+            // Seed the in-memory bucket with the snapshot's items in the
+            // same step. The delta below only returns what changed since
+            // the stoken; without seeding, it lands on an empty bucket,
+            // and the post-sync saveSnapshot overwrites the full snapshot
+            // with delta-only items — silent data loss. Seeding here (and
+            // skipping the save when a straggling hydration later
+            // overwrites) makes the delta merge into the real set.
+            setItemsByUid((prev) => {
+              // A warm bucket may already hold fresher items from this
+              // session (e.g. the disk-hydration pass ran first, or a
+              // prior fetch's batches landed) — never clobber it.
+              const existing = prev.get(uid)
+              if (existing && existing.length > 0) return prev
+              const next = new Map(prev)
+              next.set(uid, snap.items)
+              return next
+            })
+            setLoadedUids((prev) => {
+              if (prev.has(uid)) return prev
+              const next = new Set(prev)
+              next.add(uid)
+              return next
+            })
+            if (snap.lastSyncedAt) {
+              syncedAtRef.current.set(uid, snap.lastSyncedAt)
+            }
             setStokenByUid((prev) => {
               if (prev.has(uid)) return prev
               const next = new Map(prev)
