@@ -5,6 +5,14 @@ See also: [`docs/task-item-options.md`](docs/task-item-options.md) (VTODO field
 coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contacts-plan.md)
 (unified-client plan).
 
+## Items
+- In the calendar weekly/3day view, it would be good if we could click and drag "all day events" to make them last longer/shorter. 
+- It would be nice if right clicking on an event would show a "duplicate" button, where we can duplicate it "to a new/different calendar" in a new menu.
+- Make the colour markings in the calendar weekly view a bit stronger.
+- Do not make the general colour tinting of the calendar/ete-sthetic app super sensitive to the choice.
+
+
+
 ## Backlog (queued 2026-07-06)
 
 ### Task Blueprints — sync across devices (storage model "A")
