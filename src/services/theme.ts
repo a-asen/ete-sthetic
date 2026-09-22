@@ -108,17 +108,61 @@ export function writeStoredAccent(hex: string | null) {
   }
 }
 
+// Derive the "soft" tint used for large accent-washed surfaces
+// (--color-accent-soft). Desaturated and slightly darkened relative to
+// the raw accent so the tint stays close to neutral across accent
+// choices — a saturated accent hue otherwise visibly re-tints big
+// surfaces (~60 usages) and the whole app feels hypersensitive to the
+// colour pick. Vivid accents keep living on --color-accent itself
+// (buttons, rings, focus, the sync pill).
+export function accentSoftFromHex(hex: string, alpha = 0.14): string {
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  let h = 0
+  let s = 0
+  const l = (max + min) / 2
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0)
+        break
+      case g:
+        h = (b - r) / d + 2
+        break
+      default:
+        h = (r - g) / d + 4
+    }
+    h /= 6
+  }
+  // Halve the saturation, ease lightness toward the neutral mid.
+  s *= 0.5
+  const lSoft = l * 0.85 + 0.075
+  const q = lSoft < 0.5
+    ? lSoft * (1 + s)
+    : lSoft + s - lSoft * s
+  const p = 2 * lSoft - q
+  const channel = (t: number) => {
+    if (t < 0) t += 1
+    if (t > 1) t -= 1
+    if (t < 1 / 6) return p + (q - p) * 6 * t
+    if (t < 1 / 2) return q
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+    return p
+  }
+  const to255 = (t: number) => Math.round(channel(t) * 255)
+  return `rgba(${to255(h + 1 / 3)}, ${to255(h)}, ${to255(h - 1 / 3)}, ${alpha})`
+}
+
 export function applyAccent(hex: string | null) {
   const root = document.documentElement
   if (hex && /^#[0-9a-fA-F]{6}$/.test(hex)) {
-    const r = parseInt(hex.slice(1, 3), 16)
-    const g = parseInt(hex.slice(3, 5), 16)
-    const b = parseInt(hex.slice(5, 7), 16)
     root.style.setProperty('--color-accent', hex)
-    root.style.setProperty(
-      '--color-accent-soft',
-      `rgba(${r}, ${g}, ${b}, 0.16)`,
-    )
+    root.style.setProperty('--color-accent-soft', accentSoftFromHex(hex))
   } else {
     root.style.removeProperty('--color-accent')
     root.style.removeProperty('--color-accent-soft')
