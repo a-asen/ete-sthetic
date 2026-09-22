@@ -135,6 +135,7 @@ export function TimeGrid({
   onNewEvent,
   onNewAllDay,
   onOpenEvent,
+  onContextMenuEvent,
   onCreateRange,
   onMoveResize,
   tasksByDay,
@@ -162,6 +163,12 @@ export function TimeGrid({
   // Click the all-day row for a day → start a new all-day event there.
   onNewAllDay?: (d: Date) => void
   onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
+  // Right-click on an event → the calendar's context menu (Edit /
+  // Duplicate to… / Delete) instead of the click popover.
+  onContextMenuEvent: (
+    item: EventItem,
+    coords: { x: number; y: number },
+  ) => void
   onCreateRange: (start: Date, end: Date) => void
   onMoveResize: (item: EventItem, start: Date, end: Date) => void
   // Per-day map of birthdays — same data MonthGrid + DayPopover consume.
@@ -652,7 +659,7 @@ export function TimeGrid({
                   onContextMenu={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    onOpenEvent(item, { x: e.clientX, y: e.clientY })
+                    onContextMenuEvent(item, { x: e.clientX, y: e.clientY })
                   }}
                   title={
                     (ev.recurring ? '↻ recurring · ' : '') + ev.summary
@@ -1090,7 +1097,7 @@ export function TimeGrid({
                       onContextMenu={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
-                        onOpenEvent(item, { x: e.clientX, y: e.clientY })
+                        onContextMenuEvent(item, { x: e.clientX, y: e.clientY })
                       }}
                       title={
                         (ev.recurring ? '↻ recurring · ' : '') +

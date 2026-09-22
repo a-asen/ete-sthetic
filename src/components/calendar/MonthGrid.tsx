@@ -34,6 +34,7 @@ export function MonthGrid({
   onPickDay,
   onNewEvent,
   onOpenEvent,
+  onContextMenuEvent,
   onShowMore,
   tasksByDay,
   onToggleTask,
@@ -52,6 +53,12 @@ export function MonthGrid({
   onPickDay: (d: Date) => void
   onNewEvent: (d: Date) => void
   onOpenEvent: (item: EventItem, coords: { x: number; y: number }) => void
+  // Right-click on an event → the calendar's context menu (Edit /
+  // Duplicate to… / Delete) instead of the click popover.
+  onContextMenuEvent: (
+    item: EventItem,
+    coords: { x: number; y: number },
+  ) => void
   onShowMore: (d: Date, coords: { x: number; y: number }) => void
   tasksByDay: Map<string, CalTask[]>
   onToggleTask: (t: CalTask) => void
@@ -207,7 +214,10 @@ export function MonthGrid({
                             onContextMenu={(e) => {
                               e.preventDefault()
                               e.stopPropagation()
-                              onOpenEvent(item, { x: e.clientX, y: e.clientY })
+                              onContextMenuEvent(item, {
+                                x: e.clientX,
+                                y: e.clientY,
+                              })
                             }}
                             title={
                               (ev.recurring ? '↻ recurring · ' : '') +
@@ -325,7 +335,10 @@ export function MonthGrid({
                         onContextMenu={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
-                          onOpenEvent(item, { x: e.clientX, y: e.clientY })
+                          onContextMenuEvent(item, {
+                            x: e.clientX,
+                            y: e.clientY,
+                          })
                         }}
                         title={
                           (ev.recurring ? '↻ recurring · ' : '') + ev.summary

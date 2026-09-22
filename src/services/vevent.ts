@@ -292,3 +292,25 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
   vevent.updatePropertyWithValue('dtstamp', icalUtcNow())
   return cal.toString()
 }
+
+// Clone a VEVENT's raw for duplication: fresh UID (a same-UID copy is a
+// sync hazard — two items fighting over one identity), fresh
+// DTSTAMP/CREATED/LAST-MODIFIED. A RECURRENCE-ID (a detached instance)
+// is dropped so the copy is a standalone event, and a RECURRENCE-ID
+// without its RRULE parent would be meaningless anyway. Everything
+// else — RRULE, ATTENDEE, VALARM, X-* — is preserved verbatim.
+export function cloneVEventRaw(raw: string): { uid: string; raw: string } {
+  const uid = crypto.randomUUID()
+  const jcal = ICAL.parse(raw)
+  const cal = new ICAL.Component(jcal)
+  const vevent =
+    cal.name === 'vevent' ? cal : cal.getFirstSubcomponent('vevent')
+  if (!vevent) throw new Error('VEVENT component missing')
+  vevent.updatePropertyWithValue('uid', uid)
+  vevent.removeAllProperties('recurrence-id')
+  const stamp = icalUtcNow()
+  vevent.updatePropertyWithValue('dtstamp', stamp)
+  vevent.updatePropertyWithValue('created', stamp)
+  vevent.updatePropertyWithValue('last-modified', stamp)
+  return { uid, raw: cal.toString() }
+}

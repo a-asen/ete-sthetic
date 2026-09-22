@@ -16,6 +16,7 @@ import {
 } from './vtodo'
 import {
   buildVEvent,
+  cloneVEventRaw,
   parseVEvent,
   updateVEvent,
   type NewVEventArgs,
@@ -896,6 +897,22 @@ export async function createEventRaw(
   await im.transaction([item])
   itemHandles.set(itemKey(collectionUid, item.uid), item)
   return { itemUid: item.uid, event }
+}
+
+// Duplicate an event onto a (possibly different) calendar. Clones the
+// source item's raw with a fresh UID (same-UID copies are a sync
+// hazard) and preserves everything else — RRULE, ATTENDEE, VALARM,
+// X-* — verbatim. A detached recurrence instance is copied as a
+// standalone event (RECURRENCE-ID stripped by cloneVEventRaw).
+export async function duplicateEvent(
+  srcCollectionUid: string,
+  itemUid: string,
+  destCollectionUid: string,
+): Promise<EventItem> {
+  const src = await getItem(srcCollectionUid, itemUid)
+  const srcRaw = await src.getContent(Etebase.OutputFormat.String)
+  const { raw } = cloneVEventRaw(srcRaw)
+  return createEventRaw(destCollectionUid, raw)
 }
 
 export async function deleteEvent(

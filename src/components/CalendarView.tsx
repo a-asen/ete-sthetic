@@ -4,8 +4,9 @@ import {
   createCalendar,
   createEvent,
   createEventRaw,
-  deleteCollection,
   deleteEvent,
+  duplicateEvent,
+  deleteCollection,
   forceUpdateEvent,
   listCalendars,
   listEventItems,
@@ -110,6 +111,7 @@ import { YearPickerPopover } from './calendar/YearPickerPopover'
 import { EventComposer } from './calendar/EventComposer'
 import { ConflictModal } from './calendar/ConflictModal'
 import { EventPopover } from './calendar/EventPopover'
+import { DuplicatePickerPopover } from './calendar/DuplicatePickerPopover'
 import { DayPopover } from './calendar/DayPopover'
 import {
   RecurrenceScopeModal,
@@ -119,6 +121,7 @@ import { matchesBinding } from '../services/keybindings'
 import { expandEvents } from '../services/recurrence'
 import { startAlarmScheduler } from '../services/alarms'
 import { buildIcs, splitIcs } from '../services/ics'
+import { ContextMenu, type ContextMenuState } from './ContextMenu'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
@@ -1142,6 +1145,21 @@ export function CalendarView({
     x: number
     y: number
   } | null>(null)
+  // Right-click menu on a calendar event (Edit / Duplicate to… /
+  // Delete), replacing the old "right-click opens the popover".
+  const [evtMenu, setEvtMenu] = useState<
+    | (ContextMenuState & { item: EventItem; calUid: string })
+    | null
+  >(null)
+  // Destination picker for "Duplicate to…" — the source event plus the
+  // menu position to anchor a small calendar list to.
+  const [dupPick, setDupPick] = useState<{
+    item: EventItem
+    calUid: string
+    x: number
+    y: number
+  } | null>(null)
+  const [dupBusy, setDupBusy] = useState(false)
   // stoken per calendar — a ref (not render state); seeded from memory.
   const stokenRef = useRef<Map<string, string>>(new Map(m0.stokenByCal))
   const loadAbort = useRef<AbortController | null>(null)
@@ -2499,6 +2517,79 @@ export function CalendarView({
     )
   }, [])
 
+  // Right-click on an event → context menu (Edit / Duplicate to… /
+  // Delete). Subscriptions and locked calendars are read-only: only
+  // Edit is offered (and even that just shows the read-only popover).
+  const openEventMenu = useCallback(
+    (item: EventItem, coords: { x: number; y: number }) => {
+      const calUid = calByItem.get(item.itemUid)
+      if (!calUid) return
+      const isSub = subscriptions.some((s) => s.id === calUid)
+      const locked = isCalLocked(calUid)
+      setPopover(null)
+      setEvtMenu({
+        x: coords.x,
+        y: coords.y,
+        item,
+        calUid,
+        items: [
+          {
+            label: 'Edit',
+            onSelect: () => openEvent(item, coords),
+          },
+          {
+            label: 'Duplicate to…',
+            disabled: isSub || locked,
+            onSelect: () =>
+              setDupPick({ item, calUid, x: coords.x, y: coords.y }),
+          },
+          {
+            label: 'Delete',
+            danger: true,
+            disabled: isSub || locked,
+            onSelect: () => {
+              if (item.event.recurring && item.event.start) {
+                setRecurOp({
+                  action: 'delete',
+                  calUid,
+                  itemUid: item.itemUid,
+                  baseRaw: item.event.raw,
+                  occStart: item.event.start,
+                  allDay: item.event.allDay,
+                })
+              } else {
+                void handleDelete(calUid, item.itemUid)
+              }
+            },
+          },
+        ],
+      })
+    },
+    [calByItem, subscriptions, isCalLocked, openEvent, handleDelete],
+  )
+
+  // Duplicate the picked event onto the chosen calendar and splice the
+  // returned item into the destination's optimistic list (same shape
+  // as handleCreate). The picker only offers writable calendars, so no
+  // locked check here.
+  const runDuplicate = useCallback(
+    async (destUid: string) => {
+      const src = dupPick
+      if (!src) return
+      setDupBusy(true)
+      try {
+        const copy = await duplicateEvent(src.calUid, src.item.itemUid, destUid)
+        addToCal(destUid, copy)
+        setDupPick(null)
+      } catch (e) {
+        setNotice(e instanceof Error ? e.message : String(e))
+      } finally {
+        setDupBusy(false)
+      }
+    },
+    [dupPick, addToCal],
+  )
+
   // Apply a recurring edit/delete at the chosen scope.
   const runRecurScope = useCallback(
     async (scope: RecurScope) => {
@@ -2971,6 +3062,7 @@ export function CalendarView({
             onPickDay={pickDay}
             onNewEvent={(d) => setComposer({ mode: 'new', date: d })}
             onOpenEvent={openEvent}
+            onContextMenuEvent={openEventMenu}
             onShowMore={(d, coords) =>
               setDayPopover({ day: d, x: coords.x, y: coords.y })
             }
@@ -3005,6 +3097,7 @@ export function CalendarView({
               setComposer({ mode: 'new', date: d, allDay: true })
             }
             onOpenEvent={openEvent}
+            onContextMenuEvent={openEventMenu}
             onCreateRange={(start, end) =>
               setComposer({ mode: 'new', date: start, start, end })
             }
@@ -3178,6 +3271,24 @@ export function CalendarView({
             setPopover(null)
           }}
           onClose={() => setPopover(null)}
+        />
+      )}
+
+      {evtMenu && (
+        <ContextMenu
+          menu={evtMenu}
+          onClose={() => setEvtMenu(null)}
+        />
+      )}
+
+      {dupPick && (
+        <DuplicatePickerPopover
+          calendars={writableCalendars}
+          x={dupPick.x}
+          y={dupPick.y}
+          busy={dupBusy}
+          onPick={runDuplicate}
+          onClose={() => setDupPick(null)}
         />
       )}
 
