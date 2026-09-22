@@ -505,6 +505,15 @@ export function EventComposer({
                 type="checkbox"
                 checked={allDay}
                 onChange={(e) => setAllDay(e.target.checked)}
+                onKeyDown={(e) => {
+                  // Enter toggles like Space does (native checkboxes
+                  // only answer Space); the global Ctrl/Cmd+Enter
+                  // submit passes through untouched.
+                  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+                    e.preventDefault()
+                    setAllDay(!allDay)
+                  }
+                }}
               />
               All day
             </label>
