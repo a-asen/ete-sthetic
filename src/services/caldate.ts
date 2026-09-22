@@ -29,6 +29,29 @@ export function mondayIndex(d: Date): number {
   return (d.getDay() + 6) % 7
 }
 
+// Tint a calendar colour for use as an event-block fill: the colour at
+// low alpha over the theme background, so the block reads clearly as
+// "this calendar's colour" while staying readable in both themes.
+// Accepts #rgb / #rrggbb hex; anything else (e.g. a CSS variable like
+// 'var(--color-accent)') returns null so callers fall back to the
+// theme's accent-soft. This is the block-fill counterpart of the
+// accent-soft derivation in theme.ts.
+export function tintHex(hex: string, alpha = 0.2): string | null {
+  const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex.trim())
+  if (!m) return null
+  let r: number, g: number, b: number
+  if (m[1].length === 3) {
+    r = parseInt(m[1][0] + m[1][0], 16)
+    g = parseInt(m[1][1] + m[1][1], 16)
+    b = parseInt(m[1][2] + m[1][2], 16)
+  } else {
+    r = parseInt(m[1].slice(0, 2), 16)
+    g = parseInt(m[1].slice(2, 4), 16)
+    b = parseInt(m[1].slice(4, 6), 16)
+  }
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 export function startOfWeek(d: Date): Date {
   return addDays(startOfDay(d), -mondayIndex(d))
 }

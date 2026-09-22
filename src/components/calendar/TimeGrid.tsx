@@ -19,6 +19,7 @@ import {
   sameDay,
   startOfDay,
   timeLabel,
+  tintHex,
 } from '../../services/caldate'
 
 const SNAP_MIN = 15
@@ -1097,7 +1098,7 @@ export function TimeGrid({
                         (ev.location ? ` · ${ev.location}` : '') +
                         (borrowed ? ' · next day' : '')
                       }
-                      className={`absolute overflow-hidden rounded-sm border-l-2 px-1 py-0.5 text-xs hover:brightness-125 ${
+                      className={`absolute overflow-hidden rounded-sm border-l-[3px] border-b px-1 py-0.5 text-xs hover:brightness-125 ${
                         isMoveSource
                           ? 'cursor-grabbing opacity-30'
                           : borrowed
@@ -1111,8 +1112,16 @@ export function TimeGrid({
                         width: `calc(${100 / cols}% - ${
                           col === cols - 1 ? 4 + EVENT_RIGHT_GUTTER_PX : 4
                         }px)`,
+                        // Calendar colour carried by the whole block: a
+                        // tinted fill + left/bottom edges. Calendars
+                        // without a custom colour (colorFor returns the
+                        // accent CSS var) keep the accent-soft fill so
+                        // the default look is unchanged.
                         borderLeftColor: colorFor(item),
-                        backgroundColor: 'var(--color-accent-soft)',
+                        borderBottomColor: colorFor(item),
+                        backgroundColor:
+                          tintHex(colorFor(item)) ??
+                          'var(--color-accent-soft)',
                       }}
                     >
                       <div className="truncate font-medium">
