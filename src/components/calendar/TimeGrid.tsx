@@ -299,6 +299,23 @@ export function TimeGrid({
         x: number
         y: number
       }
+    | {
+        // Dragging an all-day bar's left/right edge to change its start
+        // or end day. `edge` picks which side moves; the other stays put.
+        mode: 'allday-resize'
+        item: EventItem
+        edge: 'start' | 'end'
+        // The event's ORIGINAL start/end day indices into `days`
+        // (computed from its dates at pointer-down, not from the packed
+        // segment — a bar clipped by the viewport still carries the
+        // full span).
+        origStartIdx: number
+        origEndIdx: number
+        curDayIdx: number
+        moved: boolean
+        x: number
+        y: number
+      }
   const gridRef = useRef<HTMLDivElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
   const allDayRef = useRef<HTMLDivElement>(null)
@@ -390,6 +407,23 @@ export function TimeGrid({
           x: e.clientX,
           y: e.clientY,
         })
+      } else if (d.mode === 'allday-resize') {
+        const cur = allDayDayIdxAt(e.clientX)
+        // Clamp so the moving edge can never cross the opposite edge
+        // (min span 1 day).
+        const clamped =
+          d.edge === 'start'
+            ? Math.min(cur, d.origEndIdx)
+            : Math.max(cur, d.origStartIdx)
+        setDrag({
+          ...d,
+          curDayIdx: clamped,
+          moved:
+            d.moved ||
+            clamped !== (d.edge === 'start' ? d.origStartIdx : d.origEndIdx),
+          x: e.clientX,
+          y: e.clientY,
+        })
       } else {
         setDrag({ ...d, curEndMin: minAt(e.clientY), moved: true })
       }
@@ -444,6 +478,20 @@ export function TimeGrid({
         const end = ev.end ?? addDays(ev.start, 1)
         const newEnd = addDays(end, delta)
         onMoveResize(d.item, newStart, newEnd)
+      } else if (d.mode === 'allday-resize') {
+        if (!d.moved) {
+          onOpenEvent(d.item, { x: d.x, y: d.y })
+          return
+        }
+        const startIdx = d.edge === 'start' ? d.curDayIdx : d.origStartIdx
+        const endIdx = d.edge === 'end' ? d.curDayIdx : d.origEndIdx
+        // All-day DTEND is exclusive: an event spanning the columns
+        // [startIdx, endIdx] ends the day AFTER endIdx.
+        onMoveResize(
+          d.item,
+          days[startIdx],
+          addDays(days[endIdx], 1),
+        )
       } else {
         if (!d.moved) return
         const endMin = Math.max(d.startMin + SNAP_MIN, d.curEndMin)
@@ -628,15 +676,53 @@ export function TimeGrid({
               continuesRight,
             }) => {
               const ev = item.event
-              const span = endIdx - startIdx + 1
               // Live preview: while this bar is being dragged, slide it by
               // the day delta so the drop target is obvious.
-              const dragDelta =
+              const isAlldayDragTarget =
                 drag?.mode === 'allday' &&
                 (drag.item.occId ?? drag.item.itemUid) ===
                   (item.occId ?? item.itemUid)
-                  ? drag.curDayIdx - drag.grabDayIdx
-                  : 0
+              const dragDelta = isAlldayDragTarget
+                ? drag.curDayIdx - drag.grabDayIdx
+                : 0
+              // Live preview for edge-resize: override the rendered
+              // start/span with the dragged indices.
+              const isAlldayResizeTarget =
+                drag?.mode === 'allday-resize' &&
+                (drag.item.occId ?? drag.item.itemUid) ===
+                  (item.occId ?? item.itemUid)
+              const previewStartIdx = isAlldayResizeTarget
+                ? drag.edge === 'start'
+                  ? drag.curDayIdx
+                  : drag.origStartIdx
+                : startIdx
+              const previewEndIdx = isAlldayResizeTarget
+                ? drag.edge === 'end'
+                  ? drag.curDayIdx
+                  : drag.origEndIdx
+                : endIdx
+              const previewSpan = previewEndIdx - previewStartIdx + 1
+              // The event's REAL start/end day indices into `days`
+              // (from its dates, clamped into the visible range for
+              // bars the viewport clips). A resize must extend the true
+              // span, not just the visible one.
+              const realStartIdx = ev.start
+                ? Math.max(
+                    0,
+                    days.findIndex(
+                      (d) => d.getTime() === startOfDay(ev.start!).getTime(),
+                    ),
+                  )
+                : startIdx
+              const realEndMs = ev.end
+                ? startOfDay(ev.end).getTime() - 1
+                : startIdx === endIdx
+                  ? days[endIdx].getTime()
+                  : days[Math.min(endIdx, days.length - 1)].getTime()
+              const realEndIdx = Math.max(
+                realStartIdx,
+                days.findIndex((d) => d.getTime() === realEndMs),
+              )
               return (
                 <div
                   key={item.occId ?? item.itemUid}
@@ -646,6 +732,50 @@ export function TimeGrid({
                     if (e.button !== 0) return
                     e.stopPropagation()
                     const gi = allDayDayIdxAt(e.clientX)
+                    const bar = e.currentTarget.getBoundingClientRect()
+                    const fromLeft = e.clientX - bar.left
+                    const fromRight = bar.right - e.clientX
+                    // Edge hit-test: within 6px (rendered) of either
+                    // vertical edge of the bar → resize that edge;
+                    // anywhere else → whole-bar move. The edge is only
+                    // live when it's the event's TRUE edge — a bar
+                    // clipped by the viewport (continuesLeft/Right)
+                    // would otherwise silently truncate the
+                    // off-screen part.
+                    if (fromLeft <= 6 && !continuesLeft) {
+                      setDrag({
+                        mode: 'allday-resize',
+                        item,
+                        edge: 'start',
+                        origStartIdx: Math.max(realStartIdx, 0),
+                        origEndIdx: Math.min(
+                          Math.max(realEndIdx, realStartIdx),
+                          days.length - 1,
+                        ),
+                        curDayIdx: gi,
+                        moved: false,
+                        x: e.clientX,
+                        y: e.clientY,
+                      })
+                      return
+                    }
+                    if (fromRight <= 6 && !continuesRight) {
+                      setDrag({
+                        mode: 'allday-resize',
+                        item,
+                        edge: 'end',
+                        origStartIdx: Math.max(realStartIdx, 0),
+                        origEndIdx: Math.min(
+                          Math.max(realEndIdx, realStartIdx),
+                          days.length - 1,
+                        ),
+                        curDayIdx: gi,
+                        moved: false,
+                        x: e.clientX,
+                        y: e.clientY,
+                      })
+                      return
+                    }
                     setDrag({
                       mode: 'allday',
                       item,
@@ -666,8 +796,8 @@ export function TimeGrid({
                   }
                   className="absolute flex cursor-grab items-center gap-1 overflow-hidden px-1 text-xs text-bg hover:brightness-110 active:cursor-grabbing"
                   style={{
-                    left: `calc(${(startIdx / days.length) * 100}% + 2px)`,
-                    width: `calc(${(span / days.length) * 100}% - 4px)`,
+                    left: `calc(${(previewStartIdx / days.length) * 100}% + 2px)`,
+                    width: `calc(${(previewSpan / days.length) * 100}% - 4px)`,
                     top: 2 + lane * ALLDAY_BAR_PX,
                     height: ALLDAY_BAR_PX - 2,
                     backgroundColor: colorFor(item),
@@ -679,7 +809,7 @@ export function TimeGrid({
                     transform: dragDelta
                       ? `translateX(${(dragDelta / days.length) * 100}%)`
                       : undefined,
-                    opacity: dragDelta ? 0.85 : undefined,
+                    opacity: dragDelta || isAlldayResizeTarget ? 0.85 : undefined,
                   }}
                 >
                   {continuesLeft && <span>◀</span>}
@@ -688,6 +818,16 @@ export function TimeGrid({
                     {ev.summary || '(no title)'}
                   </span>
                   {continuesRight && <span className="ml-auto">▶</span>}
+                  {/* Edge affordances: thin hover strips with an
+                      ew-resize cursor on both vertical edges. */}
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize"
+                  />
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize"
+                  />
                 </div>
               )
             },
