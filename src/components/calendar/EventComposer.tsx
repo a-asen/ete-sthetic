@@ -1023,6 +1023,10 @@ function CalendarSelect({
   const [activeIdx, setActiveIdx] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Refs to each option button, so the highlighted one can be scrolled
+  // into view as ↑/↓ moves the highlight (the list is max-h-48
+  // overflow-y-auto; without this the highlight runs off-screen).
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
 
   const current = calendars.find((c) => c.uid === value)
   const q = query.trim().toLowerCase()
@@ -1041,6 +1045,13 @@ function CalendarSelect({
   useEffect(() => {
     if (open) inputRef.current?.focus()
   }, [open])
+  // Keep the highlighted option in view — on ↑/↓ moves, on re-open,
+  // and on filter changes (which reset activeIdx to 0). Same pattern
+  // as the other pickers (GlobalSearchModal, MetaSearchModal, …).
+  useEffect(() => {
+    if (!open) return
+    optionRefs.current[activeIdx]?.scrollIntoView({ block: 'nearest' })
+  }, [activeIdx, q, open])
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
@@ -1133,6 +1144,9 @@ function CalendarSelect({
               filtered.map((c, i) => (
                 <li key={c.uid}>
                   <button
+                    ref={(el) => {
+                      optionRefs.current[i] = el
+                    }}
                     type="button"
                     role="option"
                     aria-selected={c.uid === value}
