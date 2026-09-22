@@ -6,11 +6,8 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
 (unified-client plan).
 
 ## Items
-- In the calendar weekly/3day view, it would be good if we could click and drag "all day events" to make them last longer/shorter. 
-- It would be nice if right clicking on an event would show a "duplicate" button, where we can duplicate it "to a new/different calendar" in a new menu.
-- Make the colour markings in the calendar weekly view a bit stronger.
-- Do not make the general colour tinting of the calendar/ete-sthetic app super sensitive to the choice.
 
+(none — the queued calendar UX batch all shipped; see below)
 
 
 ## Backlog (queued 2026-07-06)
@@ -31,6 +28,17 @@ no-back-fill rule stay as-is; only storage/dedup change.
 
 ## Shipped
 
+- [x] Calendar UX batch (plan: `docs/calendar-ux-batch-plan.md`):
+  Enter toggles the ALL DAY checkbox; the composer's calendar picker
+  scrolls with the highlight; Shift+←/→ (and toolbar ‹/›) carry the
+  selected day to the next week so plain arrows no longer snap back;
+  the extended-day drag preview follows the real drop past midnight;
+  timed event blocks carry their calendar colour (tinted fill + edges);
+  accent-soft is derived desaturated so the app no longer re-tints
+  wholesale on accent changes; right-click on an event opens a context
+  menu with Duplicate-to-calendar (fresh-UID clone, RRULE/alarms
+  preserved, detached instances duplicated standalone); all-day bars
+  are drag-resizable at their true edges in week/3-day view.
 - [x] Text selection works in all editor fields: a global CSS rule forces
   `user-select: text` on `input`/`textarea`/`[contenteditable]` so an ancestor
   `select-none` (e.g. the task list `<ul>`, drag-resize guards) can't inherit
