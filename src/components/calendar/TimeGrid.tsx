@@ -38,9 +38,12 @@ function minutesOf(d: Date): number {
   return d.getHours() * 60 + d.getMinutes()
 }
 // minutes-from-midnight → "HH:MM" (24h handled as 24:00 for an end edge).
+// Minutes past 24:00 (the extended day view's past-midnight band) wrap
+// to next-day clock times so the drag ghost reads "01:30", not "25:30".
 function hhmm(min: number): string {
-  const h = Math.floor(min / 60)
-  const m = Math.round(min % 60)
+  const wrapped = ((min % (24 * 60)) + 24 * 60) % (24 * 60)
+  const h = Math.floor(wrapped / 60)
+  const m = Math.round(wrapped % 60)
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
@@ -1138,13 +1141,19 @@ export function TimeGrid({
                     drag.mode === 'move' &&
                     drag.curDayIdx === dIdx
                   ) {
+                    // Same clamp as the pointer-up commit (the full
+                    // extended span, not a hard 24 h) so the ghost
+                    // renders where the drop will actually land — into
+                    // the past-midnight band when the day window
+                    // extends past 24:00.
+                    const totalMin = totalH * 60
                     a = Math.max(
                       0,
                       Math.min(
                         snap(
                           drag.evStartMin + (drag.curMin - drag.grabMin),
                         ),
-                        24 * 60 - drag.durMin,
+                        Math.max(0, totalMin - drag.durMin),
                       ),
                     )
                     b = a + drag.durMin
