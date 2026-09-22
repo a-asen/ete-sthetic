@@ -126,10 +126,47 @@ export function registerSyncAllHandler(
   }
 }
 
-// Trigger a sync-all on every module that has a registered handler AND
-// is enabled. Disabled / unmounted modules silently no-op. Errors are
-// swallowed (each module's handler is expected to flip its own
-// setModuleSyncFailed before throwing).
+// Worst-case freshness of one enabled module: the oldest last-synced
+// timestamp across its collections, or null when nothing has synced
+// yet (or the module is disabled). Read by App's auto-sync staleness
+// gates (switch + window focus).
+export function moduleOldestSyncedAt(m: ModuleName): number | null {
+  if (!readModuleEnabled(m)) return null
+  let oldest: number | null = null
+  for (const ts of timestampsFor(m)) {
+    if (oldest === null || ts < oldest) oldest = ts
+  }
+  return oldest
+}
+
+// Sync a single enabled module: its registered handler when the View
+// is mounted (so the visible surface repaints), else the headless
+// background sync. No-op for disabled modules. Errors are swallowed
+// (the module's own handler flips setModuleSyncFailed).
+export function syncModuleNow(m: ModuleName): Promise<void> {
+  if (!readModuleEnabled(m)) return Promise.resolve()
+  const fn = handlers.get(m)
+  try {
+    if (fn) {
+      const res = fn()
+      if (res) return res.catch(() => {})
+    } else if (m === 'tasks') {
+      return syncTasksInBackground().catch(() => {})
+    } else if (m === 'calendar') {
+      return syncCalendarsInBackground().catch(() => {})
+    } else if (m === 'contacts') {
+      return syncContactsInBackground().catch(() => {})
+    }
+  } catch {
+    // Synchronous throw shouldn't happen — swallow defensively.
+  }
+  return Promise.resolve()
+}
+
+// Sync every enabled module — each through its registered handler when
+// mounted, else the headless background sync. Errors are swallowed (each
+// module's handler is expected to flip its own setModuleSyncFailed
+// before throwing).
 export async function triggerSyncAll(): Promise<void> {
   const tasks: Array<Promise<void>> = []
   for (const [m, fn] of handlers) {

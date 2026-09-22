@@ -15,6 +15,13 @@ import {
 } from '../services/hints'
 import { getAccountInfo, logout, type AccountInfo } from '../services/etebase'
 import {
+  AUTO_SYNC_CHANGED_EVENT,
+  AUTO_SYNC_OPTIONS,
+  autoSyncLabel,
+  readAutoSyncMin,
+  writeAutoSyncMin,
+} from '../services/autoSync'
+import {
   MODULE_FLAGS_CHANGED_EVENT,
   readLaunchModule,
   readModuleEnabled,
@@ -41,6 +48,7 @@ const ACCENT_PRESETS = [
 
 const SECTIONS = [
   { id: 'shared.appearance', label: 'Appearance' },
+  { id: 'shared.sync', label: 'Sync' },
   { id: 'shared.modules', label: 'Modules' },
   { id: 'shared.launch', label: 'Launch' },
   { id: 'tasks.blueprints', label: 'Task Blueprints' },
@@ -116,6 +124,23 @@ export function GlobalSettings({
       alive = false
     }
   }, [])
+
+  // Global auto-sync cadence (minutes; 0 = off). Kept in state so the
+  // select reflects the pref instantly; the service broadcasts changes
+  // so App's interval + any other open settings windows reschedule.
+  const [autoSyncMin, setAutoSyncMinState] = useState<number>(
+    readAutoSyncMin,
+  )
+  useEffect(() => {
+    const refresh = () => setAutoSyncMinState(readAutoSyncMin())
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, refresh)
+    return () =>
+      window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, refresh)
+  }, [])
+  const setAutoSync = (n: number) => {
+    writeAutoSyncMin(n)
+    setAutoSyncMinState(n)
+  }
 
   async function handleSignOut() {
     if (signingOut) return
@@ -220,6 +245,29 @@ export function GlobalSettings({
             label="Show usage hints"
           />
         </Row>
+      </SettingsSection>
+
+      <SettingsSection id="shared.sync" label="Sync" forceOpen>
+        <Row label="Auto-sync every">
+          <select
+            value={autoSyncMin}
+            onChange={(e) => setAutoSync(Number(e.target.value))}
+            aria-label="Auto-sync interval"
+            className="h-6 rounded-md border border-border bg-surface-2 px-1.5 text-[11px] text-text outline-none focus:border-border-strong"
+          >
+            {AUTO_SYNC_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {autoSyncLabel(o)}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <p className="px-3 pb-2 text-[10px] leading-relaxed text-text-faint">
+          Syncs every enabled module (tasks, calendar, contacts) on this
+          cadence, and refreshes any module showing data older than the
+          window when you switch to it or refocus the app. Per-module
+          intervals in each view's own settings still apply on top.
+        </p>
       </SettingsSection>
 
       <ModuleToggles forceOpen />

@@ -21,7 +21,16 @@ import {
   setModuleEnabled,
   type ModuleName,
 } from './services/moduleFlags'
-import { triggerSyncAll } from './services/syncStatus'
+import {
+  moduleOldestSyncedAt,
+  syncModuleNow,
+  triggerSyncAll,
+} from './services/syncStatus'
+import {
+  AUTO_SYNC_CHANGED_EVENT,
+  DEFAULT_AUTO_SYNC_MIN,
+  readAutoSyncMin,
+} from './services/autoSync'
 import { runBlueprintSpawn } from './services/blueprints'
 import { getUnsavedGuard, type UnsavedKind } from './services/unsavedGuard'
 import { UnsavedSwitchModal } from './components/UnsavedSwitchModal'
@@ -168,6 +177,15 @@ function MainApp() {
   // Global Ctrl/Cmd+K "meta search" across every module + the same
   // reveal-the-item handoff for tasks and calendar that contacts already has.
   const [metaSearchOpen, setMetaSearchOpen] = useState(false)
+  // Global auto-sync cadence (minutes; 0 = manual only). Mirrored into
+  // state so the interval effect reschedules the moment the user
+  // changes it in the global settings.
+  const [autoSyncMin, setAutoSyncMin] = useState<number>(readAutoSyncMin)
+  useEffect(() => {
+    const refresh = () => setAutoSyncMin(readAutoSyncMin())
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, refresh)
+  }, [])
   const [pendingTaskOpen, setPendingTaskOpen] = useState<{
     collectionUid: string
     taskUid: string
@@ -250,22 +268,81 @@ function MainApp() {
     if (readModuleEnabled('contacts')) void syncContactsInBackground()
   }, [auth, enabledModules])
 
-  // Periodic background sync for the tasks module at the App level, so
-  // it keeps running even when MainView is unmounted (the user switched
-  // to calendar/contacts). MainView's own timers still handle the
-  // active-list fast cadence while it's mounted; this covers the gap
-  // while it's not. Reads the same bgSyncMin pref MainView uses.
+  // Global auto-sync: every `autoSyncMin` minutes (adjustable in the
+  // global settings, default hourly) sync every enabled module through
+  // triggerSyncAll — mounted Views repaint via their registered
+  // handlers, unmounted ones sync headlessly. Replaces the old
+  // tasks-only App-level timer (the per-module cadences in each View's
+  // settings still layer on top). The autoSyncMin state mirrors the
+  // pref via AUTO_SYNC_CHANGED_EVENT, so changing the interval in
+  // settings reschedules this without a reload.
   useEffect(() => {
     if (auth !== 'authenticated') return
-    if (!readModuleEnabled('tasks')) return
-    const raw = Number(localStorage.getItem('ete-sthetic.bgSyncMin'))
-    const min = Number.isFinite(raw) && raw > 0 ? raw : 240
-    const ms = min * 60_000
+    const ms = autoSyncMin * 60_000
+    // 0 = "manual only" — no periodic sync at all.
+    if (ms <= 0) return
     const id = setInterval(() => {
-      if (readModuleEnabled('tasks')) void syncTasksInBackground()
+      void triggerSyncAll()
     }, ms)
     return () => clearInterval(id)
-  }, [auth, enabledModules])
+  }, [auth, autoSyncMin, enabledModules])
+
+  // View-change refresh: whenever the user switches modules, sync the
+  // module they just landed on if its data is older than the auto-sync
+  // window. Mounted Views already freshness-gate their own mount syncs
+  // (with per-module windows); this covers the unmounted path (e.g.
+  // landing on a module whose headless sync hasn't run) and makes the
+  // global cadence the single knob to remember.
+  const prevModuleRef = useRef<ModuleName>(initialModule())
+  useEffect(() => {
+    if (auth !== 'authenticated') return
+    const prev = prevModuleRef.current
+    prevModuleRef.current = module
+    if (module === prev) return
+    // When the cadence is off ("manual only"), fall back to the default
+    // window for switch-refresh — the user asked for no *periodic*
+    // sync, not for never refreshing on an explicit view change.
+    const windowMin = autoSyncMin > 0 ? autoSyncMin : DEFAULT_AUTO_SYNC_MIN
+    const windowMs = windowMin * 60_000
+    if (
+      (module === 'tasks' ||
+        module === 'calendar' ||
+        module === 'contacts') &&
+      readModuleEnabled(module)
+    ) {
+      const oldest = moduleOldestSyncedAt(module)
+      if (oldest === null || Date.now() - oldest >= windowMs) {
+        void syncModuleNow(module)
+      }
+    }
+  }, [module, auth, autoSyncMin])
+
+  // Focus refresh: coming back to the app window should never show data
+  // older than the auto-sync window. When the window regains focus,
+  // sync any enabled module whose oldest synced-at exceeds it (all at
+  // once — the in-flight guards dedupe; failures surface via the sync
+  // pill). Skipped when the cadence is off ("manual only").
+  const autoSyncMinRef = useRef(autoSyncMin)
+  useEffect(() => {
+    autoSyncMinRef.current = autoSyncMin
+  }, [autoSyncMin])
+  useEffect(() => {
+    if (auth !== 'authenticated') return
+    const onFocus = () => {
+      const min = autoSyncMinRef.current
+      if (min <= 0) return
+      const windowMs = min * 60_000
+      for (const m of ['tasks', 'calendar', 'contacts'] as const) {
+        if (!readModuleEnabled(m)) continue
+        const oldest = moduleOldestSyncedAt(m)
+        if (oldest === null || Date.now() - oldest >= windowMs) {
+          void syncModuleNow(m)
+        }
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [auth])
 
   // Task Blueprints: materialise any due blueprint for *today* on launch,
   // and again whenever the app crosses local midnight while left open (that
@@ -650,6 +727,52 @@ function SingleModuleApp({ module }: { module: ModuleName }) {
       setAuth(ok ? 'authenticated' : 'unauthenticated')
     })
   }, [])
+
+  // Same global auto-sync cadence + focus refresh as the main window,
+  // scoped to this window's single module. Without this, a
+  // "calendar on the second monitor" window would never auto-refresh.
+  const autoSyncMinRef = useRef(readAutoSyncMin())
+  useEffect(() => {
+    const refresh = () => {
+      autoSyncMinRef.current = readAutoSyncMin()
+    }
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, refresh)
+    return () =>
+      window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, refresh)
+  }, [])
+  useEffect(() => {
+    if (auth !== 'authenticated') return
+    const tick = () => void syncModuleNow(module)
+    const ms = () => {
+      const min = autoSyncMinRef.current
+      return min > 0 ? min * 60_000 : null
+    }
+    let id: ReturnType<typeof setInterval> | undefined
+    const schedule = () => {
+      if (id) clearInterval(id)
+      id = undefined
+      const interval = ms()
+      if (interval) id = setInterval(tick, interval)
+    }
+    schedule()
+    const onPrefChanged = () => schedule()
+    const onFocus = () => {
+      const min = autoSyncMinRef.current
+      if (min <= 0) return
+      const windowMs = min * 60_000
+      const oldest = moduleOldestSyncedAt(module)
+      if (oldest === null || Date.now() - oldest >= windowMs) {
+        void syncModuleNow(module)
+      }
+    }
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onPrefChanged)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      if (id) clearInterval(id)
+      window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onPrefChanged)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [auth, module])
 
   const onLoggedOut = () => setAuth('unauthenticated')
 
