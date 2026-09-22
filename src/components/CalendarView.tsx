@@ -1968,8 +1968,14 @@ export function CalendarView({
     setAnchor(td)
     setSelected(td)
   }, [])
+  // Toolbar ‹/›: page the view by its natural unit, carrying the
+  // keyboard cursor (selected) along — same rule as Shift+arrows, so
+  // the highlight never desyncs from the visible page.
   const step = useCallback(
-    (dir: 1 | -1) => setAnchor((a) => stepAnchor(view, a, dir)),
+    (dir: 1 | -1) => {
+      setAnchor((a) => stepAnchor(view, a, dir))
+      setSelected((s) => stepAnchor(view, s, dir))
+    },
     [view],
   )
   // Click a day: jump the view AND move the keyboard cursor there.
@@ -2228,7 +2234,13 @@ export function CalendarView({
       e.preventDefault()
 
       if (e.shiftKey) {
-        setAnchor((a) => stepAnchor(view, a, delta < 0 ? -1 : 1))
+        // Page by the view's natural unit AND carry the keyboard cursor
+        // (selected) with it. Leaving `selected` behind made the ring
+        // stay on the old week and the next plain arrow key snap the
+        // view straight back — the cursor must follow the page.
+        const dir = delta < 0 ? -1 : 1
+        setAnchor((a) => stepAnchor(view, a, dir))
+        setSelected((s) => stepAnchor(view, s, dir))
         return
       }
 
