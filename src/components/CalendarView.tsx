@@ -2356,20 +2356,20 @@ export function CalendarView({
     [calByItem, subscriptions, isCalLocked],
   )
 
-  const editFromPopover = useCallback(() => {
-    setPopover((p) => {
-      if (p) {
-        setCreateErr(null)
-        editBaseRef.current = {
-          itemUid: p.item.itemUid,
-          raw: p.item.event.raw,
-        }
-        setServerChanged(false)
-        setComposer({ mode: 'edit', item: p.item, calUid: p.calUid })
-      }
-      return null
-    })
+  // Open the composer directly in edit mode (skipping the detail
+  // popover), so an "Edit" action takes effect in a single click.
+  const startEdit = useCallback((item: EventItem, calUid: string) => {
+    setPopover(null)
+    setEvtMenu(null)
+    setCreateErr(null)
+    editBaseRef.current = { itemUid: item.itemUid, raw: item.event.raw }
+    setServerChanged(false)
+    setComposer({ mode: 'edit', item, calUid })
   }, [])
+
+  const editFromPopover = useCallback(() => {
+    if (popover) startEdit(popover.item, popover.calUid)
+  }, [popover, startEdit])
 
   // Stop tracking the edit baseline once the editor isn't in edit mode
   // (ref-only; safe in an effect).
@@ -2535,7 +2535,13 @@ export function CalendarView({
         items: [
           {
             label: 'Edit',
-            onSelect: () => openEvent(item, coords),
+            // Writable events go straight to the composer; read-only ones
+            // (locked calendar or ICS subscription) open the detail popover,
+            // which explains why they can't be edited.
+            onSelect: () =>
+              isSub || locked
+                ? openEvent(item, coords)
+                : startEdit(item, calUid),
           },
           {
             label: 'Duplicate to…',
@@ -2565,7 +2571,14 @@ export function CalendarView({
         ],
       })
     },
-    [calByItem, subscriptions, isCalLocked, openEvent, handleDelete],
+    [
+      calByItem,
+      subscriptions,
+      isCalLocked,
+      openEvent,
+      startEdit,
+      handleDelete,
+    ],
   )
 
   // Duplicate the picked event onto the chosen calendar and splice the
