@@ -28,6 +28,13 @@ no-back-fill rule stay as-is; only storage/dedup change.
 
 ## Shipped
 
+- [x] Event reminders in the composer: an **Add reminder** section adds
+  any number of start-relative reminders (preset offsets or a custom
+  amount), written as `DISPLAY` VALARMs so they sync to other clients.
+  Works on recurring events too — editing *this* / *this-and-following*
+  passes the alarms to the split event/series, and a drag/resize or field
+  edit no longer risks dropping them. Imported absolute / `RELATED=END` /
+  `EMAIL` alarms round-trip unchanged.
 - [x] Calendar UX batch (plan: `docs/calendar-ux-batch-plan.md`):
   Enter toggles the ALL DAY checkbox; the composer's calendar picker
   scrolls with the highlight; Shift+←/→ (and toolbar ‹/›) carry the

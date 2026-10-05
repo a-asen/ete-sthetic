@@ -53,6 +53,17 @@ The scope-aware edit logic lives in
 - `DISPLAY` and `AUDIO` actions notify; `EMAIL` alarms are preserved but never
   fire (there is no mail transport).
 
+The composer's **Reminders** section adds and removes reminders on any event,
+recurring or not: pick a preset offset (at start, 5/10/15/30 min, 1/2 h, 1
+day, 1 week before) or `Custom…` for any other offset, with several reminders
+per event. A reminder is written as a start-relative `DISPLAY` VALARM so it
+syncs to other clients (Tasks.org, DAVx5, …). Saving always rewrites the
+alarms from the rows, so a drag-resize or field edit keeps them. Imported
+alarms the editor can't express (absolute, `RELATED=END`, `EMAIL`) are hidden
+from the list but carried through unchanged rather than dropped. When you
+split a recurring series (edit/delete *this* or *this-and-following*), the
+new detached event / series inherits the original's alarms.
+
 ## Conflict resolution
 
 If an event changes on the server while you're editing it, the **conflict
