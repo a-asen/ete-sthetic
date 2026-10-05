@@ -2649,6 +2649,7 @@ export function CalendarView({
               location: patch.location,
               description: patch.description,
               allDay: patch.allDay,
+              alarms: patch.alarms,
               start: new Date(bStart.getTime() + delta),
               end: new Date(bEnd.getTime() + delta),
             })

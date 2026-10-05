@@ -1,5 +1,10 @@
 import ICAL from 'ical.js'
-import { buildVEvent, type VEventPatch } from './vevent'
+import {
+  buildVEvent,
+  parseVEvent,
+  type VAlarmInput,
+  type VEventPatch,
+} from './vevent'
 
 // iCalendar surgery for "edit/delete this / this-and-following / all" on a
 // recurring series. Deliberately pragmatic for v1 (documented in
@@ -76,7 +81,24 @@ export function truncateUntil(
   return cal.toString()
 }
 
-function patchToArgs(patch: VEventPatch, base: { summary: string }) {
+// Read the source VEVENT's VALARMs back into the editable input shape so
+// a detached / split occurrence inherits the series' reminders when the
+// patch doesn't carry its own set (mirrors how the RRULE is inherited).
+function baseAlarmsToInput(raw: string): VAlarmInput[] {
+  const parsed = parseVEvent(raw)
+  if (!parsed) return []
+  return parsed.alarms.map((al) => ({
+    relSeconds: al.relSeconds,
+    relTo: al.relTo,
+    at: al.at,
+    action: al.action,
+  }))
+}
+
+function patchToArgs(
+  patch: VEventPatch,
+  base: { summary: string; alarms: VAlarmInput[] },
+) {
   return {
     summary: patch.summary ?? base.summary,
     start: patch.start as Date,
@@ -84,6 +106,8 @@ function patchToArgs(patch: VEventPatch, base: { summary: string }) {
     allDay: patch.allDay ?? false,
     location: patch.location ?? undefined,
     description: patch.description ?? undefined,
+    // A patch that doesn't touch reminders inherits the series' set.
+    alarms: patch.alarms ?? base.alarms,
   }
 }
 
@@ -95,7 +119,9 @@ export function detachedEvent(
   const { ve } = veventOf(baseRaw)
   const summary =
     (ve.getFirstPropertyValue('summary') as string | null) ?? ''
-  return buildVEvent(patchToArgs(patch, { summary })).raw
+  return buildVEvent(
+    patchToArgs(patch, { summary, alarms: baseAlarmsToInput(baseRaw) }),
+  ).raw
 }
 
 // A new recurring series starting at the edited occurrence, carrying the
@@ -107,7 +133,9 @@ export function newSeriesFrom(
   const { ve } = veventOf(baseRaw)
   const summary =
     (ve.getFirstPropertyValue('summary') as string | null) ?? ''
-  const built = buildVEvent(patchToArgs(patch, { summary }))
+  const built = buildVEvent(
+    patchToArgs(patch, { summary, alarms: baseAlarmsToInput(baseRaw) }),
+  )
   const baseRrule = ve.getFirstProperty('rrule')
   if (!baseRrule) return built.raw
   const { cal: newCal, ve: newVe } = veventOf(built.raw)

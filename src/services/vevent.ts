@@ -82,6 +82,48 @@ function parseAlarms(vevent: ICAL.Component): VAlarm[] {
   return out
 }
 
+// An editable reminder authored in the composer. The common case is a
+// signed offset in seconds from DTSTART (negative = before it, 0 = at
+// start). The absolute / end-relative variants exist so imported alarms
+// the composer can't present can be carried through unchanged rather than
+// dropped on an unrelated edit. We write DISPLAY VALARMs; DESCRIPTION
+// falls back to the event summary so the trigger is well-formed for other
+// calendar clients (the in-app scheduler ignores it and uses the event
+// summary directly).
+export interface VAlarmInput {
+  relSeconds?: number
+  relTo?: 'start' | 'end'
+  at?: Date
+  // iCalendar ACTION, defaults to DISPLAY when omitted. Carried so an
+  // imported EMAIL/AUDIO alarm can round-trip rather than be rewritten.
+  action?: string
+}
+
+// Replace all VALARM subcomponents on a VEVENT with the given reminders.
+function applyAlarms(vevent: ICAL.Component, alarms: VAlarmInput[]): void {
+  vevent.removeAllSubcomponents('valarm')
+  if (alarms.length === 0) return
+  const fallback = asString(vevent.getFirstPropertyValue('summary')) ?? ''
+  for (const a of alarms) {
+    const va = new ICAL.Component('valarm')
+    va.updatePropertyWithValue('action', a.action ?? 'DISPLAY')
+    if (a.at) {
+      // Absolute trigger: TRIGGER;VALUE=DATE-TIME:<instant>.
+      const p = new ICAL.Property('trigger', va)
+      p.setValue(ICAL.Time.fromJSDate(a.at, true))
+      va.addProperty(p)
+    } else if (a.relSeconds != null) {
+      const trig = va.updatePropertyWithValue(
+        'trigger',
+        ICAL.Duration.fromSeconds(a.relSeconds),
+      )
+      if (a.relTo === 'end') trig.setParameter('related', 'END')
+    }
+    if (fallback) va.updatePropertyWithValue('description', fallback)
+    vevent.addSubcomponent(va)
+  }
+}
+
 export function parseVEvent(raw: string): VEvent | null {
   let comp: ICAL.Component
   try {
@@ -191,6 +233,8 @@ export interface NewVEventArgs {
   // RRULE body (without the "RRULE:" prefix), e.g. "FREQ=WEEKLY".
   // Undefined / empty string = non-recurring.
   rrule?: string
+  // Reminders to attach (DISPLAY VALARMs). Omitted / empty = none.
+  alarms?: VAlarmInput[]
 }
 
 // Build a fresh VCALENDAR + VEVENT for a new event. For all-day events
@@ -222,6 +266,7 @@ export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
     // RRULE expects a structured value; ICAL.js can parse the string.
     vevent.updatePropertyWithValue('rrule', ICAL.Recur.fromString(args.rrule))
   }
+  applyAlarms(vevent, args.alarms ?? [])
 
   cal.addSubcomponent(vevent)
   return { uid, raw: cal.toString() }
@@ -239,6 +284,10 @@ export interface VEventPatch {
   // whatever the source had untouched (so a non-RRULE-aware edit
   // never accidentally drops the recurrence).
   rrule?: string | null
+  // Reminders. undefined leaves the source VALARMs untouched (so a
+  // non-reminder-aware edit, e.g. a drag-resize, preserves them); an
+  // empty array clears all reminders.
+  alarms?: VAlarmInput[]
 }
 
 // Update an existing raw VEVENT. Preserves unknown properties (RRULE,
@@ -287,6 +336,7 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
     else
       vevent.updatePropertyWithValue('rrule', ICAL.Recur.fromString(patch.rrule))
   }
+  if (patch.alarms !== undefined) applyAlarms(vevent, patch.alarms)
 
   vevent.updatePropertyWithValue('last-modified', icalUtcNow())
   vevent.updatePropertyWithValue('dtstamp', icalUtcNow())

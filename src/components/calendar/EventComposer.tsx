@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CollectionInfo, EventItem } from '../../types'
-import type { NewVEventArgs, VEventPatch } from '../../services/vevent'
+import type { NewVEventArgs, VAlarmInput, VEventPatch } from '../../services/vevent'
 import { CalendarPopover } from '../CalendarPopover'
 import { ConfirmModal } from '../ConfirmModal'
 import { useUndoableValue } from '../../hooks/useUndoableValue'
@@ -62,6 +62,42 @@ function fromInputs(date: string, time: string): Date {
   const [y, mo, d] = date.split('-').map(Number)
   const [h, mi] = time ? time.split(':').map(Number) : [0, 0]
   return new Date(y, (mo ?? 1) - 1, d ?? 1, h ?? 0, mi ?? 0, 0, 0)
+}
+
+// Reminder offsets offered in the drop-down, in seconds before DTSTART.
+// A negative signed value. Order matches "soonest before → furthest before".
+const REMINDER_PRESETS: { value: number; label: string }[] = [
+  { value: 0, label: 'At start' },
+  { value: 5 * 60, label: '5 minutes before' },
+  { value: 10 * 60, label: '10 minutes before' },
+  { value: 15 * 60, label: '15 minutes before' },
+  { value: 30 * 60, label: '30 minutes before' },
+  { value: 60 * 60, label: '1 hour before' },
+  { value: 2 * 60 * 60, label: '2 hours before' },
+  { value: 24 * 60 * 60, label: '1 day before' },
+  { value: 7 * 24 * 60 * 60, label: '1 week before' },
+]
+
+// One editable reminder row with a stable id, so adding/removing rows
+// doesn't make React reuse a sibling's local custom-mode state.
+interface ReminderEntry {
+  id: number
+  seconds: number
+}
+let reminderIdSeq = 0
+function newReminderEntry(seconds: number): ReminderEntry {
+  return { id: reminderIdSeq++, seconds }
+}
+
+// The signed offset (seconds from DTSTART) carried by a reminder row.
+// Only start-relative DISPLAY alarms are editable here; absolute,
+// end-relative, AUDIO and EMAIL alarms from imports round-trip verbatim
+// (via passthroughAlarms) and aren't shown, so we never rewrite their
+// action.
+function reminderOffset(al: VAlarmInput): number | null {
+  if ((al.action ?? 'DISPLAY').toUpperCase() !== 'DISPLAY') return null
+  if (al.relSeconds == null || (al.relTo ?? 'start') !== 'start') return null
+  return al.relSeconds
 }
 
 // Bump an "HH:MM" string by a positive or negative minute delta. Wraps
@@ -206,6 +242,20 @@ export function EventComposer({
   const [endTime, setEndTime] = useState(toTimeInput(end0))
   const [location, setLocation] = useState(ev?.location ?? '')
   const [description, setDescription] = useState(ev?.description ?? '')
+  // Editable reminders. Only start-relative alarms are editable here;
+  // any absolute / end-relative / EMAIL alarm carried by the source is
+  // held aside in `passthroughAlarms` so saving a field edit doesn't
+  // silently drop it (see alarmsForSave).
+  const [reminders, setReminders] = useState<ReminderEntry[]>(() =>
+    (ev?.alarms ?? [])
+      .map(reminderOffset)
+      .filter((s): s is number => s != null)
+      .map((seconds) => newReminderEntry(seconds)),
+  )
+  const passthroughAlarms = useMemo<VAlarmInput[]>(
+    () => (ev?.alarms ?? []).filter((al) => reminderOffset(al) == null),
+    [ev],
+  )
   const [repeat, setRepeat] = useState<RepeatPreset>(() =>
     detectPreset(ev?.rrule),
   )
@@ -264,6 +314,10 @@ export function EventComposer({
     location: ev?.location ?? '',
     description: ev?.description ?? '',
     repeat: detectPreset(ev?.rrule),
+    reminders: (ev?.alarms ?? [])
+      .map(reminderOffset)
+      .filter((s): s is number => s != null)
+      .join(','),
   }))
   // Undo/redo for the Title — controlled inputs lose the browser's native
   // Ctrl+Z, so clearing the title and undoing wouldn't bring it back.
@@ -310,6 +364,17 @@ export function EventComposer({
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [startCalOpen, endCalOpen, confirmClose])
+
+  // Reminders to persist: the editable start-relative rows plus any
+  // source alarms the composer couldn't present (absolute / end-relative),
+  // so those survive a plain field edit instead of being dropped.
+  const alarmsForSave = useMemo<VAlarmInput[]>(
+    () => [
+      ...reminders.map((r) => ({ relSeconds: r.seconds })),
+      ...passthroughAlarms,
+    ],
+    [reminders, passthroughAlarms],
+  )
 
   // Returns true when the event passed validation and was handed off to
   // onCreate/onUpdate; false when a validation error blocked it (so callers
@@ -365,6 +430,7 @@ export function EventComposer({
           location: location.trim() || null,
           description: description.trim() || null,
           rrule: presetToRrule[repeat],
+          alarms: alarmsForSave,
         },
         calUid,
       )
@@ -377,6 +443,7 @@ export function EventComposer({
         location: location.trim() || undefined,
         description: description.trim() || undefined,
         rrule: presetToRrule[repeat] ?? undefined,
+        alarms: alarmsForSave.length > 0 ? alarmsForSave : undefined,
       })
     }
     return true
@@ -395,6 +462,7 @@ export function EventComposer({
     location !== initial.location ||
     description !== initial.description ||
     repeat !== initial.repeat ||
+    reminders.map((r) => r.seconds).join(',') !== initial.reminders ||
     customDirty
 
   // Every dismissal path (Esc, backdrop click, Cancel) funnels here: warn
@@ -667,6 +735,50 @@ export function EventComposer({
               }
             />
           )}
+
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-xs text-text-muted">
+              <span className="shrink-0">Reminders</span>
+              <button
+                type="button"
+                onClick={() =>
+                  setReminders((r) => [...r, newReminderEntry(-10 * 60)])
+                }
+                className="ml-auto rounded-md border border-border px-2 py-0.5 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
+              >
+                + Add reminder
+              </button>
+            </div>
+            {reminders.length === 0 ? (
+              <p className="text-[11px] text-text-faint">
+                No reminder. Notifications fire while the app is running.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {reminders.map((r) => (
+                  <ReminderRow
+                    key={r.id}
+                    seconds={r.seconds}
+                    initialCustom={!REMINDER_PRESETS.some(
+                      (p) => p.value === -r.seconds,
+                    )}
+                    onChange={(v) =>
+                      setReminders((list) =>
+                        list.map((e) =>
+                          e.id === r.id ? { ...e, seconds: v } : e,
+                        ),
+                      )
+                    }
+                    onRemove={() =>
+                      setReminders((list) =>
+                        list.filter((e) => e.id !== r.id),
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </div>
 
           <input
             value={location}
@@ -997,6 +1109,123 @@ function CustomRruleBlock({
           </label>
         </div>
       </div>
+    </div>
+  )
+}
+
+// One editable reminder line. A preset drop-down covers the common
+// offsets; any other value shows as a "Custom" entry with a minutes
+// stepper so imported/odd offsets can be tweaked without losing them.
+// `seconds` is signed: negative = before DTSTART, 0 = at start.
+function ReminderRow({
+  seconds,
+  initialCustom,
+  onChange,
+  onRemove,
+}: {
+  seconds: number
+  initialCustom: boolean
+  onChange: (seconds: number) => void
+  onRemove: () => void
+}) {
+  const field =
+    'rounded-md border border-border bg-bg px-2 py-1 text-xs text-text outline-none focus:border-accent'
+  const [custom, setCustom] = useState(initialCustom)
+  const [customUnit, setCustomUnit] = useState<'min' | 'hour' | 'day'>(() => {
+    const m = Math.abs(seconds)
+    if (m !== 0 && m % 86_400 === 0) return 'day'
+    if (m !== 0 && m % 3_600 === 0) return 'hour'
+    return 'min'
+  })
+  // Seconds per unit for the custom stepper.
+  const unitFactor = customUnit === 'day' ? 86_400 : customUnit === 'hour' ? 3_600 : 60
+  // The amount shown in the stepper (always positive; direction is separate).
+  const customAmount = Math.round(Math.abs(seconds) / unitFactor)
+
+  const setFromCustom = (amount: number) => {
+    onChange((seconds < 0 ? -amount : amount) * unitFactor)
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <select
+        value={custom ? 'custom' : String(-seconds)}
+        onChange={(e) => {
+          if (e.target.value === 'custom') {
+            setCustom(true)
+            return
+          }
+          setCustom(false)
+          onChange(-Number(e.target.value))
+        }}
+        aria-label="Reminder time"
+        className={`${field} min-w-0 flex-1`}
+      >
+        {REMINDER_PRESETS.map((p) => (
+          <option key={p.value} value={String(p.value)}>
+            {p.label}
+          </option>
+        ))}
+        <option value="custom">Custom…</option>
+      </select>
+      {custom && (
+        <>
+          <input
+            type="number"
+            min={0}
+            value={customAmount}
+            onChange={(e) => {
+              const n = Math.max(0, Math.floor(Number(e.target.value) || 0))
+              setFromCustom(n)
+            }}
+            aria-label="Reminder amount"
+            className={`${field} w-16`}
+          />
+          <select
+            value={customUnit}
+            onChange={(e) => {
+              const unit = e.target.value as 'min' | 'hour' | 'day'
+              setCustomUnit(unit)
+              // Re-express the same offset in the new unit, rounded to a
+              // whole unit, keeping the before/after direction.
+              const factor = unit === 'day' ? 86_400 : unit === 'hour' ? 3_600 : 60
+              const n =
+                seconds === 0 ? 0 : Math.max(1, Math.round(Math.abs(seconds) / factor))
+              onChange((seconds < 0 ? -n : n) * factor)
+            }}
+            aria-label="Reminder unit"
+            className={field}
+          >
+            <option value="min">min</option>
+            <option value="hour">hour(s)</option>
+            <option value="day">day(s)</option>
+          </select>
+          <select
+            value={seconds < 0 ? 'before' : 'after'}
+            onChange={(e) =>
+              onChange(
+                e.target.value === 'before'
+                  ? -Math.abs(seconds)
+                  : Math.abs(seconds),
+              )
+            }
+            aria-label="Reminder direction"
+            className={field}
+          >
+            <option value="before">before</option>
+            <option value="after">after</option>
+          </select>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove reminder"
+        title="Remove reminder"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-text-muted hover:border-danger hover:text-danger"
+      >
+        ×
+      </button>
     </div>
   )
 }
