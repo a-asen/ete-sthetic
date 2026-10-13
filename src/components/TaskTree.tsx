@@ -164,6 +164,9 @@ interface Props {
   ) => void
   // Right-click on a task row → caller opens a context menu at x,y.
   onRowContextMenu?: (node: TaskNode, x: number, y: number) => void
+  // Plain `t` on the selected row: open the tag menu (MainView owns the
+  // menu and the categories patch, the tree only reports the cursor uid).
+  onOpenTagMenu?: (uid: string) => void
   // When set, task rows are draggable and carry their VTODO uid under
   // this mime type (a sidebar list can accept the drop to move it).
   taskDndMime?: string
@@ -524,6 +527,9 @@ export function TaskTree({
   onChangePriority,
   onChangePrioritySelected,
   onRowContextMenu,
+  // Plain `t` on the selected row: open the tag menu (MainView owns the
+  // menu and the categories patch, the tree only reports the cursor).
+  onOpenTagMenu,
   taskDndMime,
   manualReorder = false,
   onReorderDrop,
@@ -1023,6 +1029,15 @@ export function TaskTree({
           setEditingUid(visible[idx].todo.uid)
           break
         }
+        case 't':
+        case 'T': {
+          // Tags over typeahead: plain `t` opens the tag menu for the
+          // cursor row (MainView's typeahead skips defaultPrevented).
+          if (idx < 0 || !onOpenTagMenu) return
+          e.preventDefault()
+          onOpenTagMenu(visible[idx].todo.uid)
+          break
+        }
         case '+':
         case '=': {
           bump(1)
@@ -1061,6 +1076,7 @@ export function TaskTree({
     onChangePriority,
     onChangePrioritySelected,
     onLeaveLeft,
+    onOpenTagMenu,
     phonePriority,
     hoveredUid,
     anchorUid,

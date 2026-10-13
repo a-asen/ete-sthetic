@@ -38,6 +38,7 @@ const SHORTCUTS: Array<{ group: string; items: Binding[] }> = [
     group: 'Tasks',
     items: [
       { keys: ['a–z'], description: 'Type to jump to a task (repeat to cycle)' },
+      { keys: ['t'], description: 'Tag menu for the highlighted task' },
       { keys: ['←'], description: 'Collapse, then jump to parent' },
       { keys: ['→'], description: 'Expand a parent, or start a subtask' },
       {

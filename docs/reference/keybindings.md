@@ -37,11 +37,15 @@ registry.
 | Key           | Action                              |
 | ------------- | ----------------------------------- |
 | `0`–`9`       | Set task priority directly          |
+| `t`           | Open the tag menu for the highlighted task |
 | `Alt`+`←`     | Outdent (reparent up)               |
 | `Alt`+`→`     | Indent under previous sibling       |
 | `Alt`+`↑`     | Move up among siblings              |
 | `Alt`+`↓`     | Move down among siblings            |
 | *letters*     | Typeahead — jump to a matching item |
+
+`T` is reserved for the tag menu, so bare letters typeahead for every
+letter *except* `t` in the task tree.
 
 ## Creating tasks
 

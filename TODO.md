@@ -28,6 +28,15 @@ no-back-fill rule stay as-is; only storage/dedup change.
 
 ## Shipped
 
+- [x] `t` tag menu on the highlighted task: plain `t` in the task tree
+  opens an anchored popover for the cursor row — a filter/add field over
+  the list's tag vocabulary with checkbox rows that toggle immediately
+  (each toggle writes the VTODO `CATEGORIES` through the optimistic save
+  path), Enter creates a typed new tag, and Backspace on an empty input
+  removes the last tag. Trade-off: bare `t` was previously the typeahead
+  letter in the task tree — it's now reserved; every other letter still
+  typeahead (MainView's typeahead now skips TaskTree-consumed keys via
+  `defaultPrevented`).
 - [x] Event reminders in the composer: an **Add reminder** section adds
   any number of start-relative reminders (preset offsets or a custom
   amount), written as `DISPLAY` VALARMs so they sync to other clients.

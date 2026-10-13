@@ -82,6 +82,7 @@ import {
 import { KeybindingsModal } from './KeybindingsModal'
 import { MoveTaskPicker } from './MoveTaskPicker'
 import { SortPopover, type SortOption } from './SortPopover'
+import { TaskTagMenu } from './TaskTagMenu'
 import { TaskTree } from './TaskTree'
 import { readTaskSort, writeTaskSort } from '../services/sort'
 import {
@@ -707,6 +708,8 @@ export function MainView({
   }, [pendingOpen, activeUid, selectSingle, onPendingOpenConsumed])
   const [showKeybindings, setShowKeybindings] = useState(false)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
+  // VTODO uid whose tags the `t`-opened tag menu is editing.
+  const [tagMenuFor, setTagMenuFor] = useState<string | null>(null)
   // Per-collection sync progress (items received from the server so far on
   // the in-flight pull). Cleared when the sync finishes/aborts/errors. The
   // header shows the active uid's entry as "Syncing… N items".
@@ -3102,8 +3105,14 @@ export function MainView({
       // visible task rows (matches the sidebar's list typeahead). Digits
       // are left alone so TaskTree's 0–9 priority hotkeys still work.
       // Every action shortcut is Ctrl-prefixed so bare letters never
-      // double as commands here.
-      if (focusZone === 'tasks' && /^[a-z]$/i.test(e.key)) {
+      // double as commands here. TaskTree's handler runs first (child
+      // effects register before the parent's) — keys it consumes, like
+      // `t` for the tag menu, arrive defaultPrevented and are skipped.
+      if (
+        focusZone === 'tasks' &&
+        !e.defaultPrevented &&
+        /^[a-z]$/i.test(e.key)
+      ) {
         e.preventDefault()
         const ch = e.key.toLowerCase()
         const now = Date.now()
@@ -4163,10 +4172,27 @@ export function MainView({
     [activeUid, applyStatusChange],
   )
 
+  const tagMenuAnchor = tagMenuFor
+    ? document.querySelector<HTMLElement>(
+        `[data-task-uid="${CSS.escape(tagMenuFor)}"]`,
+      )
+    : null
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-bg text-text">
       {showKeybindings && (
         <KeybindingsModal onClose={() => setShowKeybindings(false)} />
+      )}
+      {tagMenuFor && tagMenuAnchor && selectedTaskItem && (
+        <TaskTagMenu
+          anchor={tagMenuAnchor}
+          summary={selectedTaskItem.todo.summary}
+          categories={selectedTaskItem.todo.categories}
+          availableTags={availableTags}
+          onSetCategories={(next) => {
+            void handleSaveDetails({ categories: next })
+          }}
+          onClose={() => setTagMenuFor(null)}
+        />
       )}
       {globalSearchOpen && (
         <GlobalSearchModal
@@ -5136,6 +5162,7 @@ export function MainView({
               onChangePriority={handleChangePriority}
               onChangePrioritySelected={handleChangePrioritySelected}
               onRowContextMenu={openTaskMenu}
+              onOpenTagMenu={setTagMenuFor}
               taskDndMime={TASK_DND_MIME}
               manualReorder={activeSort.sort === 'manual'}
               onReorderDrop={handleReorderDrop}
