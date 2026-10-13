@@ -95,19 +95,37 @@ function baseAlarmsToInput(raw: string): VAlarmInput[] {
   }))
 }
 
+// Translate a patch into buildVEvent args. The patch convention is
+// null = clear, undefined = leave untouched — but buildVEvent can only
+// "set" or "omit", so undefined fields are resolved against the base
+// VEVENT: a drag supplies only start/end/allDay, and the detached/new
+// series must keep the base's summary/location/description verbatim.
 function patchToArgs(
   patch: VEventPatch,
-  base: { summary: string; alarms: VAlarmInput[] },
+  ve: ICAL.Component,
+  alarms: VAlarmInput[],
 ) {
+  const str = (v: unknown): string | null => {
+    if (v == null) return null
+    const s = String(v)
+    return s === '' ? null : s
+  }
+  const summary = str(ve.getFirstPropertyValue('summary')) ?? ''
+  const location = str(ve.getFirstPropertyValue('location')) ?? undefined
+  const description = str(ve.getFirstPropertyValue('description')) ?? undefined
   return {
-    summary: patch.summary ?? base.summary,
+    summary: patch.summary ?? summary,
     start: patch.start as Date,
     end: patch.end as Date,
     allDay: patch.allDay ?? false,
-    location: patch.location ?? undefined,
-    description: patch.description ?? undefined,
+    location:
+      patch.location === undefined ? location : patch.location || undefined,
+    description:
+      patch.description === undefined
+        ? description
+        : patch.description || undefined,
     // A patch that doesn't touch reminders inherits the series' set.
-    alarms: patch.alarms ?? base.alarms,
+    alarms: patch.alarms ?? alarms,
   }
 }
 
@@ -117,11 +135,7 @@ export function detachedEvent(
   patch: VEventPatch,
 ): string {
   const { ve } = veventOf(baseRaw)
-  const summary =
-    (ve.getFirstPropertyValue('summary') as string | null) ?? ''
-  return buildVEvent(
-    patchToArgs(patch, { summary, alarms: baseAlarmsToInput(baseRaw) }),
-  ).raw
+  return buildVEvent(patchToArgs(patch, ve, baseAlarmsToInput(baseRaw))).raw
 }
 
 // A new recurring series starting at the edited occurrence, carrying the
@@ -131,11 +145,7 @@ export function newSeriesFrom(
   patch: VEventPatch,
 ): string {
   const { ve } = veventOf(baseRaw)
-  const summary =
-    (ve.getFirstPropertyValue('summary') as string | null) ?? ''
-  const built = buildVEvent(
-    patchToArgs(patch, { summary, alarms: baseAlarmsToInput(baseRaw) }),
-  )
+  const built = buildVEvent(patchToArgs(patch, ve, baseAlarmsToInput(baseRaw)))
   const baseRrule = ve.getFirstProperty('rrule')
   if (!baseRrule) return built.raw
   const { cal: newCal, ve: newVe } = veventOf(built.raw)

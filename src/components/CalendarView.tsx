@@ -2498,12 +2498,29 @@ export function CalendarView({
   )
 
   // Drag move/resize → patch start+end on the series base.
+  // Recurring events never move silently: ask for the scope first (this /
+  // this-and-following / all) via the same modal edits and deletes use.
+  // Note occurrences share the base raw and event.start of the dragged
+  // occurrence (expansion overwrites start/end), so occStart is the
+  // occurrence the user actually grabbed.
   const handleMoveResize = useCallback(
     async (item: EventItem, start: Date, end: Date) => {
       const calUid = calByItem.get(item.itemUid)
       if (!calUid) return
       if (isCalLocked(calUid)) {
         setNotice('This calendar is locked — event not moved.')
+        return
+      }
+      if (item.event.recurring && item.event.start) {
+        setRecurOp({
+          action: 'edit',
+          calUid,
+          itemUid: item.itemUid,
+          baseRaw: item.event.raw,
+          occStart: item.event.start,
+          allDay: item.event.allDay,
+          patch: { start, end, allDay: item.event.allDay },
+        })
         return
       }
       await handleUpdate(calUid, item.itemUid, { start, end })
@@ -2636,22 +2653,32 @@ export function CalendarView({
           const { patch } = op
           if (scope === 'all') {
             // Shift the whole series by the time delta the user applied
-            // to this occurrence; non-time fields set directly.
+            // to this occurrence; non-time fields set directly. A
+            // duration change (drag-resize) applies to every occurrence:
+            // the base start keeps its offset from the grabbed
+            // occurrence, the end is moved by the same delta as the
+            // start plus the duration delta.
             const base = parseVEvent(op.baseRaw)
             const bStart = base?.start ?? patch.start ?? op.occStart
             const bEnd =
               base?.end ?? patch.end ?? new Date(op.occStart.getTime())
-            const delta =
+            const startDelta =
               (patch.start?.getTime() ?? op.occStart.getTime()) -
               op.occStart.getTime()
+            const durDelta =
+              patch.end && patch.start
+                ? patch.end.getTime() -
+                  patch.start.getTime() -
+                  (bEnd.getTime() - bStart.getTime())
+                : 0
             const updated = await updateEvent(op.calUid, op.itemUid, {
               summary: patch.summary,
               location: patch.location,
               description: patch.description,
               allDay: patch.allDay,
               alarms: patch.alarms,
-              start: new Date(bStart.getTime() + delta),
-              end: new Date(bEnd.getTime() + delta),
+              start: new Date(bStart.getTime() + startDelta),
+              end: new Date(bStart.getTime() + startDelta + durDelta),
             })
             spliceEvent(op.calUid, op.itemUid, updated)
           } else if (scope === 'this') {

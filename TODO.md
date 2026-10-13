@@ -28,6 +28,16 @@ no-back-fill rule stay as-is; only storage/dedup change.
 
 ## Shipped
 
+- [x] Drag-resize/move on a *recurring* event now works end-to-end: the
+  drag routes through the same this / this-and-following / all scope
+  modal edits and deletes use (previously a drag wrote start/end
+  straight onto the series base). "All events" applies the grabbed
+  occurrence's time delta *and* the duration delta to the base (a
+  drag-resize previously silently no-opped the duration half), and
+  detached / new-series events resolve untouched patch fields against
+  the base VEVENT so location/description/summary survive a
+  times-only edit — combined with the alarms-inheritance from the
+  reminders work in the same `patchToArgs`.
 - [x] `t` tag menu on the highlighted task: plain `t` in the task tree
   opens an anchored popover for the cursor row — a filter/add field over
   the list's tag vocabulary with checkbox rows that toggle immediately
