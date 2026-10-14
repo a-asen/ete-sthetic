@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CollectionInfo, EventItem } from '../../types'
 import type { NewVEventArgs, VAlarmInput, VEventPatch } from '../../services/vevent'
-import { CalendarPopover } from '../CalendarPopover'
 import { ConfirmModal } from '../ConfirmModal'
+import { DateField } from '../DateField'
 import { useUndoableValue } from '../../hooks/useUndoableValue'
 import { registerUnsavedGuard } from '../../services/unsavedGuard'
 import {
@@ -19,24 +19,6 @@ import {
   parseRruleToCustom,
   serializeCustomRrule,
 } from '../../services/rrule'
-
-function CalendarIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className="h-3.5 w-3.5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="2.5" y="3" width="11" height="10.5" rx="1.5" />
-      <path d="M2.5 6.5h11M5.5 1.5v3M10.5 1.5v3" />
-    </svg>
-  )
-}
 
 // Shared styling for the small multi-select toggle pills used by the
 // custom-recurrence weekday / position pickers.
@@ -322,17 +304,11 @@ export function EventComposer({
   // Undo/redo for the Title — controlled inputs lose the browser's native
   // Ctrl+Z, so clearing the title and undoing wouldn't bring it back.
   const summaryUndo = useUndoableValue(summary, setSummary)
-  const [startCalOpen, setStartCalOpen] = useState(false)
-  const [endCalOpen, setEndCalOpen] = useState(false)
   const titleRef = useRef<HTMLInputElement>(null)
   // Latest submit() / requestClose(), so the window keydown effect can fire
   // Ctrl/Cmd+Enter and Escape without re-subscribing on every render.
   const submitRef = useRef<() => void>(() => {})
   const requestCloseRef = useRef<() => void>(() => {})
-  const startRowRef = useRef<HTMLDivElement>(null)
-  const startDateRef = useRef<HTMLInputElement>(null)
-  const endRowRef = useRef<HTMLDivElement>(null)
-  const endDateRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     titleRef.current?.focus()
@@ -342,20 +318,19 @@ export function EventComposer({
     const h = (e: KeyboardEvent) => {
       // While the discard-confirm is up, it owns the keyboard.
       if (confirmClose) return
+      // A date popover (start / end / until fields) is open: it owns
+      // plain Enter and Escape itself, so don't submit or tear down the
+      // composer underneath it.
+      if (document.querySelector('[data-date-popover]')) return
       // Ctrl/Cmd+Enter confirms the event (create or save) from anywhere in
       // the form — on success the parent closes the composer back to the
-      // calendar. A date popover owns plain Enter (pick the cursor day), so
-      // skip while one's open.
+      // calendar.
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        if (startCalOpen || endCalOpen) return
         e.preventDefault()
         submitRef.current()
         return
       }
       if (e.key === 'Escape') {
-        // A date popover swallows its own Escape (to just close itself);
-        // don't tear down the whole composer underneath it.
-        if (startCalOpen || endCalOpen) return
         e.preventDefault()
         // Warns first when there are unsaved edits (an easy mis-Escape).
         requestCloseRef.current()
@@ -363,7 +338,7 @@ export function EventComposer({
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [startCalOpen, endCalOpen, confirmClose])
+  }, [confirmClose])
 
   // Reminders to persist: the editable start-relative rows plus any
   // source alarms the composer couldn't present (absolute / end-relative),
@@ -590,45 +565,13 @@ export function EventComposer({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="mb-1 text-[11px] text-text-faint">Start</div>
-              <div ref={startRowRef} className="relative flex items-center gap-1">
-                <input
-                  ref={startDateRef}
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  onKeyDown={(e) =>
-                    handleDateArrowMods(e, startDate, setStartDate)
-                  }
-                  title="Shift+↑/↓ 3 days · Ctrl/Cmd+↑/↓ 7 days · Alt+↑/↓ 1 month · Alt+Shift+↑/↓ 1 year"
-                  className={field}
-                />
-                <button
-                  type="button"
-                  onClick={() => setStartCalOpen((o) => !o)}
-                  aria-label="Open calendar"
-                  aria-expanded={startCalOpen}
-                  title="Pick a date (arrow keys)"
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                    startCalOpen
-                      ? 'border-accent/40 bg-accent-soft text-text'
-                      : 'border-border text-text-muted hover:border-border-strong hover:text-text'
-                  }`}
-                >
-                  <CalendarIcon />
-                </button>
-                {startCalOpen && (
-                  <CalendarPopover
-                    value={startDate}
-                    ignoreRef={startRowRef}
-                    returnFocusRef={startDateRef}
-                    onPick={(iso) => {
-                      setStartDate(iso)
-                      setStartCalOpen(false)
-                    }}
-                    onClose={() => setStartCalOpen(false)}
-                  />
-                )}
-              </div>
+              <DateField
+                value={startDate}
+                onChange={setStartDate}
+                onKeyMods={(e) => handleDateArrowMods(e, startDate, setStartDate)}
+                className={field}
+                buttonClassName="h-8 w-8"
+              />
               {!allDay && (
                 <input
                   type="time"
@@ -644,45 +587,13 @@ export function EventComposer({
             </div>
             <div>
               <div className="mb-1 text-[11px] text-text-faint">End</div>
-              <div ref={endRowRef} className="relative flex items-center gap-1">
-                <input
-                  ref={endDateRef}
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  onKeyDown={(e) =>
-                    handleDateArrowMods(e, endDate, setEndDate)
-                  }
-                  title="Shift+↑/↓ 3 days · Ctrl/Cmd+↑/↓ 7 days · Alt+↑/↓ 1 month · Alt+Shift+↑/↓ 1 year"
-                  className={field}
-                />
-                <button
-                  type="button"
-                  onClick={() => setEndCalOpen((o) => !o)}
-                  aria-label="Open calendar"
-                  aria-expanded={endCalOpen}
-                  title="Pick a date (arrow keys)"
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                    endCalOpen
-                      ? 'border-accent/40 bg-accent-soft text-text'
-                      : 'border-border text-text-muted hover:border-border-strong hover:text-text'
-                  }`}
-                >
-                  <CalendarIcon />
-                </button>
-                {endCalOpen && (
-                  <CalendarPopover
-                    value={endDate}
-                    ignoreRef={endRowRef}
-                    returnFocusRef={endDateRef}
-                    onPick={(iso) => {
-                      setEndDate(iso)
-                      setEndCalOpen(false)
-                    }}
-                    onClose={() => setEndCalOpen(false)}
-                  />
-                )}
-              </div>
+              <DateField
+                value={endDate}
+                onChange={setEndDate}
+                onKeyMods={(e) => handleDateArrowMods(e, endDate, setEndDate)}
+                className={field}
+                buttonClassName="h-8 w-8"
+              />
               {!allDay && (
                 <input
                   type="time"
@@ -1097,14 +1008,11 @@ function CustomRruleBlock({
               className="accent-current"
             />
             <span>Until</span>
-            <input
-              type="date"
+            <DateField
               value={value.until}
-              onChange={(e) =>
-                onChange({ term: 'until', until: e.target.value })
-              }
-              aria-label="End date"
-              className={`${field} flex-1`}
+              onChange={(until) => onChange({ term: 'until', until })}
+              ariaLabel="End date"
+              className={field}
             />
           </label>
         </div>

@@ -13,6 +13,7 @@ import {
 } from '../services/blueprints'
 import { listCollections } from '../services/etebase'
 import { humanizeRrule } from '../services/rrule'
+import { DateField } from './DateField'
 import { RecurrenceEditor } from './RecurrenceEditor'
 import { SettingsSection } from './SettingsSection'
 
@@ -265,11 +266,11 @@ function BlueprintEditor({
       <div className="flex gap-3">
         <div className="flex-1">
           <label className={labelClass}>Start date</label>
-          <input
-            type="date"
+          <DateField
             value={draft.startDate}
-            onChange={(e) => patch({ startDate: e.target.value })}
-            className={fieldClass}
+            onChange={(startDate) => patch({ startDate })}
+            className="rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong"
+            containerClassName="mt-1 w-full"
           />
         </div>
         <div className="flex-1">

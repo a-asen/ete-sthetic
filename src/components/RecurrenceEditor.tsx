@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { DateField } from './DateField'
 import {
   type CustomRrule,
   type MonthlyWeekN,
@@ -320,11 +321,11 @@ export function RecurrenceEditor({
               </div>
             )}
             {custom.term === 'until' && (
-              <input
-                type="date"
+              <DateField
                 value={custom.until}
-                onChange={(e) => updateCustom({ until: e.target.value })}
-                className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-border-strong"
+                onChange={(until) => updateCustom({ until })}
+                containerClassName="w-36 flex-none"
+                ariaLabel="Until date"
               />
             )}
           </div>

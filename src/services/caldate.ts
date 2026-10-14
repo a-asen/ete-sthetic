@@ -29,6 +29,19 @@ export function mondayIndex(d: Date): number {
   return (d.getDay() + 6) % 7
 }
 
+// Shift `d` by `n` whole months, clamping the day to the target month's
+// length so Jan 31 → Feb 28 instead of overflowing into March.
+export function addMonths(d: Date, n: number): Date {
+  const target = new Date(d.getFullYear(), d.getMonth() + n, 1)
+  const lastDay = new Date(
+    target.getFullYear(),
+    target.getMonth() + 1,
+    0,
+  ).getDate()
+  target.setDate(Math.min(d.getDate(), lastDay))
+  return target
+}
+
 // Tint a calendar colour for use as an event-block fill: the colour at
 // low alpha over the theme background, so the block reads clearly as
 // "this calendar's colour" while staying readable in both themes.
@@ -198,6 +211,81 @@ export function rangeTitle(view: CalView, anchor: Date): string {
   return sameMonth
     ? `${first.getDate()}–${last.getDate()} ${last.toLocaleDateString([], { month: 'long', year: 'numeric' })}`
     : `${f} – ${l}`
+}
+
+// ISO date helpers — "YYYY-MM-DD" ⇄ Date, the canonical value the date
+// fields carry.
+export function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+export function toIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+export function fromIsoDate(s: string): Date | null {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+// ---- Flexible typed-date parsing (DateField) ------------------------------
+// Strict construction — rejects month/day overflow (Feb 31, month 13, …).
+export function mkDate(y: number, m: number, d: number): Date | null {
+  if (m < 1 || m > 12 || d < 1) return null
+  const dt = new Date(y, m - 1, d)
+  if (dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
+  return dt
+}
+
+// 8-digit runs. Day-first (DDMMYYYY) is the fast-typing path; when that
+// reading is impossible (e.g. "20261014" has no month 26) fall back to
+// YYYYMMDD.
+export function parseDigits8(t: string): Date | null {
+  return (
+    mkDate(Number(t.slice(4, 8)), Number(t.slice(2, 4)), Number(t.slice(0, 2))) ??
+    mkDate(Number(t.slice(0, 4)), Number(t.slice(4, 6)), Number(t.slice(6, 8)))
+  )
+}
+
+// Full, unambiguous dates (used by Enter): ISO YYYY-MM-DD, 8-digit runs,
+// and D.M.YYYY (day-first, month-first fallback via validity).
+export function parseFullDate(s: string): Date | null {
+  const t = s.trim()
+  if (!t) return null
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t)
+  if (m) return mkDate(Number(m[1]), Number(m[2]), Number(m[3]))
+  if (/^\d{8}$/.test(t)) return parseDigits8(t)
+  m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(t)
+  if (m) {
+    return (
+      mkDate(Number(m[3]), Number(m[2]), Number(m[1])) ??
+      mkDate(Number(m[3]), Number(m[1]), Number(m[2]))
+    )
+  }
+  return null
+}
+
+// Adds the pass-through formats honoured on Enter/blur: 6-digit DDMMYY
+// and D.M.YY (both expanded into this century).
+export function parseLenientDate(s: string): Date | null {
+  const full = parseFullDate(s)
+  if (full) return full
+  const t = s.trim()
+  let m = /^(\d{6})$/.exec(t)
+  if (m) {
+    return mkDate(
+      2000 + Number(t.slice(4, 6)),
+      Number(t.slice(2, 4)),
+      Number(t.slice(0, 2)),
+    )
+  }
+  m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2})$/.exec(t)
+  if (m) {
+    return mkDate(2000 + Number(m[3]), Number(m[2]), Number(m[1]))
+  }
+  return null
 }
 
 // Whole calendar days between two instants (DST-safe via round).

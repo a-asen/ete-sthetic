@@ -95,6 +95,7 @@ import {
 } from '../services/icsImport'
 import { ImportIcsModal, type ImportPlanEntry } from './calendar/ImportIcsModal'
 import { ConfirmModal } from './ConfirmModal'
+import { DateField } from './DateField'
 import { PasteIcsModal } from './calendar/PasteIcsModal'
 import {
   CONTACT_OPEN_EVENT,
@@ -2900,24 +2901,23 @@ export function CalendarView({
             >
               Paste invite
             </button>
-            <input
-              type="date"
-              aria-label="Go to date"
-              title="Go to date"
+            <DateField
               value={`${anchor.getFullYear()}-${String(
                 anchor.getMonth() + 1,
               ).padStart(2, '0')}-${String(anchor.getDate()).padStart(
                 2,
                 '0',
               )}`}
-              onChange={(e) => {
-                const [y, mo, d] = e.target.value.split('-').map(Number)
+              onChange={(iso) => {
+                const [y, mo, d] = iso.split('-').map(Number)
                 if (!y || !mo || !d) return
                 const nd = startOfDay(new Date(y, mo - 1, d))
                 setAnchor(nd)
                 setSelected(nd)
               }}
-              className="ml-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-muted"
+              ariaLabel="Go to date"
+              className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-muted"
+              containerClassName="ml-1 w-36 flex-none"
             />
           </div>
           <div className="relative">
