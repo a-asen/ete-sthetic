@@ -48,6 +48,17 @@ type labels (home, work, personal, school, old, …). Use the ▲/▼ buttons be
 an entry to reorder it; the first email/phone/URL/address is the one shown
 first on the contact card.
 
+## Selecting and moving contacts
+
+- **Shift+click** (or **Shift+↑/↓**) selects a contiguous range from the
+  current anchor.
+- **`Ctrl`/`Cmd`+click** adds or removes an individual contact.
+- Drag any selected contact onto an address book to move the whole
+  selection. Right-clicking inside the selection offers **Move N contacts
+  to …** and **Delete N contacts**.
+- Plain clicks and arrow keys collapse the selection to one contact; the
+  last clicked one drives the detail pane.
+
 ## Quick actions on the contact card
 
 The read view is actionable without opening the editor:

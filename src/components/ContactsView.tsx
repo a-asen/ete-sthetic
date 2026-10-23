@@ -314,7 +314,7 @@ export function ContactsView({
   pendingOpen,
   onPendingOpenConsumed,
 }: ContactsViewProps) {
-  const inactiveOpacities = useInactiveOpacities()
+  const inactiveOpacities = useInactiveOpacities('contacts')
   // Seeded synchronously from the process-lifetime cache so a module
   // switch and back is instant (no flash, no spinner).
   const [addressBooks, setAddressBooks] = useState<CollectionInfo[] | null>(
@@ -350,7 +350,7 @@ export function ContactsView({
   const [editorSeed, setEditorSeed] = useState<VCard | null>(null)
   const [editorKey, setEditorKey] = useState(0)
   const [savingContact, setSavingContact] = useState(false)
-  const [deletingUid, setDeletingUid] = useState<string | null>(null)
+  const [deletingUids, setDeletingUids] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState<Set<string>>(() => new Set())
   // Per-book sync errors. A book lingers in this map until its next
@@ -405,12 +405,35 @@ export function ContactsView({
   const [bookDraftText, setBookDraftText] = useState('')
   const [deletingBook, setDeletingBook] = useState<CollectionInfo | null>(null)
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
-  // Drag-to-move state. `draggingContactUid` is the contact currently being
-  // dragged from the active book's list; `dragOverBook` is the address-book
-  // row the pointer is hovering as a drop target (for highlight + drop).
-  const [draggingContactUid, setDraggingContactUid] = useState<string | null>(
-    null,
+  // Multi-selection. `selectedUid` stays the primary (it drives the detail
+  // pane); `selectedUids` is the whole selection and `anchorUid` the origin
+  // for Shift-range selection. Plain clicks and arrow-nav collapse to one;
+  // Shift extends from the anchor; Ctrl/Cmd toggles individual rows.
+  const [selectedUids, setSelectedUids] = useState<Set<string>>(() => {
+    const uid = getContactMemory().selectedContact
+    return uid ? new Set([uid]) : new Set()
+  })
+  const [anchorUid, setAnchorUid] = useState<string | null>(
+    () => getContactMemory().selectedContact,
   )
+  // Mirror of the primary for callbacks (syncBook) that shouldn't
+  // re-subscribe on every selection change.
+  const selectedUidRef = useRef(selectedUid)
+  useEffect(() => {
+    selectedUidRef.current = selectedUid
+  }, [selectedUid])
+
+  const selectOnly = useCallback((uid: string | null) => {
+    setSelectedUid(uid)
+    setSelectedUids(uid ? new Set([uid]) : new Set())
+    setAnchorUid(uid)
+  }, [])
+
+  // Drag-to-move state. `draggingContactUids` are the contacts currently
+  // being dragged from the active book's list (one, or the whole
+  // selection); `dragOverBook` is the address-book row the pointer is
+  // hovering as a drop target (for highlight + drop).
+  const [draggingContactUids, setDraggingContactUids] = useState<string[]>([])
   const [dragOverBook, setDragOverBook] = useState<string | null>(null)
   // Hidden ("archived") address books + whether the collapsed Hidden
   // section is expanded. The set persists; the expand toggle is session-only.
@@ -663,12 +686,13 @@ export function ContactsView({
       // book. sync-all and background sync also run this for other books,
       // which must not hijack the visible selection.
       if (uid === getContactMemory().activeBook) {
-        setSelectedUid((prev) =>
-          prev && merged.some((c) => c.itemUid === prev)
-            ? prev
+        const current = selectedUidRef.current
+        const next =
+          current && merged.some((c) => c.itemUid === current)
+            ? current
             : (sortContacts(merged, contactsSortAxis, contactsSortReverse)[0]
-                ?.itemUid ?? null),
-        )
+                ?.itemUid ?? null)
+        if (next !== current) selectOnly(next)
       }
       setLastSyncedAt((prev) => new Map(prev).set(uid, Date.now()))
       setError(null)
@@ -695,7 +719,7 @@ export function ContactsView({
         })
       }
     }
-  }, [])
+  }, [selectOnly])
 
   // First mount: seed instantly from the in-memory cache, then load the
   // address books from the network and sync the active one (disk snapshot
@@ -897,6 +921,56 @@ export function ContactsView({
     [activeContacts, selectedUid],
   )
 
+  // Shift-click / Shift-arrow: select everything between the anchor and
+  // the clicked row (inclusive). Keeps the anchor put so further shifts
+  // grow or shrink the same range; falls back to a plain selection when
+  // the anchor is no longer visible.
+  const selectRangeTo = useCallback(
+    (uid: string) => {
+      const target = filtered.findIndex((c) => c.itemUid === uid)
+      if (target === -1) {
+        selectOnly(uid)
+        return
+      }
+      const anchor =
+        anchorUid && filtered.some((c) => c.itemUid === anchorUid)
+          ? anchorUid
+          : (selectedUid ?? uid)
+      const from = filtered.findIndex((c) => c.itemUid === anchor)
+      if (from === -1) {
+        selectOnly(uid)
+        return
+      }
+      const lo = Math.min(from, target)
+      const hi = Math.max(from, target)
+      setSelectedUids(
+        new Set(filtered.slice(lo, hi + 1).map((c) => c.itemUid)),
+      )
+      setSelectedUid(uid)
+      setAnchorUid(anchor)
+    },
+    [filtered, anchorUid, selectedUid, selectOnly],
+  )
+
+  // Ctrl/Cmd-click: add or remove one row without disturbing the rest.
+  const toggleSelected = useCallback(
+    (uid: string) => {
+      const next = new Set(selectedUids)
+      if (next.has(uid)) next.delete(uid)
+      else next.add(uid)
+      setSelectedUids(next)
+      if (next.has(uid)) {
+        setSelectedUid(uid)
+        setAnchorUid(uid)
+      } else if (selectedUid === uid) {
+        const primary = next.values().next().value ?? null
+        setSelectedUid(primary)
+        setAnchorUid(primary)
+      }
+    },
+    [selectedUids, selectedUid],
+  )
+
   // Distinct tags already in use across the active book, for the editor's
   // tag suggestions (consistent reuse / spelling).
   const knownCategories = useMemo(() => {
@@ -913,7 +987,7 @@ export function ContactsView({
     (uid: string) => {
       if (uid === activeBook) return
       setActiveBook(uid)
-      setSelectedUid(null)
+      selectOnly(null)
       setMode('view')
       setSearch('')
       // Switching to a book kicks a delta sync only if it has nothing
@@ -948,7 +1022,14 @@ export function ContactsView({
         void syncBook(uid)
       }
     },
-    [activeBook, contactsByBook, syncBook, switchFreshMin, lastSyncedAt],
+    [
+      activeBook,
+      contactsByBook,
+      syncBook,
+      switchFreshMin,
+      lastSyncedAt,
+      selectOnly,
+    ],
   )
 
   // Hide ("archive") a book. If it's the active one, switch to the first
@@ -982,10 +1063,10 @@ export function ContactsView({
       selectBook(bookUid)
       return
     }
-    setSelectedUid(contactItemUid)
+    selectOnly(contactItemUid)
     setMode('view')
     onPendingOpenConsumed?.()
-  }, [pendingOpen, activeBook, selectBook, onPendingOpenConsumed])
+  }, [pendingOpen, activeBook, selectBook, selectOnly, onPendingOpenConsumed])
 
   // Same handoff for a pick from the global search: switch to the book if
   // needed, then select the contact (selectBook cold-loads/syncs it).
@@ -996,10 +1077,10 @@ export function ContactsView({
       selectBook(jumpTarget.bookUid)
       return
     }
-    setSelectedUid(jumpTarget.itemUid)
+    selectOnly(jumpTarget.itemUid)
     setMode('view')
     setJumpTarget(null)
-  }, [jumpTarget, activeBook, selectBook])
+  }, [jumpTarget, activeBook, selectBook, selectOnly])
 
   // ---- contact mutations ----
 
@@ -1044,9 +1125,9 @@ export function ContactsView({
   )
 
   const openContact = useCallback((itemUid: string) => {
-    setSelectedUid(itemUid)
+    selectOnly(itemUid)
     setMode('view')
-  }, [])
+  }, [selectOnly])
 
   const handleSaveContact = useCallback(
     async (card: VCard) => {
@@ -1065,7 +1146,7 @@ export function ContactsView({
             ])
             return next
           })
-          setSelectedUid(created.itemUid)
+          selectOnly(created.itemUid)
         } else if (selectedItem) {
           const updated = await updateContact(
             activeBook,
@@ -1095,7 +1176,7 @@ export function ContactsView({
         if (!cancelledRef.current) setSavingContact(false)
       }
     },
-    [activeBook, mode, selectedItem],
+    [activeBook, mode, selectedItem, selectOnly],
   )
 
   // Move DOM focus to the detail pane once the card has re-rendered after a
@@ -1108,48 +1189,62 @@ export function ContactsView({
   }, [mode])
 
   const confirmDeleteContact = useCallback(async () => {
-    const uid = deletingUid
-    if (!uid || !activeBook) return
-    setDeletingUid(null)
+    const uids = deletingUids
+    if (!uids || uids.length === 0 || !activeBook) return
+    setDeletingUids(null)
     setError(null)
+    const doomed = new Set(uids)
     try {
-      await deleteContact(activeBook, uid)
+      for (const uid of uids) await deleteContact(activeBook, uid)
       if (cancelledRef.current) return
       setContactsByBook((prev) => {
         const next = new Map(prev)
         next.set(
           activeBook,
-          (next.get(activeBook) ?? []).filter((c) => c.itemUid !== uid),
+          (next.get(activeBook) ?? []).filter((c) => !doomed.has(c.itemUid)),
         )
         return next
       })
-      if (selectedUid === uid) setSelectedUid(null)
+      const remaining = [...selectedUids].filter((u) => !doomed.has(u))
+      setSelectedUids(new Set(remaining))
+      if (selectedUid && doomed.has(selectedUid)) {
+        const primary = remaining[0] ?? null
+        setSelectedUid(primary)
+        setAnchorUid(primary)
+      }
     } catch (e) {
       if (!cancelledRef.current) setError(message(e))
     }
-  }, [deletingUid, activeBook, selectedUid])
+  }, [deletingUids, activeBook, selectedUids, selectedUid])
 
-  // Move a contact to another address book (the archive workflow). Copy-
-  // then-delete on the server; optimistically drop it from the source's
-  // cached list and clear the selection if it was the moved one. The
+  // Move one or more contacts to another address book (the archive
+  // workflow). Copy-then-delete on the server; optimistically drop them
+  // from the source's cached list and clear them from the selection. The
   // destination's list refreshes from cache on next visit (or its own
-  // background sync) — we splice the moved item in only if that book is
+  // background sync) — we splice the moved items in only if that book is
   // already hydrated, so we never show a half-populated book.
-  const handleMoveContact = useCallback(
-    async (uid: string, destBookUid: string) => {
-      if (!activeBook || destBookUid === activeBook) return
+  const handleMoveContacts = useCallback(
+    async (uids: string[], destBookUid: string) => {
+      if (!activeBook || destBookUid === activeBook || uids.length === 0) {
+        return
+      }
       const sourceBook = activeBook
+      const moving = new Set(uids)
       setError(null)
       try {
-        const moved = await moveContactsToCollection(sourceBook, destBookUid, [
-          uid,
-        ])
+        const moved = await moveContactsToCollection(
+          sourceBook,
+          destBookUid,
+          uids,
+        )
         if (cancelledRef.current) return
         setContactsByBook((prev) => {
           const next = new Map(prev)
           next.set(
             sourceBook,
-            (next.get(sourceBook) ?? []).filter((c) => c.itemUid !== uid),
+            (next.get(sourceBook) ?? []).filter(
+              (c) => !moving.has(c.itemUid),
+            ),
           )
           // Splice into the destination only if it's already loaded.
           if (next.has(destBookUid) && moved.length > 0) {
@@ -1157,12 +1252,18 @@ export function ContactsView({
           }
           return next
         })
-        if (selectedUid === uid) setSelectedUid(null)
+        const remaining = [...selectedUids].filter((u) => !moving.has(u))
+        setSelectedUids(new Set(remaining))
+        if (selectedUid && moving.has(selectedUid)) {
+          const primary = remaining[0] ?? null
+          setSelectedUid(primary)
+          setAnchorUid(primary)
+        }
       } catch (e) {
         if (!cancelledRef.current) setError(message(e))
       }
     },
-    [activeBook, selectedUid],
+    [activeBook, selectedUids, selectedUid],
   )
 
   // Drop-target props for an address-book row, shared by the visible and
@@ -1171,7 +1272,8 @@ export function ContactsView({
   // copy-then-delete move as the context-menu "Move to" item.
   const dropPropsForBook = useCallback(
     (bookUid: string) => {
-      const canDrop = draggingContactUid != null && bookUid !== activeBook
+      const canDrop =
+        draggingContactUids.length > 0 && bookUid !== activeBook
       return {
         onDragOver: (e: ReactDragEvent) => {
           if (!canDrop) return
@@ -1192,14 +1294,14 @@ export function ContactsView({
         onDrop: (e: ReactDragEvent) => {
           if (!canDrop) return
           e.preventDefault()
-          const uid = draggingContactUid
-          setDraggingContactUid(null)
+          const uids = draggingContactUids
+          setDraggingContactUids([])
           setDragOverBook(null)
-          if (uid) void handleMoveContact(uid, bookUid)
+          if (uids.length > 0) void handleMoveContacts(uids, bookUid)
         },
       }
     },
-    [draggingContactUid, activeBook, handleMoveContact],
+    [draggingContactUids, activeBook, handleMoveContacts],
   )
 
   // ---- address-book mutations ----
@@ -1241,12 +1343,12 @@ export function ContactsView({
           (addressBooks ?? []).filter((b) => b.uid !== book.uid),
         )
         setActiveBook(remaining[0]?.uid ?? null)
-        setSelectedUid(null)
+        selectOnly(null)
       }
     } catch (e) {
       if (!cancelledRef.current) setError(message(e))
     }
-  }, [deletingBook, activeBook, addressBooks])
+  }, [deletingBook, activeBook, addressBooks, selectOnly])
 
   // ---- keyboard ----
   useEffect(() => {
@@ -1410,10 +1512,10 @@ export function ContactsView({
       }
       if (
         (e.key === 'Delete' || e.key === 'Backspace') &&
-        selectedUid
+        selectedUids.size > 0
       ) {
         e.preventDefault()
-        setDeletingUid(selectedUid)
+        setDeletingUids([...selectedUids])
         return
       }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -1441,7 +1543,9 @@ export function ContactsView({
           filtered.length - 1,
           Math.max(0, (idx < 0 ? 0 : idx) + delta),
         )
-        setSelectedUid(filtered[next].itemUid)
+        const target = filtered[next].itemUid
+        if (e.shiftKey && selectedUid) selectRangeTo(target)
+        else selectOnly(target)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -1459,11 +1563,14 @@ export function ContactsView({
     activeBook,
     selectBook,
     globalSearchOpen,
+    selectedUids,
+    selectOnly,
+    selectRangeTo,
   ])
 
-  const deletingContact = deletingUid
-    ? (activeContacts?.find((c) => c.itemUid === deletingUid) ?? null)
-    : null
+  const deletingContacts = deletingUids
+    ? (activeContacts ?? []).filter((c) => deletingUids.includes(c.itemUid))
+    : []
 
   return (
     <div className="flex h-full min-h-0 flex-1 bg-bg text-text">
@@ -1833,7 +1940,7 @@ export function ContactsView({
                 selectedUid != null &&
                 filtered.some((c) => c.itemUid === selectedUid)
               if (!stillVisible && filtered[0]) {
-                setSelectedUid(filtered[0].itemUid)
+                selectOnly(filtered[0].itemUid)
               }
               searchRef.current?.blur()
               setFocusZone('list')
@@ -1951,6 +2058,9 @@ export function ContactsView({
         <div className="border-b border-border px-3 pb-2 text-[11px] text-text-faint">
           {filtered.length} contact{filtered.length === 1 ? '' : 's'}
           {search && activeContacts ? ` of ${activeContacts.length}` : ''}
+          {selectedUids.size > 1 && (
+            <span className="text-accent"> · {selectedUids.size} selected</span>
+          )}
           {activeBook && (
             <>
               {' · '}
@@ -2012,33 +2122,49 @@ export function ContactsView({
                 type="button"
                 draggable
                 onDragStart={(e) => {
-                  setDraggingContactUid(it.itemUid)
+                  // Drag the whole selection when the grabbed row is part
+                  // of it; otherwise select and drag just that row.
+                  const inSelection = selectedUids.has(it.itemUid)
+                  const uids = inSelection ? [...selectedUids] : [it.itemUid]
+                  if (!inSelection) selectOnly(it.itemUid)
+                  setDraggingContactUids(uids)
                   // text/plain payload so the drag has data; the move
-                  // itself reads draggingContactUid on drop.
-                  e.dataTransfer.setData('text/plain', it.itemUid)
+                  // itself reads draggingContactUids on drop.
+                  e.dataTransfer.setData('text/plain', uids.join('\n'))
                   e.dataTransfer.effectAllowed = 'move'
                 }}
                 onDragEnd={() => {
-                  setDraggingContactUid(null)
+                  setDraggingContactUids([])
                   setDragOverBook(null)
                 }}
-                onClick={() => {
-                  setSelectedUid(it.itemUid)
+                onClick={(e) => {
                   setMode('view')
+                  if (e.shiftKey) selectRangeTo(it.itemUid)
+                  else if (e.ctrlKey || e.metaKey) toggleSelected(it.itemUid)
+                  else selectOnly(it.itemUid)
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault()
-                  setSelectedUid(it.itemUid)
                   setMode('view')
+                  // Right-clicking inside the selection acts on the whole
+                  // selection; outside it acts on the clicked contact.
+                  const group = selectedUids.has(it.itemUid)
+                    ? [...selectedUids]
+                    : [it.itemUid]
+                  if (!selectedUids.has(it.itemUid)) selectOnly(it.itemUid)
                   const targets = books.filter((b) => b.uid !== activeBook)
                   const moveItems =
                     targets.length > 0
                       ? targets.map((b) => ({
-                          label: `Move to “${b.name}”${
-                            hiddenBooks.has(b.uid) ? ' (archived)' : ''
-                          }`,
-                          onSelect: () =>
-                            void handleMoveContact(it.itemUid, b.uid),
+                          label:
+                            group.length > 1
+                              ? `Move ${group.length} contacts to “${b.name}”${
+                                  hiddenBooks.has(b.uid) ? ' (archived)' : ''
+                                }`
+                              : `Move to “${b.name}”${
+                                  hiddenBooks.has(b.uid) ? ' (archived)' : ''
+                                }`,
+                          onSelect: () => void handleMoveContacts(group, b.uid),
                         }))
                       : [
                           {
@@ -2053,15 +2179,18 @@ export function ContactsView({
                     items: [
                       ...moveItems,
                       {
-                        label: 'Delete',
+                        label:
+                          group.length > 1
+                            ? `Delete ${group.length} contacts`
+                            : 'Delete',
                         danger: true,
-                        onSelect: () => setDeletingUid(it.itemUid),
+                        onSelect: () => setDeletingUids(group),
                       },
                     ],
                   })
                 }}
                 className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ${
-                  it.itemUid === selectedUid && mode === 'view'
+                  selectedUids.has(it.itemUid) && mode === 'view'
                     ? 'bg-accent-soft'
                     : 'hover:bg-surface-2'
                 }`}
@@ -2170,7 +2299,7 @@ export function ContactsView({
               card={selectedItem.card}
               pending={false}
               onEdit={startEdit}
-              onDelete={() => setDeletingUid(selectedItem.itemUid)}
+              onDelete={() => setDeletingUids([selectedItem.itemUid])}
               resolveRelated={resolveRelated}
               onOpenContact={openContact}
             />
@@ -2195,14 +2324,22 @@ export function ContactsView({
       {ctxMenu && (
         <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} />
       )}
-      {deletingContact && (
+      {deletingUids && deletingUids.length > 0 && (
         <ConfirmModal
-          title="Delete contact?"
-          body={`"${deletingContact.card.fn}" will be permanently removed from this address book.`}
+          title={
+            deletingUids.length > 1
+              ? `Delete ${deletingUids.length} contacts?`
+              : 'Delete contact?'
+          }
+          body={
+            deletingUids.length > 1
+              ? `${deletingUids.length} contacts will be permanently removed from this address book.`
+              : `"${deletingContacts[0]?.card.fn ?? 'This contact'}" will be permanently removed from this address book.`
+          }
           confirmLabel="Delete"
           destructive
           onConfirm={confirmDeleteContact}
-          onCancel={() => setDeletingUid(null)}
+          onCancel={() => setDeletingUids(null)}
         />
       )}
       {deletingBook && (
