@@ -40,8 +40,24 @@ The editor models the common vCard properties:
 | Note         | `NOTE`                |
 | Categories   | `CATEGORIES`          |
 
-Typed fields (emails, phones, addresses) support multiple entries with type
-labels (home, work, …).
+Typed fields (emails, phones, URLs, addresses) support multiple entries with
+type labels (home, work, personal, school, old, …). Use the ▲/▼ buttons beside
+an entry to reorder it; the first email/phone/URL/address is the one shown
+first on the contact card.
+
+## Quick actions on the contact card
+
+The read view is actionable without opening the editor:
+
+- **Emails and phone numbers** are clickable (`mailto:` / `tel:` and the
+  system handler), as are websites, addresses (OpenStreetMap), social
+  handles, and related contacts.
+- **Copy** buttons sit beside each value; **pencil** buttons open the editor
+  for that contact directly, so you don't have to travel back to the header
+  Edit button.
+- From the contact list, **Enter** or **`Ctrl`/`Cmd`+`E`** opens the
+  selected contact in the editor. `Ctrl`+`E` only edits when a contact is
+  selected; otherwise it moves focus to the detail pane as before.
 
 ### Social / messaging services
 
