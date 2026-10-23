@@ -10,10 +10,10 @@ const fieldClass =
 const labelClass =
   'block text-[11px] font-semibold uppercase tracking-wider text-text-faint'
 
-const EMAIL_TYPES = ['', 'home', 'work', 'other']
-const PHONE_TYPES = ['', 'cell', 'home', 'work', 'fax', 'other']
-const URL_TYPES = ['', 'home', 'work', 'other']
-const ADDR_TYPES = ['', 'home', 'work', 'other']
+const EMAIL_TYPES = ['', 'home', 'work', 'personal', 'school', 'old', 'other']
+const PHONE_TYPES = ['', 'cell', 'home', 'work', 'fax', 'old', 'other']
+const URL_TYPES = ['', 'home', 'work', 'personal', 'old', 'other']
+const ADDR_TYPES = ['', 'home', 'work', 'old', 'other']
 // RFC 6350 §6.6.6 relationship types. We keep the high-frequency
 // ones near the top; an unrecognised TYPE from a third-party card is
 // preserved by TypeSelect's unrecognised-value handling.
@@ -58,6 +58,57 @@ function emptyAddress(): VCardAddress {
     postal: '',
     country: '',
   }
+}
+
+// Swap entry `i` with its neighbour in `dir` (up = -1, down = +1). Returns
+// the same array unchanged at the ends so callers can ignore the result.
+function moveEntry<T>(list: T[], i: number, dir: -1 | 1): T[] {
+  const j = i + dir
+  if (j < 0 || j >= list.length) return list
+  const next = [...list]
+  ;[next[i], next[j]] = [next[j], next[i]]
+  return next
+}
+
+// Compact ▲/▼ pair for reordering repeating fields. The lists are short, so
+// explicit buttons beat drag-and-drop in a form this dense.
+function ReorderButtons({
+  index,
+  length,
+  label,
+  onMove,
+}: {
+  index: number
+  length: number
+  label: string
+  onMove: (dir: -1 | 1) => void
+}) {
+  const btn =
+    'flex h-3.5 w-5 items-center justify-center text-[9px] leading-none text-text-faint transition-colors hover:text-text disabled:opacity-25'
+  return (
+    <div className="flex shrink-0 flex-col items-center">
+      <button
+        type="button"
+        onClick={() => onMove(-1)}
+        disabled={index === 0}
+        aria-label={`Move ${label} up`}
+        title="Move up"
+        className={btn}
+      >
+        ▲
+      </button>
+      <button
+        type="button"
+        onClick={() => onMove(1)}
+        disabled={index === length - 1}
+        aria-label={`Move ${label} down`}
+        title="Move down"
+        className={btn}
+      >
+        ▼
+      </button>
+    </div>
+  )
 }
 
 // A <select> of common type tokens that also keeps an unrecognised value
@@ -111,6 +162,12 @@ function FieldListEditor({
       <div className="mt-1 space-y-1.5">
         {fields.map((f, i) => (
           <div key={i} className="flex items-center gap-1.5">
+            <ReorderButtons
+              index={i}
+              length={fields.length}
+              label={label.toLowerCase()}
+              onMove={(dir) => onChange(moveEntry(fields, i, dir))}
+            />
             <TypeSelect
               value={f.type}
               options={types}
@@ -165,6 +222,12 @@ function AddressListEditor({
             className="space-y-1.5 rounded-md border border-border bg-surface-2/40 p-2"
           >
             <div className="flex items-center gap-1.5">
+              <ReorderButtons
+                index={i}
+                length={addresses.length}
+                label="address"
+                onMove={(dir) => onChange(moveEntry(addresses, i, dir))}
+              />
               <TypeSelect
                 value={a.type}
                 options={ADDR_TYPES}
