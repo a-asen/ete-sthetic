@@ -1213,9 +1213,14 @@ export function ContactsView({
         setAnchorUid(primary)
       }
     } catch (e) {
-      if (!cancelledRef.current) setError(message(e))
+      if (!cancelledRef.current) {
+        setError(message(e))
+        // A batch delete can partially succeed server-side; resync so the
+        // list reflects what actually remains.
+        void syncBook(activeBook)
+      }
     }
-  }, [deletingUids, activeBook, selectedUids, selectedUid])
+  }, [deletingUids, activeBook, selectedUids, selectedUid, syncBook])
 
   // Move one or more contacts to another address book (the archive
   // workflow). Copy-then-delete on the server; optimistically drop them
@@ -1260,10 +1265,15 @@ export function ContactsView({
           setAnchorUid(primary)
         }
       } catch (e) {
-        if (!cancelledRef.current) setError(message(e))
+        if (!cancelledRef.current) {
+          setError(message(e))
+          // A batch move can partially succeed server-side; resync the
+          // source so the list reflects what actually remains.
+          void syncBook(activeBook)
+        }
       }
     },
-    [activeBook, selectedUids, selectedUid],
+    [activeBook, selectedUids, selectedUid, syncBook],
   )
 
   // Drop-target props for an address-book row, shared by the visible and
