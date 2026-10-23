@@ -375,7 +375,7 @@ export function ContactsSettingsPopover({
       <SettingsSection id="contacts.help" label="Help" forceOpen={windowOpen}>
         {helpRows}
       </SettingsSection>
-      <InactiveOpacitySettings forceOpen={windowOpen} />
+      <InactiveOpacitySettings forceOpen={windowOpen} scope="contacts" />
       <ModuleToggles forceOpen={windowOpen} />
       <div className="mt-1 border-t border-border">
         <SettingsSection
@@ -459,7 +459,7 @@ export function ContactsSettingsPopover({
           <SettingsSection id="contacts.help" label="Help">
             {helpRows}
           </SettingsSection>
-          <InactiveOpacitySettings />
+          <InactiveOpacitySettings scope="contacts" />
           <ModuleToggles />
           <SettingsSection id="contacts.window" label="Window">
             <OpenInWindowRow

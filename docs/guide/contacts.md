@@ -11,7 +11,10 @@ lossless, hand-rolled parser and a full editor.
 - **Contact editor** (`ContactEditor`) — the edit view.
 
 Panes are resizable, and zoom is remembered per zone (`Ctrl/Cmd` `+` / `-` /
-`0`).
+`0`). Unlike the tasks module, contacts panes **do not fade by default** —
+the three columns fit on one page, so keeping them all legible is usually
+better. Settings → Advanced → Inactive zone fade still lets you dim
+unfocused panes if you prefer.
 
 ## Lossless vCard handling
 

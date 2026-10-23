@@ -12,7 +12,8 @@ context-specific options. Preferences persist locally via
   user-pickable accent colour ([`services/theme.ts`](/architecture/services)).
 - **Inactive-zone fade** — panes you aren't focused on can dim to keep your
   attention on the active zone (`InactiveOpacitySettings`,
-  `services/inactiveOpacity.ts`).
+  `services/inactiveOpacity.ts`). Each module stores its own values: Tasks
+  keeps the classic fade, while Contacts defaults to 100% (no fade).
 - **Per-zone zoom** — each pane remembers its own zoom, adjusted with
   `Ctrl/Cmd` `+` / `-` / `0`.
 

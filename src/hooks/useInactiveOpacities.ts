@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import {
   INACTIVE_OPACITY_CHANGED_EVENT,
   readInactiveOpacity,
+  type InactiveScope,
   type InactiveZone,
 } from '../services/inactiveOpacity'
 
 // Returns the three inactive-zone opacities (as 0–1 floats, ready to
 // drop into a `style={{ opacity: … }}` prop) and re-renders whenever
-// any settings popover flips a slider. Each module call this once and
-// pick the slot they care about for each pane.
+// any settings popover flips a value. Each module calls this once and
+// picks the slot they care about for each pane.
 
 export interface InactiveOpacities {
   sidebar: number
@@ -16,22 +17,24 @@ export interface InactiveOpacities {
   detail: number
 }
 
-function readAll(): InactiveOpacities {
+function readAll(scope: InactiveScope): InactiveOpacities {
   return {
-    sidebar: readInactiveOpacity('sidebar') / 100,
-    middle: readInactiveOpacity('middle') / 100,
-    detail: readInactiveOpacity('detail') / 100,
+    sidebar: readInactiveOpacity('sidebar', scope) / 100,
+    middle: readInactiveOpacity('middle', scope) / 100,
+    detail: readInactiveOpacity('detail', scope) / 100,
   }
 }
 
-export function useInactiveOpacities(): InactiveOpacities {
-  const [value, setValue] = useState<InactiveOpacities>(readAll)
+export function useInactiveOpacities(
+  scope: InactiveScope = 'tasks',
+): InactiveOpacities {
+  const [value, setValue] = useState<InactiveOpacities>(() => readAll(scope))
   useEffect(() => {
-    const refresh = () => setValue(readAll())
+    const refresh = () => setValue(readAll(scope))
     window.addEventListener(INACTIVE_OPACITY_CHANGED_EVENT, refresh)
     return () =>
       window.removeEventListener(INACTIVE_OPACITY_CHANGED_EVENT, refresh)
-  }, [])
+  }, [scope])
   return value
 }
 
@@ -47,4 +50,4 @@ export function opacityFor(
 
 // Re-export for consumers that need the singular reader without
 // subscribing (e.g. one-shot reads during initialisation).
-export { readInactiveOpacity, type InactiveZone }
+export { readInactiveOpacity, type InactiveScope, type InactiveZone }

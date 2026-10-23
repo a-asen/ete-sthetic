@@ -8,15 +8,17 @@ import {
   readInactiveOpacity,
   resetInactiveOpacity,
   setInactiveOpacity,
+  type InactiveScope,
   type InactiveZone,
 } from '../services/inactiveOpacity'
 import { SettingsSection } from './SettingsSection'
 
 // "Inactive zone fade" subsection embedded in each module's settings
 // popover. Three +/-/reset rows control the opacity applied to the
-// non-focused zones across the whole app — Tasks and Contacts share
-// these values today (calendar module doesn't have a focus-zone
-// system yet, so the prefs are ignored there).
+// non-focused zones. Each module has its own stored values: Tasks keeps
+// its historic fade defaults, while Contacts defaults to fully visible
+// (100%) because its panes fit on one page. Calendar doesn't have a
+// focus-zone system yet, so the prefs are ignored there.
 
 interface RowSpec {
   zone: InactiveZone
@@ -31,13 +33,16 @@ const ROWS: readonly RowSpec[] = [
 
 export function InactiveOpacitySettings({
   forceOpen = false,
+  scope = 'tasks',
 }: {
   forceOpen?: boolean
+  scope?: InactiveScope
 } = {}) {
+  const defaults = INACTIVE_OPACITY_DEFAULTS[scope]
   const [values, setValues] = useState(() => ({
-    sidebar: readInactiveOpacity('sidebar'),
-    middle: readInactiveOpacity('middle'),
-    detail: readInactiveOpacity('detail'),
+    sidebar: readInactiveOpacity('sidebar', scope),
+    middle: readInactiveOpacity('middle', scope),
+    detail: readInactiveOpacity('detail', scope),
   }))
 
   // Mirror any flips made from another open settings popover so all
@@ -45,14 +50,14 @@ export function InactiveOpacitySettings({
   useEffect(() => {
     const refresh = () =>
       setValues({
-        sidebar: readInactiveOpacity('sidebar'),
-        middle: readInactiveOpacity('middle'),
-        detail: readInactiveOpacity('detail'),
+        sidebar: readInactiveOpacity('sidebar', scope),
+        middle: readInactiveOpacity('middle', scope),
+        detail: readInactiveOpacity('detail', scope),
       })
     window.addEventListener(INACTIVE_OPACITY_CHANGED_EVENT, refresh)
     return () =>
       window.removeEventListener(INACTIVE_OPACITY_CHANGED_EVENT, refresh)
-  }, [])
+  }, [scope])
 
   return (
     <SettingsSection
@@ -68,26 +73,30 @@ export function InactiveOpacitySettings({
           <span className="text-xs text-text-muted">{row.label}</span>
           <Stepper
             value={values[row.zone]}
-            defaultValue={INACTIVE_OPACITY_DEFAULTS[row.zone]}
+            defaultValue={defaults[row.zone]}
             onDec={() =>
               setInactiveOpacity(
                 row.zone,
                 values[row.zone] - INACTIVE_OPACITY_STEP,
+                scope,
               )
             }
             onInc={() =>
               setInactiveOpacity(
                 row.zone,
                 values[row.zone] + INACTIVE_OPACITY_STEP,
+                scope,
               )
             }
-            onReset={() => resetInactiveOpacity(row.zone)}
+            onReset={() => resetInactiveOpacity(row.zone, scope)}
             label={`${row.label} inactive fade`}
           />
         </div>
       ))}
       <p className="px-3 pb-2 pt-0.5 text-[11px] text-text-faint">
-        How visible non-focused panels stay. 100% = no fade.
+        {scope === 'contacts'
+          ? 'Contacts starts at 100% (no fade). Lower a value to dim that pane when another zone has focus.'
+          : 'How visible non-focused panels stay. 100% = no fade.'}
       </p>
     </SettingsSection>
   )

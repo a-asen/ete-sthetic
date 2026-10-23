@@ -8,22 +8,36 @@
 //     event composer)
 //
 // Stored as integers 20–100 so localStorage stays human-readable.
-// Defaults match the previous hard-coded class strings (sidebar 30,
-// middle 60, detail 70). A custom event lets every mounted view
-// re-render the moment the user drags a slider in any settings
-// popover, without prop-drilling.
+// Tasks keeps the original hard-coded defaults (sidebar 30, middle 60,
+// detail 70). Contacts defaults to 100 everywhere — its panes fit on one
+// page, so fading them by default only made it harder to scan the books
+// and list. The fade capability remains available in contacts settings.
+// A custom event lets every mounted view re-render the moment the user
+// changes a value in any settings popover, without prop-drilling.
 
 export type InactiveZone = 'sidebar' | 'middle' | 'detail'
+
+// Which module's fade preferences to read/write. The zones line up, but
+// the defaults and stored values are independent.
+export type InactiveScope = 'tasks' | 'contacts'
 
 export const INACTIVE_OPACITY_CHANGED_EVENT =
   'ete-sthetic:inactive-opacity-changed'
 
-export const INACTIVE_OPACITY_DEFAULTS: Readonly<Record<InactiveZone, number>> =
-  {
+export const INACTIVE_OPACITY_DEFAULTS: Readonly<
+  Record<InactiveScope, Readonly<Record<InactiveZone, number>>>
+> = {
+  tasks: {
     sidebar: 30,
     middle: 60,
     detail: 70,
-  }
+  },
+  contacts: {
+    sidebar: 100,
+    middle: 100,
+    detail: 100,
+  },
+}
 
 export const INACTIVE_OPACITY_MIN = 20
 export const INACTIVE_OPACITY_MAX = 100
@@ -31,8 +45,12 @@ export const INACTIVE_OPACITY_STEP = 10
 
 const KEY_PREFIX = 'ete-sthetic.inactiveOpacity.'
 
-function keyFor(z: InactiveZone): string {
-  return `${KEY_PREFIX}${z}`
+// Tasks keeps the legacy unscoped keys so existing preferences survive the
+// introduction of module scoping; contacts gets its own namespace.
+function keyFor(scope: InactiveScope, z: InactiveZone): string {
+  return scope === 'tasks'
+    ? `${KEY_PREFIX}${z}`
+    : `${KEY_PREFIX}${scope}.${z}`
 }
 
 function clamp(n: number): number {
@@ -42,21 +60,28 @@ function clamp(n: number): number {
   return Math.round(n)
 }
 
-export function readInactiveOpacity(z: InactiveZone): number {
+export function readInactiveOpacity(
+  z: InactiveZone,
+  scope: InactiveScope = 'tasks',
+): number {
   try {
-    const raw = localStorage.getItem(keyFor(z))
-    if (raw == null) return INACTIVE_OPACITY_DEFAULTS[z]
+    const raw = localStorage.getItem(keyFor(scope, z))
+    if (raw == null) return INACTIVE_OPACITY_DEFAULTS[scope][z]
     const n = Number(raw)
-    if (!Number.isFinite(n)) return INACTIVE_OPACITY_DEFAULTS[z]
+    if (!Number.isFinite(n)) return INACTIVE_OPACITY_DEFAULTS[scope][z]
     return clamp(n)
   } catch {
-    return INACTIVE_OPACITY_DEFAULTS[z]
+    return INACTIVE_OPACITY_DEFAULTS[scope][z]
   }
 }
 
-export function setInactiveOpacity(z: InactiveZone, pct: number): void {
+export function setInactiveOpacity(
+  z: InactiveZone,
+  pct: number,
+  scope: InactiveScope = 'tasks',
+): void {
   try {
-    localStorage.setItem(keyFor(z), String(clamp(pct)))
+    localStorage.setItem(keyFor(scope, z), String(clamp(pct)))
     window.dispatchEvent(new CustomEvent(INACTIVE_OPACITY_CHANGED_EVENT))
   } catch {
     // Quota / disabled storage — silently drop. The value will revert
@@ -64,9 +89,12 @@ export function setInactiveOpacity(z: InactiveZone, pct: number): void {
   }
 }
 
-export function resetInactiveOpacity(z: InactiveZone): void {
+export function resetInactiveOpacity(
+  z: InactiveZone,
+  scope: InactiveScope = 'tasks',
+): void {
   try {
-    localStorage.removeItem(keyFor(z))
+    localStorage.removeItem(keyFor(scope, z))
     window.dispatchEvent(new CustomEvent(INACTIVE_OPACITY_CHANGED_EVENT))
   } catch {
     // ignore
