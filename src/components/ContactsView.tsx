@@ -1369,7 +1369,12 @@ export function ContactsView({
         }
         if (e.key === 'e' || e.key === 'E') {
           e.preventDefault()
-          setFocusZone('detail')
+          // With a contact selected, Ctrl/Cmd+E goes straight into the
+          // editor (the detail pane is always visible here, so focusing it
+          // is a weaker action than editing). With nothing selected it
+          // keeps its old zone-navigation meaning.
+          if (selectedUid) startEdit()
+          else setFocusZone('detail')
           return
         }
         if (!typing && e.key === 'ArrowRight') {

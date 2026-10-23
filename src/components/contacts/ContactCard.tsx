@@ -19,9 +19,19 @@ function vcfFileStem(card: VCard): string {
   return base.replace(/^_+|_+$/g, '').slice(0, 80) || 'contact'
 }
 
-// A value that opens in the browser when clicked. Plain text otherwise —
-// matching the card's no-anchor rule (anchors would navigate the webview).
-function LinkOrText({ text, url }: { text: string; url: string | null }) {
+// A value that opens in the browser / system handler when clicked. Plain
+// text otherwise — matching the card's no-anchor rule (anchors would
+// navigate the webview). `mark` is the trailing affordance; mailto:/tel:
+// links drop the web arrow so they don't read as browser links.
+function LinkOrText({
+  text,
+  url,
+  mark = '↗',
+}: {
+  text: string
+  url: string | null
+  mark?: string
+}) {
   if (!url) return <span className="select-text break-all text-text">{text}</span>
   return (
     <button
@@ -30,7 +40,8 @@ function LinkOrText({ text, url }: { text: string; url: string | null }) {
       title={url}
       className="break-all text-left text-accent hover:underline"
     >
-      {text} ↗
+      {text}
+      {mark && ` ${mark}`}
     </button>
   )
 }
@@ -206,9 +217,37 @@ function CopyButton({ value }: { value: string }) {
       }}
       title="Copy"
       aria-label={`Copy ${value}`}
-      className="shrink-0 rounded p-0.5 text-text-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-text group-hover:opacity-100"
+      className="shrink-0 rounded p-0.5 text-text-faint opacity-60 transition-opacity hover:bg-surface-2 hover:text-text hover:opacity-100"
     >
       {copied ? '✓' : '⧉'}
+    </button>
+  )
+}
+
+// Per-row shortcut into the editor, so changing a field doesn't require
+// travelling back to the Edit button in the header. The editor still edits
+// the whole card — this just removes the trip.
+function EditButton({ onEdit }: { onEdit: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onEdit}
+      title="Edit contact"
+      aria-label="Edit contact"
+      className="shrink-0 rounded p-0.5 text-text-faint opacity-60 transition-opacity hover:bg-surface-2 hover:text-text hover:opacity-100"
+    >
+      <svg
+        viewBox="0 0 16 16"
+        className="h-3 w-3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5z" />
+      </svg>
     </button>
   )
 }
@@ -460,11 +499,14 @@ export function ContactCard({
             <ul className="mt-1 space-y-1">
               {card.emails.map((e, i) => (
                 <li key={i} className="group flex items-center gap-2">
-                  <span className="select-text break-all text-text">
-                    {e.value}
-                  </span>
+                  <LinkOrText
+                    text={e.value}
+                    url={`mailto:${e.value}`}
+                    mark=""
+                  />
                   <TypeBadge type={e.type} />
                   <CopyButton value={e.value} />
+                  <EditButton onEdit={onEdit} />
                 </li>
               ))}
             </ul>
@@ -477,9 +519,14 @@ export function ContactCard({
             <ul className="mt-1 space-y-1">
               {card.phones.map((p, i) => (
                 <li key={i} className="group flex items-center gap-2">
-                  <span className="select-text text-text">{p.value}</span>
+                  <LinkOrText
+                    text={p.value}
+                    url={`tel:${p.value.trim()}`}
+                    mark=""
+                  />
                   <TypeBadge type={p.type} />
                   <CopyButton value={p.value} />
+                  <EditButton onEdit={onEdit} />
                 </li>
               ))}
             </ul>
@@ -510,6 +557,7 @@ export function ContactCard({
                     )}
                     <TypeBadge type={a.type} />
                     <CopyButton value={formatAddress(a).replace(/\n/g, ', ')} />
+                    <EditButton onEdit={onEdit} />
                   </li>
                 )
               })}
@@ -551,6 +599,7 @@ export function ContactCard({
                   <LinkOrText text={u.value} url={webUrl(u.value)} />
                   <TypeBadge type={u.type} />
                   <CopyButton value={u.value} />
+                  <EditButton onEdit={onEdit} />
                 </li>
               ))}
             </ul>
@@ -569,6 +618,7 @@ export function ContactCard({
                   />
                   <TypeBadge type={m.type} />
                   <CopyButton value={m.value} />
+                  <EditButton onEdit={onEdit} />
                 </li>
               ))}
             </ul>
@@ -620,6 +670,7 @@ export function ContactCard({
                     )}
                     <TypeBadge type={r.type} />
                     <CopyButton value={r.value} />
+                    <EditButton onEdit={onEdit} />
                   </li>
                 )
               })}
