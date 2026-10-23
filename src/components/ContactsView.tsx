@@ -1505,6 +1505,22 @@ export function ContactsView({
         }
       }
       if (typing) return
+      // Plain ←/→ move between the three panes (address books → contact
+      // list → contact card), mirroring the horizontal movement users know
+      // from the tasks module. The Ctrl/Cmd variants above still work too.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        if (e.key === 'ArrowRight') {
+          setFocusZone((z) =>
+            z === 'books' ? 'list' : z === 'list' ? 'detail' : z,
+          )
+        } else {
+          setFocusZone((z) =>
+            z === 'detail' ? 'list' : z === 'list' ? 'books' : z,
+          )
+        }
+        return
+      }
       if (e.key === '/') {
         e.preventDefault()
         searchRef.current?.focus()
@@ -2321,10 +2337,8 @@ export function ContactsView({
               </p>
               <Hint id="contacts.empty-detail-keyboard" variant="card">
                 <kbd className="font-mono">/</kbd> to search ·{' '}
-                <kbd className="font-mono">Ctrl</kbd>+
-                <kbd className="font-mono">L</kbd>/
-                <kbd className="font-mono">T</kbd>/
-                <kbd className="font-mono">E</kbd> to switch zones.
+                <kbd className="font-mono">←</kbd>/
+                <kbd className="font-mono">→</kbd> to move between panes.
               </Hint>
             </div>
           )}

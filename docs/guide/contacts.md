@@ -11,10 +11,12 @@ lossless, hand-rolled parser and a full editor.
 - **Contact editor** (`ContactEditor`) — the edit view.
 
 Panes are resizable, and zoom is remembered per zone (`Ctrl/Cmd` `+` / `-` /
-`0`). Unlike the tasks module, contacts panes **do not fade by default** —
-the three columns fit on one page, so keeping them all legible is usually
-better. Settings → Advanced → Inactive zone fade still lets you dim
-unfocused panes if you prefer.
+`0`). Use **←/→** to move between the panes — address books, contact list,
+and contact card — the same horizontal navigation as the tasks module
+(`Ctrl`/`Cmd`+`←`/`→` also still works). Unlike the tasks module, contacts
+panes **do not fade by default** — the three columns fit on one page, so
+keeping them all legible is usually better. Settings → Advanced → Inactive
+zone fade still lets you dim unfocused panes if you prefer.
 
 ## Lossless vCard handling
 
