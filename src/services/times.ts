@@ -94,6 +94,8 @@ export function systemTz(): string {
 const DISPLAY_TZ_KEY = 'ete-sthetic.displayTz'
 export const DISPLAY_TZ_CHANGED_EVENT = 'ete-sthetic:display-tz-changed'
 
+// ---- Zone names, aliases and suggestions ------------------------------------
+
 let zoneSet: Set<string> | null = null
 
 export function zoneList(): string[] {
@@ -104,13 +106,262 @@ export function zoneList(): string[] {
   return zones
 }
 
-// True when `tz` is a usable zone name for our purposes: a real IANA
-// zone from the runtime's database, or the special 'UTC'.
+// Validity cache: Intl's accepted zone names (which include aliases and
+// Etc/* fixed offsets that supportedValuesOf omits).
+const zoneValidity = new Map<string, boolean>()
+
+// True when `tz` is a zone name the runtime can format with. More
+// permissive than membership in supportedValuesOf: legacy aliases
+// (US/Pacific) and Etc/GMT±N fixed offsets are valid too.
 export function knownZone(tz: string | null | undefined): boolean {
   if (!tz) return false
-  if (tz === 'UTC') return true
-  if (!zoneSet) zoneList()
-  return zoneSet!.has(tz)
+  const cached = zoneValidity.get(tz)
+  if (cached !== undefined) return cached
+  let ok: boolean
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz })
+    ok = true
+  } catch {
+    ok = false
+  }
+  zoneValidity.set(tz, ok)
+  return ok
+}
+
+// Collapse case, spaces and separators so "new york", "New_York" and
+// "new-york" all match.
+function normName(s: string): string {
+  return s.toLowerCase().replace(/[\s_\-/()·,.]/g, '')
+}
+
+export interface TzAlias {
+  // Human label shown in the picker ("Seattle", "Pacific Time", …).
+  label: string
+  // Canonical IANA zone it resolves to.
+  zone: string
+}
+
+// Short zone abbreviation ("PST", "CET") when the runtime knows a real
+// one — ICU falls back to "GMT+n" for many zones, which is noise.
+export function zoneAbbr(zone: string, at: Date): string | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      timeZoneName: 'short',
+    }).formatToParts(at)
+    const name = parts.find((p) => p.type === 'timeZoneName')?.value
+    if (!name || /^(GMT|UTC)/i.test(name)) return null
+    return name
+  } catch {
+    return null
+  }
+}
+
+// Broad region names, abbreviations and city aliases, offered beside
+// the canonical zones. Order matters: the entries listed first are what
+// an empty query surfaces.
+const NAMED_ALIASES: TzAlias[] = [
+  // Broad, "higher level" names.
+  { label: 'UTC (no offset)', zone: 'UTC' },
+  { label: 'GMT', zone: 'UTC' },
+  { label: 'Pacific Time (PT)', zone: 'America/Los_Angeles' },
+  { label: 'Mountain Time (MT)', zone: 'America/Denver' },
+  { label: 'Central Time (CT)', zone: 'America/Chicago' },
+  { label: 'Eastern Time (ET)', zone: 'America/New_York' },
+  { label: 'Alaska Time', zone: 'America/Anchorage' },
+  { label: 'Hawaii Time', zone: 'Pacific/Honolulu' },
+  { label: 'Atlantic Time', zone: 'America/Halifax' },
+  { label: 'Newfoundland Time', zone: 'America/St_Johns' },
+  { label: 'British Time', zone: 'Europe/London' },
+  { label: 'Central European Time (CET)', zone: 'Europe/Paris' },
+  { label: 'Eastern European Time (EET)', zone: 'Europe/Helsinki' },
+  { label: 'Moscow Time', zone: 'Europe/Moscow' },
+  { label: 'India Time (IST)', zone: 'Asia/Kolkata' },
+  { label: 'China Time', zone: 'Asia/Shanghai' },
+  { label: 'Japan Time (JST)', zone: 'Asia/Tokyo' },
+  { label: 'Korea Time', zone: 'Asia/Seoul' },
+  { label: 'Singapore Time', zone: 'Asia/Singapore' },
+  { label: 'Australian Eastern Time', zone: 'Australia/Sydney' },
+  { label: 'New Zealand Time', zone: 'Pacific/Auckland' },
+  { label: 'South Africa Time', zone: 'Africa/Johannesburg' },
+  { label: 'Brazil Time', zone: 'America/Sao_Paulo' },
+  { label: 'Argentina Time', zone: 'America/Argentina/Buenos_Aires' },
+  { label: 'Gulf Time', zone: 'Asia/Dubai' },
+  // North American abbreviations.
+  { label: 'PST', zone: 'America/Los_Angeles' },
+  { label: 'PDT', zone: 'America/Los_Angeles' },
+  { label: 'MST', zone: 'America/Denver' },
+  { label: 'MDT', zone: 'America/Denver' },
+  { label: 'CST', zone: 'America/Chicago' },
+  { label: 'CDT', zone: 'America/Chicago' },
+  { label: 'EST', zone: 'America/New_York' },
+  { label: 'EDT', zone: 'America/New_York' },
+  // European and other abbreviations.
+  { label: 'CET', zone: 'Europe/Paris' },
+  { label: 'CEST', zone: 'Europe/Paris' },
+  { label: 'WET', zone: 'Europe/Lisbon' },
+  { label: 'BST', zone: 'Europe/London' },
+  { label: 'EET', zone: 'Europe/Helsinki' },
+  { label: 'AEST', zone: 'Australia/Sydney' },
+  { label: 'NZST', zone: 'Pacific/Auckland' },
+  // Cities without a zone of their own.
+  { label: 'Seattle', zone: 'America/Los_Angeles' },
+  { label: 'Portland', zone: 'America/Los_Angeles' },
+  { label: 'San Francisco', zone: 'America/Los_Angeles' },
+  { label: 'San Diego', zone: 'America/Los_Angeles' },
+  { label: 'Las Vegas', zone: 'America/Los_Angeles' },
+  { label: 'Los Angeles', zone: 'America/Los_Angeles' },
+  { label: 'Phoenix', zone: 'America/Phoenix' },
+  { label: 'Denver', zone: 'America/Denver' },
+  { label: 'Salt Lake City', zone: 'America/Denver' },
+  { label: 'Dallas', zone: 'America/Chicago' },
+  { label: 'Houston', zone: 'America/Chicago' },
+  { label: 'Austin', zone: 'America/Chicago' },
+  { label: 'Chicago', zone: 'America/Chicago' },
+  { label: 'New York', zone: 'America/New_York' },
+  { label: 'Boston', zone: 'America/New_York' },
+  { label: 'Washington', zone: 'America/New_York' },
+  { label: 'Miami', zone: 'America/New_York' },
+  { label: 'Atlanta', zone: 'America/New_York' },
+  { label: 'Honolulu', zone: 'Pacific/Honolulu' },
+  { label: 'Anchorage', zone: 'America/Anchorage' },
+  { label: 'Toronto', zone: 'America/Toronto' },
+  { label: 'Montreal', zone: 'America/Toronto' },
+  { label: 'Vancouver', zone: 'America/Vancouver' },
+  { label: 'Calgary', zone: 'America/Edmonton' },
+  { label: 'Mexico City', zone: 'America/Mexico_City' },
+  { label: 'Tromsø', zone: 'Europe/Oslo' },
+  { label: 'Tromso', zone: 'Europe/Oslo' },
+  { label: 'Bergen', zone: 'Europe/Oslo' },
+  { label: 'Trondheim', zone: 'Europe/Oslo' },
+  { label: 'Stavanger', zone: 'Europe/Oslo' },
+  { label: 'Oslo', zone: 'Europe/Oslo' },
+  { label: 'Gothenburg', zone: 'Europe/Stockholm' },
+  { label: 'Copenhagen', zone: 'Europe/Copenhagen' },
+  { label: 'Stockholm', zone: 'Europe/Stockholm' },
+  { label: 'Helsinki', zone: 'Europe/Helsinki' },
+  { label: 'Reykjavik', zone: 'Atlantic/Reykjavik' },
+  { label: 'London', zone: 'Europe/London' },
+  { label: 'Dublin', zone: 'Europe/Dublin' },
+  { label: 'Paris', zone: 'Europe/Paris' },
+  { label: 'Berlin', zone: 'Europe/Berlin' },
+  { label: 'Amsterdam', zone: 'Europe/Amsterdam' },
+  { label: 'Brussels', zone: 'Europe/Brussels' },
+  { label: 'Madrid', zone: 'Europe/Madrid' },
+  { label: 'Barcelona', zone: 'Europe/Madrid' },
+  { label: 'Rome', zone: 'Europe/Rome' },
+  { label: 'Zurich', zone: 'Europe/Zurich' },
+  { label: 'Vienna', zone: 'Europe/Vienna' },
+  { label: 'Prague', zone: 'Europe/Prague' },
+  { label: 'Warsaw', zone: 'Europe/Warsaw' },
+  { label: 'Budapest', zone: 'Europe/Budapest' },
+  { label: 'Athens', zone: 'Europe/Athens' },
+  { label: 'Istanbul', zone: 'Europe/Istanbul' },
+  { label: 'Tokyo', zone: 'Asia/Tokyo' },
+  { label: 'Osaka', zone: 'Asia/Tokyo' },
+  { label: 'Seoul', zone: 'Asia/Seoul' },
+  { label: 'Beijing', zone: 'Asia/Shanghai' },
+  { label: 'Shanghai', zone: 'Asia/Shanghai' },
+  { label: 'Hong Kong', zone: 'Asia/Hong_Kong' },
+  { label: 'Taipei', zone: 'Asia/Taipei' },
+  { label: 'Singapore', zone: 'Asia/Singapore' },
+  { label: 'Kuala Lumpur', zone: 'Asia/Kuala_Lumpur' },
+  { label: 'Bangkok', zone: 'Asia/Bangkok' },
+  { label: 'Jakarta', zone: 'Asia/Jakarta' },
+  { label: 'Manila', zone: 'Asia/Manila' },
+  { label: 'Delhi', zone: 'Asia/Kolkata' },
+  { label: 'Mumbai', zone: 'Asia/Kolkata' },
+  { label: 'Bangalore', zone: 'Asia/Kolkata' },
+  { label: 'Dubai', zone: 'Asia/Dubai' },
+  { label: 'Tel Aviv', zone: 'Asia/Jerusalem' },
+  { label: 'Sydney', zone: 'Australia/Sydney' },
+  { label: 'Melbourne', zone: 'Australia/Sydney' },
+  { label: 'Brisbane', zone: 'Australia/Brisbane' },
+  { label: 'Perth', zone: 'Australia/Perth' },
+  { label: 'Adelaide', zone: 'Australia/Adelaide' },
+  { label: 'Auckland', zone: 'Pacific/Auckland' },
+  { label: 'Wellington', zone: 'Pacific/Auckland' },
+  { label: 'Cape Town', zone: 'Africa/Johannesburg' },
+  { label: 'Johannesburg', zone: 'Africa/Johannesburg' },
+  { label: 'Cairo', zone: 'Africa/Cairo' },
+  { label: 'Lagos', zone: 'Africa/Lagos' },
+  { label: 'Nairobi', zone: 'Africa/Nairobi' },
+  { label: 'Bogota', zone: 'America/Bogota' },
+  { label: 'Lima', zone: 'America/Lima' },
+  { label: 'Santiago', zone: 'America/Santiago' },
+  { label: 'Sao Paulo', zone: 'America/Sao_Paulo' },
+  { label: 'Buenos Aires', zone: 'America/Argentina/Buenos_Aires' },
+]
+
+// Fixed-offset zones (no DST): "UTC+02:00 (fixed)" → Etc/GMT-2 (the
+// Etc names use the inverted POSIX sign).
+const FIXED_OFFSET_ALIASES: TzAlias[] = []
+for (let h = -12; h <= 14; h++) {
+  if (h === 0) continue
+  const sign = h > 0 ? '+' : '−'
+  const label = `UTC${sign}${String(Math.abs(h)).padStart(2, '0')}:00`
+  FIXED_OFFSET_ALIASES.push({
+    label,
+    zone: `Etc/GMT${h > 0 ? '-' : '+'}${Math.abs(h)}`,
+  })
+}
+
+export const TZ_ALIASES: TzAlias[] = [...NAMED_ALIASES, ...FIXED_OFFSET_ALIASES]
+
+// Resolve free text to a zone: an alias label ("Seattle", "PST",
+// "UTC+02:00 (fixed)") or any zone name the runtime accepts. Returns
+// null when it is neither.
+export function resolveZoneInput(input: string): string | null {
+  const t = input.trim()
+  if (!t) return null
+  // Aliases win over raw zone names: Intl also accepts some legacy
+  // abbreviations ("PST"), but we want the canonical zone stored.
+  const n = normName(t)
+  const hit = TZ_ALIASES.find(
+    (a) => normName(a.label) === n || normName(a.zone) === n,
+  )
+  if (hit) return hit.zone
+  return knownZone(t) ? t : null
+}
+
+export interface ZoneSuggestion {
+  zone: string
+  label: string
+  // Offset (and abbreviation when the runtime knows one) for display.
+  detail: string
+}
+
+// Ranked suggestions for the picker: alias labels first, then canonical
+// zones, filtered by a case/space/separator-insensitive substring of
+// either the label or the zone name. `at` samples the displayed offset.
+export function suggestZones(
+  query: string,
+  at: Date = new Date(),
+): ZoneSuggestion[] {
+  const q = normName(query.trim())
+  const seen = new Set<string>()
+  const out: ZoneSuggestion[] = []
+  const push = (zone: string, label: string) => {
+    if (seen.has(zone)) return
+    seen.add(zone)
+    const off = tzOffsetLabel(zone, at)
+    const abbr = zoneAbbr(zone, at)
+    const fixed = zone.startsWith('Etc/') ? 'fixed offset' : ''
+    const parts = [zone !== label ? zone : '', abbr ? abbr : '', off, fixed]
+      .filter(Boolean)
+      .join(' · ')
+    out.push({ zone, label, detail: parts })
+  }
+  for (const a of TZ_ALIASES) {
+    if (!q || normName(a.label).includes(q) || normName(a.zone).includes(q)) {
+      push(a.zone, a.label)
+    }
+  }
+  for (const z of zoneList()) {
+    if (q && !normName(z).includes(q)) continue
+    push(z, z)
+  }
+  return out.slice(0, 80)
 }
 
 // The zone the calendar renders in. `null` means "follow the system",

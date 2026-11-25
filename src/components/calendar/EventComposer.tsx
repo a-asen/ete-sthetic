@@ -5,9 +5,9 @@ import {
   type WallTime,
   eventWallOfRender,
   instantFromWall,
-  knownZone,
-  zoneList,
+  resolveZoneInput,
 } from '../../services/times'
+import { ZonePicker } from './ZonePicker'
 import { ConfirmModal } from '../ConfirmModal'
 import { DateField } from '../DateField'
 import { useUndoableValue } from '../../hooks/useUndoableValue'
@@ -470,20 +470,23 @@ export function EventComposer({
     // Zones for the timed fields: the typed wall times are read in the
     // selected zones ('' = floating, stored verbatim). Anything else is
     // an absolute instant the server stores as DTSTART;TZID=<zone>.
-    // The end may live in its own zone (journeys): its wall time is
-    // read there.
+    // Free text may be an alias ("Seattle", "PST", "UTC+02:00 (fixed)"),
+    // resolved to its canonical zone. The end may live in its own zone
+    // (journeys): its wall time is read there.
     const tz = tzid.trim()
-    if (!allDay && tz && !knownZone(tz)) {
+    const tzResolved = tz ? resolveZoneInput(tz) : null
+    if (!allDay && tz && !tzResolved) {
       setLocalErr(`Unknown timezone "${tz}".`)
       return false
     }
     const tzEnd = tzidEnd.trim()
-    if (!allDay && tzEnd && !knownZone(tzEnd)) {
+    const tzEndResolved = tzEnd ? resolveZoneInput(tzEnd) : null
+    if (!allDay && tzEnd && !tzEndResolved) {
       setLocalErr(`Unknown end timezone "${tzEnd}".`)
       return false
     }
-    const tzOut = !allDay && tz ? tz : null
-    const tzEndOut = !allDay && tzEnd ? tzEnd : null
+    const tzOut = !allDay && tzResolved ? tzResolved : null
+    const tzEndOut = !allDay && tzEndResolved ? tzEndResolved : null
     const trueStart = tzOut
       ? instantFromWall(dateToWall(start), tzOut)
       : start
@@ -830,50 +833,46 @@ export function EventComposer({
               <div className="mb-1 text-[11px] text-text-faint">
                 Timezone
               </div>
-              <input
-                list="composer-tz-zones"
+              <ZonePicker
                 value={tzid}
-                onChange={(e) => setTzid(e.target.value)}
+                onChange={setTzid}
                 placeholder="Empty = local time, no timezone"
-                aria-label="Event timezone"
+                ariaLabel="Event timezone"
                 className={field}
               />
               <div className="mb-1 mt-2 text-[11px] text-text-faint">
                 End timezone
               </div>
-              <input
-                list="composer-tz-zones"
+              <ZonePicker
                 value={tzidEnd}
-                onChange={(e) => setTzidEnd(e.target.value)}
+                onChange={setTzidEnd}
                 placeholder="Same as start"
-                aria-label="End timezone"
+                ariaLabel="End timezone"
                 className={field}
               />
-              <datalist id="composer-tz-zones">
-                {zoneList().map((z) => (
-                  <option key={z} value={z} />
-                ))}
-              </datalist>
               <p className="mt-1 text-[11px] text-text-faint">
                 {(() => {
                   const t = tzid.trim()
                   const te = tzidEnd.trim()
-                  const tKnown = t && knownZone(t)
-                  const teKnown = !te || knownZone(te)
-                  if (!teKnown) return <>Unknown end timezone — pick one from the list.</>
+                  const tRes = t ? resolveZoneInput(t) : null
+                  const teRes = te ? resolveZoneInput(te) : null
+                  if (te && !teRes)
+                    return <>Unknown end timezone — pick one from the list.</>
                   if (!t) {
                     return te
-                      ? <>Starts floating; ends in {te}.</>
+                      ? <>Starts floating; ends in {teRes}.</>
                       : <>
                           No timezone: the wall times are stored as-is
                           (floating), shown the same in every zone.
                         </>
                   }
-                  if (!tKnown) return <>Unknown timezone — pick one from the list.</>
-                  if (!te) return <>Times are wall-clock in {t}</>
-                  return <>
-                    Starts in {t} · ends in {te}
-                  </>
+                  if (!tRes) return <>Unknown timezone — pick one from the list.</>
+                  if (!te) return <>Times are wall-clock in {tRes}</>
+                  return (
+                    <>
+                      Starts in {tRes} · ends in {teRes}
+                    </>
+                  )
                 })()}
               </p>
             </div>

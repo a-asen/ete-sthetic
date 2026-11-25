@@ -16,6 +16,7 @@ import {
 import {
   knownZone,
   readDisplayTzPref,
+  resolveZoneInput,
   systemTz,
   writeDisplayTzPref,
   zoneList,
@@ -156,8 +157,13 @@ export function CalendarSettingsPopover({
   const commitTz = (v: string) => {
     const t = v.trim()
     setTzDraft(v)
-    if (!t) writeDisplayTzPref(null)
-    else if (knownZone(t)) writeDisplayTzPref(t)
+    if (!t) {
+      writeDisplayTzPref(null)
+      return
+    }
+    // Accepts aliases too ("Seattle", "PST") — stored canonical.
+    const resolved = resolveZoneInput(t)
+    if (resolved) writeDisplayTzPref(resolved)
   }
   const timezoneRows = (
     <>

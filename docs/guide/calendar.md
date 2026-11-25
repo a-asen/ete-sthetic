@@ -36,6 +36,13 @@ Tokyo at 14:30 keeps `DTSTART;TZID=Asia/Tokyo` — the grid shows it
 converted to your display zone, and the event popover appends the origin
 zone in parentheses.
 
+The zone fields take more than canonical names — the suggestion list
+mixes, side by side: broad names (`Pacific Time`, `Central European
+Time`), abbreviations (`PST`, `CET`, `JST`), cities that have no zone of
+their own (`Seattle`, `Tromsø`, `Bangalore`) and fixed offsets
+(`UTC+02:00`), each with its current offset (and abbreviation when
+known). Selecting a row stores the canonical IANA zone.
+
 A journey can **end in a different zone than it starts**: set **End
 timezone** (empty = same as start) and the landing time is entered as
 wall clock there — `DTSTART;TZID=Asia/Tokyo` +
