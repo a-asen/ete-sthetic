@@ -81,8 +81,13 @@ export function getSyncLog(): readonly SyncLogEntry[] {
 }
 
 export function clearSyncLog(): void {
-  if (failLog.length === 0) return
+  // Clearing is an explicit "I've seen this" acknowledgement, so drop the
+  // failed-module flags too. Without this the pill keeps showing
+  // "N failed / Last sync had problems" over an empty log until the next
+  // successful sync happens to reset the flags.
+  if (failLog.length === 0 && failures.size === 0) return
   failLog.length = 0
+  failures.clear()
   notify()
 }
 

@@ -180,7 +180,9 @@ export function SyncStatusPill() {
           <div className="max-h-72 overflow-y-auto">
             {log.length === 0 ? (
               <p className="px-3 py-3 text-[11px] text-text-faint">
-                No sync errors recorded this session. 🎉
+                {hasFailures
+                  ? 'A sync failed, but its details are no longer in the log.'
+                  : 'No sync errors recorded this session. 🎉'}
               </p>
             ) : (
               <ul className="divide-y divide-border/60">
@@ -206,17 +208,19 @@ export function SyncStatusPill() {
             )}
           </div>
 
-          {log.length > 0 && (
+          {(log.length > 0 || hasFailures) && (
             <div className="flex justify-end border-t border-border px-3 py-1.5">
               <button
                 type="button"
                 onClick={() => {
                   clearSyncLog()
                   setLog([])
+                  setStatus(getSyncStatus())
                 }}
+                title="Dismiss the failure log and clear the failed status"
                 className="rounded px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
               >
-                Clear log
+                Clear
               </button>
             </div>
           )}
