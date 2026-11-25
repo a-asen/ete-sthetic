@@ -36,6 +36,14 @@ Tokyo at 14:30 keeps `DTSTART;TZID=Asia/Tokyo` — the grid shows it
 converted to your display zone, and the event popover appends the origin
 zone in parentheses.
 
+A journey can **end in a different zone than it starts**: set **End
+timezone** (empty = same as start) and the landing time is entered as
+wall clock there — `DTSTART;TZID=Asia/Tokyo` +
+`DTEND;TZID=Europe/Oslo`. The popover notes it as
+"(Asia/Tokyo → Europe/Oslo)". Drags move the absolute instants and
+leave both zones alone; a DTEND that merely mirrors the start's zone
+follows start-zone changes, an explicit end zone does not.
+
 - **Per-event zones** are stored as proper iCalendar `TZID` +
   `VTIMEZONE` pairs, so other clients (and other devices) see the same
   absolute instants. Events you edit in place keep their zone; dragging

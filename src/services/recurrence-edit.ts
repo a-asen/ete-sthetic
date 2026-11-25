@@ -30,6 +30,15 @@ function baseTzid(ve: ICAL.Component): string | undefined {
   return undefined
 }
 
+// The base DTEND's own TZID, when the end lives in a different zone
+// than the start.
+function baseTzidEnd(ve: ICAL.Component): string | undefined {
+  const prop = ve.getFirstProperty('dtend')
+  const tzid = prop?.getParameter('tzid')
+  if (typeof tzid === 'string' && tzid && tzid !== baseTzid(ve)) return tzid
+  return undefined
+}
+
 function icalNowUtc(): ICAL.Time {
   return ICAL.Time.fromJSDate(new Date(), true)
 }
@@ -147,15 +156,20 @@ function patchToArgs(
   const summary = str(ve.getFirstPropertyValue('summary')) ?? ''
   const location = str(ve.getFirstPropertyValue('location')) ?? undefined
   const description = str(ve.getFirstPropertyValue('description')) ?? undefined
-  // A detached occurrence / new split series keeps the base's zone
+  // A detached occurrence / new split series keeps the base's zones
   // unless the patch sets its own (composer edit).
   const tzid = patch.tzid !== undefined ? patch.tzid ?? undefined : baseTzid(ve)
+  const tzidEnd =
+    patch.tzidEnd !== undefined
+      ? patch.tzidEnd ?? undefined
+      : baseTzidEnd(ve)
   return {
     summary: patch.summary ?? summary,
     start: patch.start as Date,
     end: patch.end as Date,
     allDay: patch.allDay ?? false,
     tzid: tzid && !patch.allDay ? tzid : undefined,
+    tzidEnd: tzidEnd && !patch.allDay ? tzidEnd : undefined,
     location:
       patch.location === undefined ? location : patch.location || undefined,
     description:

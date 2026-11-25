@@ -3,7 +3,7 @@ import type { EventItem } from '../../types'
 import { displayTz } from '../../services/times'
 
 function when(item: EventItem): string {
-  const { start, end, allDay, tzid } = item.event
+  const { start, end, allDay, tzid, tzidEnd } = item.event
   if (!start) return ''
   if (allDay) {
     const last =
@@ -21,9 +21,17 @@ function when(item: EventItem): string {
     ? end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : ''
   // Times are rendered in the display zone; flag events that live in
-  // another zone so the reader knows what the clock there says.
-  const zoneNote =
-    tzid && tzid !== displayTz() ? ` (${tzid})` : ''
+  // other zones so the reader knows what the clocks there say — as a
+  // journey: origin zone → destination zone.
+  const disp = displayTz()
+  const startZone = tzid && tzid !== disp ? tzid : null
+  const endZone =
+    tzidEnd && tzidEnd !== disp && tzidEnd !== tzid ? tzidEnd : null
+  const zoneNote = endZone
+    ? ` (${startZone ?? disp} → ${endZone})`
+    : startZone
+      ? ` (${startZone})`
+      : ''
   return e
     ? `${d} · ${s} – ${e}${zoneNote}`
     : `${d} · ${s}${zoneNote}`

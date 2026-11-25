@@ -161,6 +161,10 @@ export interface VEvent {
   // IANA zone named by DTSTART's TZID parameter ('UTC' when the value
   // is Z-qualified). Undefined = floating (local wall time, no zone).
   tzid?: string
+  // DTEND's own zone, when it carries one different from DTSTART's
+  // (a journey starting in one zone and ending in another). Undefined
+  // = DTEND shares DTSTART's zone (or is floating like it).
+  tzidEnd?: string
   // Resolved to JS Date for grid placement. `end` is exclusive per
   // RFC 5545 (DTEND is non-inclusive).
   start?: Date

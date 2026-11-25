@@ -275,12 +275,16 @@ export function EventComposer({
 }) {
   const ev = editing?.event
   // Editing a tz-aware event: `ev` is the render item (display-zone
-  // wall); the time inputs show the event's own zone. New events start
-  // in the display zone; '' means floating (no zone).
+  // wall); the time inputs show the event's own zones. New events
+  // start in the display zone; '' means floating (no zone).
   const initialTzid = ev ? (ev.tzid ?? '') : displayTz
-  const toWallDate = (render: Date): Date => {
-    if (!ev?.tzid) return render
-    const w = eventWallOfRender(render, ev.tzid, displayTz)
+  // DTEND's own zone, when the journey ends in another one ('' = same
+  // as the start zone).
+  const initialTzidEnd = ev ? (ev.tzidEnd ?? '') : ''
+  const toWallDate = (render: Date, zone?: string): Date => {
+    const z = zone ?? ev?.tzid
+    if (!z) return render
+    const w = eventWallOfRender(render, z, displayTz)
     return new Date(w.y, w.m - 1, w.d, w.h, w.min, w.s)
   }
   const start0 = ev?.start
@@ -297,6 +301,7 @@ export function EventComposer({
             ? ev.end.getTime() - 24 * 60 * 60 * 1000
             : ev.end.getTime(),
         ),
+        ev.tzidEnd ?? ev.tzid,
       )
     : initialEnd
       ? new Date(initialEnd)
@@ -311,6 +316,9 @@ export function EventComposer({
   const [endTime, setEndTime] = useState(toTimeInput(end0))
   // Wall-clock zone for the timed fields ('' = floating local time).
   const [tzid, setTzid] = useState<string>(initialTzid)
+  // DTEND's own zone ('' = same as the start zone) — for journeys that
+  // end in a different zone than they start in.
+  const [tzidEnd, setTzidEnd] = useState<string>(initialTzidEnd)
   const [location, setLocation] = useState(ev?.location ?? '')
   const [description, setDescription] = useState(ev?.description ?? '')
   // Editable reminders. Only start-relative alarms are editable here;
@@ -383,6 +391,7 @@ export function EventComposer({
     endDate: toDateInput(end0),
     endTime: toTimeInput(end0),
     tzid: initialTzid,
+    tzidEnd: initialTzidEnd,
     location: ev?.location ?? '',
     description: ev?.description ?? '',
     repeat: detectPreset(ev?.rrule),
@@ -458,26 +467,41 @@ export function EventComposer({
       // DTEND is exclusive — make it the day after the last day.
       end = new Date(end.getTime() + 24 * 60 * 60 * 1000)
     }
-    if (end.getTime() <= start.getTime() && !allDay) {
-      setLocalErr('End must be after start.')
-      return false
-    }
-    // Zone for the timed fields: the typed wall time is read in the
-    // selected zone ('' = floating, stored verbatim). Anything else is
+    // Zones for the timed fields: the typed wall times are read in the
+    // selected zones ('' = floating, stored verbatim). Anything else is
     // an absolute instant the server stores as DTSTART;TZID=<zone>.
+    // The end may live in its own zone (journeys): its wall time is
+    // read there.
     const tz = tzid.trim()
     if (!allDay && tz && !knownZone(tz)) {
       setLocalErr(`Unknown timezone "${tz}".`)
       return false
     }
+    const tzEnd = tzidEnd.trim()
+    if (!allDay && tzEnd && !knownZone(tzEnd)) {
+      setLocalErr(`Unknown end timezone "${tzEnd}".`)
+      return false
+    }
     const tzOut = !allDay && tz ? tz : null
+    const tzEndOut = !allDay && tzEnd ? tzEnd : null
     const trueStart = tzOut
       ? instantFromWall(dateToWall(start), tzOut)
       : start
-    const trueEnd = tzOut ? instantFromWall(dateToWall(end), tzOut) : end
-    // The patch carries the zone only when it changed (undefined =
+    const trueEnd = tzEndOut
+      ? instantFromWall(dateToWall(end), tzEndOut)
+      : tzOut
+        ? instantFromWall(dateToWall(end), tzOut)
+        : end
+    // With different start/end zones the wall comparison is
+    // meaningless — validate the converted instants.
+    if (trueEnd.getTime() <= trueStart.getTime() && !allDay) {
+      setLocalErr('End must be after start.')
+      return false
+    }
+    // The patch carries a zone only when it changed (undefined =
     // keep the stored zone); a start/end rewrite reuses it either way.
-    const tzChanged = initial.tzid !== tzid
+    const tzChanged = initial.tzid.trim() !== tzid.trim()
+    const tzEndChanged = initial.tzidEnd.trim() !== tzidEnd.trim()
     setLocalErr(null)
     // Translate the "Repeats" dropdown back into an RRULE string. On
     // create, we either emit an RRULE or omit the field. On edit, the
@@ -512,6 +536,7 @@ export function EventComposer({
           end: trueEnd,
           allDay,
           tzid: tzChanged ? tzOut : undefined,
+          tzidEnd: tzEndChanged ? tzEndOut : undefined,
           location: location.trim() || null,
           description: description.trim() || null,
           rrule: presetToRrule[repeat],
@@ -526,6 +551,7 @@ export function EventComposer({
         end: trueEnd,
         allDay,
         tzid: tzOut ?? undefined,
+        tzidEnd: tzEndOut ?? undefined,
         location: location.trim() || undefined,
         description: description.trim() || undefined,
         rrule: presetToRrule[repeat] ?? undefined,
@@ -546,6 +572,7 @@ export function EventComposer({
     endDate !== initial.endDate ||
     endTime !== initial.endTime ||
     tzid.trim() !== initial.tzid.trim() ||
+    tzidEnd.trim() !== initial.tzidEnd.trim() ||
     location !== initial.location ||
     description !== initial.description ||
     repeat !== initial.repeat ||
@@ -811,24 +838,43 @@ export function EventComposer({
                 aria-label="Event timezone"
                 className={field}
               />
+              <div className="mb-1 mt-2 text-[11px] text-text-faint">
+                End timezone
+              </div>
+              <input
+                list="composer-tz-zones"
+                value={tzidEnd}
+                onChange={(e) => setTzidEnd(e.target.value)}
+                placeholder="Same as start"
+                aria-label="End timezone"
+                className={field}
+              />
               <datalist id="composer-tz-zones">
                 {zoneList().map((z) => (
                   <option key={z} value={z} />
                 ))}
               </datalist>
               <p className="mt-1 text-[11px] text-text-faint">
-                {tzid.trim() ? (
-                  knownZone(tzid.trim()) ? (
-                    <>Times are wall-clock in {tzid.trim()}</>
-                  ) : (
-                    <>Unknown timezone — pick one from the list.</>
-                  )
-                ) : (
-                  <>
-                    No timezone: the wall time is stored as-is (floating),
-                    shown the same in every zone.
+                {(() => {
+                  const t = tzid.trim()
+                  const te = tzidEnd.trim()
+                  const tKnown = t && knownZone(t)
+                  const teKnown = !te || knownZone(te)
+                  if (!teKnown) return <>Unknown end timezone — pick one from the list.</>
+                  if (!t) {
+                    return te
+                      ? <>Starts floating; ends in {te}.</>
+                      : <>
+                          No timezone: the wall times are stored as-is
+                          (floating), shown the same in every zone.
+                        </>
+                  }
+                  if (!tKnown) return <>Unknown timezone — pick one from the list.</>
+                  if (!te) return <>Times are wall-clock in {t}</>
+                  return <>
+                    Starts in {t} · ends in {te}
                   </>
-                )}
+                })()}
               </p>
             </div>
           )}

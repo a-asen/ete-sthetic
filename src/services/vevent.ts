@@ -216,6 +216,11 @@ export function parseVEvent(raw: string): VEvent | null {
 
   const dtEndProp = vevent.getFirstProperty('dtend')
   const dtEndVal = dtEndProp?.getFirstValue()
+  // DTEND's own zone, reported only when it differs from DTSTART's
+  // (a journey that starts in one zone and ends in another).
+  const endTzid = propTzid(dtEndProp)
+  const tzidEnd =
+    !allDay && endTzid && endTzid !== tzid ? endTzid : undefined
   let end = timeToDate(dtEndVal)
   // No DTEND: fall back to DTSTART + DURATION, else a zero-length event.
   if (!end && start) {
@@ -251,6 +256,7 @@ export function parseVEvent(raw: string): VEvent | null {
     dtEnd: asString(vevent.getFirstPropertyValue('dtend')),
     allDay,
     tzid,
+    tzidEnd,
     start,
     end,
     status,
@@ -343,6 +349,10 @@ export interface NewVEventArgs {
   // this zone is derived on serialize); when unset they are the local
   // wall time to store verbatim.
   tzid?: string
+  // DTEND's own zone, when the event ends in a different one than it
+  // starts (e.g. a flight). Same instant convention as `tzid`.
+  // Undefined = DTEND shares `tzid` / floats with the start.
+  tzidEnd?: string
   description?: string
   location?: string
   // RRULE body (without the "RRULE:" prefix), e.g. "FREQ=WEEKLY".
@@ -370,7 +380,7 @@ export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
   vevent.updatePropertyWithValue('last-modified', stamp)
   vevent.updatePropertyWithValue('summary', args.summary)
   setTimeProp(vevent, 'dtstart', args.start, args.allDay, args.tzid)
-  setTimeProp(vevent, 'dtend', args.end, args.allDay, args.tzid)
+  setTimeProp(vevent, 'dtend', args.end, args.allDay, args.tzidEnd ?? args.tzid)
   if (args.description) {
     vevent.updatePropertyWithValue('description', args.description)
   }
@@ -383,8 +393,10 @@ export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
   }
   applyAlarms(vevent, args.alarms ?? [])
 
-  if (args.tzid && !args.allDay && args.tzid !== 'UTC') {
-    syncVTimezone(cal, args.tzid, args.start)
+  if (!args.allDay) {
+    for (const z of [args.tzid, args.tzidEnd]) {
+      if (z && z !== 'UTC') syncVTimezone(cal, z, args.start)
+    }
   }
   cal.addSubcomponent(vevent)
   return { uid, raw: cal.toString() }
@@ -398,6 +410,10 @@ export interface VEventPatch {
   // Wall-clock zone for timed events. Undefined leaves the source's
   // zone untouched; null reverts to floating local time.
   tzid?: string | null
+  // DTEND's own zone (journeys ending in another zone). Undefined
+  // leaves the end's zone semantics untouched; null makes DTEND
+  // share the (effective) start zone.
+  tzidEnd?: string | null
   // '' or null clears; undefined leaves untouched.
   description?: string | null
   location?: string | null
@@ -424,6 +440,7 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
   if (!vevent) throw new Error('VEVENT component missing')
 
   registerTimezones(cal)
+  ensureZones(vevent)
 
   if (patch.summary !== undefined) {
     vevent.updatePropertyWithValue('summary', patch.summary)
@@ -434,6 +451,7 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
       | { isDate?: boolean }
       | undefined)?.isDate === true
   const prevTzid = allDay ? undefined : propTzid(vevent.getFirstProperty('dtstart'))
+  const prevTzidEnd = allDay ? undefined : propTzid(vevent.getFirstProperty('dtend'))
   // Effective zone for this rewrite: an explicit patch (string = set,
   // null = clear) wins; otherwise keep the event's own zone.
   const tzid = !allDay
@@ -441,11 +459,36 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
       ? patch.tzid || null
       : prevTzid || null
     : null
+  // DTEND's zone: an explicit end-zone patch (string = set, null =
+  // "same as start") wins. A DTEND that merely mirrored the start's
+  // zone keeps mirroring it through start-zone changes; a DTEND with
+  // a genuinely different zone keeps its own.
+  const endTzid = !allDay
+    ? patch.tzidEnd !== undefined
+      ? patch.tzidEnd || tzid
+      : prevTzidEnd === prevTzid
+        ? tzid
+        : prevTzidEnd || tzid
+    : null
   if (patch.start !== undefined) {
     setTimeProp(vevent, 'dtstart', patch.start, allDay, tzid)
+  } else if (patch.tzid !== undefined && !allDay) {
+    // Zone-only patch: re-serialize DTSTART at the same instant, just
+    // expressed in the new zone.
+    const cur = timeToDate(vevent.getFirstProperty('dtstart')?.getFirstValue())
+    if (cur) setTimeProp(vevent, 'dtstart', cur, allDay, tzid)
   }
   if (patch.end !== undefined) {
-    setTimeProp(vevent, 'dtend', patch.end, allDay, tzid)
+    setTimeProp(vevent, 'dtend', patch.end, allDay, endTzid)
+  } else if (
+    !allDay &&
+    (patch.tzidEnd !== undefined || (patch.tzid !== undefined && endTzid !== prevTzidEnd))
+  ) {
+    // Zone-only patch: a DTEND whose effective zone changed (its own
+    // was patched, or it mirrors the start's) re-serializes at the
+    // same instant in the new zone.
+    const cur = timeToDate(vevent.getFirstProperty('dtend')?.getFirstValue())
+    if (cur) setTimeProp(vevent, 'dtend', cur, allDay, endTzid)
   }
   // We standardise on DTEND for the end. If the source carried a DURATION
   // (mutually exclusive with DTEND per RFC 5545), drop it whenever we
@@ -470,24 +513,42 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
   }
   if (patch.alarms !== undefined) applyAlarms(vevent, patch.alarms)
 
-  // VTIMEZONE upkeep: attach one when the zone is (newly) tz-aware and
-  // the calendar has room for it; drop it when the zone was cleared.
-  // Plain time-moves inside the already-sampled window don't
-  // regenerate — the existing observances stay valid.
-  if (cal.name !== 'vevent') {
-    if (tzid && tzid !== 'UTC') {
-      if (patch.tzid !== undefined || !hasVTimezone(cal, tzid)) {
-        const dt = asString(vevent.getFirstPropertyValue('dtstart'))
-        const around =
-          patch.start ?? (dt ? new Date(dt) : new Date())
-        if (!Number.isNaN(around.getTime())) {
-          syncVTimezone(cal, tzid, around)
-        }
+  // VTIMEZONE upkeep: every zone the time properties reference needs a
+  // definition (attach/regenerate when a zone was explicitly patched or
+  // is missing); zones dropped by a patch lose theirs. Plain time-moves
+  // inside the already-sampled window don't regenerate — the existing
+  // observances stay valid.
+  if (cal.name !== 'vevent' && !allDay) {
+    const zones = new Set(
+      [tzid, endTzid].filter((z): z is string => !!z && z !== 'UTC'),
+    )
+    const aroundFor = (z: string): Date | null => {
+      const dt = asString(
+        z === tzid
+          ? vevent.getFirstPropertyValue('dtstart')
+          : vevent.getFirstPropertyValue('dtend'),
+      )
+      const around =
+        z === tzid ? patch.start : patch.end ?? patch.start
+      const fromStored = dt ? new Date(dt) : null
+      const pick = around ?? fromStored
+      return pick && !Number.isNaN(pick.getTime()) ? pick : new Date()
+    }
+    for (const z of zones) {
+      if (
+        patch.tzid !== undefined ||
+        patch.tzidEnd !== undefined ||
+        !hasVTimezone(cal, z)
+      ) {
+        syncVTimezone(cal, z, aroundFor(z) ?? new Date())
       }
-    } else if (prevTzid && patch.tzid === null) {
-      for (const vtz of [...cal.getAllSubcomponents('vtimezone')]) {
-        if (String(vtz.getFirstPropertyValue('tzid')) === prevTzid) {
-          cal.removeSubcomponent(vtz)
+    }
+    for (const z of [prevTzid, prevTzidEnd]) {
+      if (z && z !== 'UTC' && !zones.has(z)) {
+        for (const vtz of [...cal.getAllSubcomponents('vtimezone')]) {
+          if (String(vtz.getFirstPropertyValue('tzid')) === z) {
+            cal.removeSubcomponent(vtz)
+          }
         }
       }
     }
