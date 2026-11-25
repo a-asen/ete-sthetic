@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { EventItem } from '../../types'
+import { displayTz } from '../../services/times'
 
 function when(item: EventItem): string {
-  const { start, end, allDay } = item.event
+  const { start, end, allDay, tzid } = item.event
   if (!start) return ''
   if (allDay) {
     const last =
@@ -19,7 +20,13 @@ function when(item: EventItem): string {
   const e = end
     ? end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : ''
-  return e ? `${d} · ${s} – ${e}` : `${d} · ${s}`
+  // Times are rendered in the display zone; flag events that live in
+  // another zone so the reader knows what the clock there says.
+  const zoneNote =
+    tzid && tzid !== displayTz() ? ` (${tzid})` : ''
+  return e
+    ? `${d} · ${s} – ${e}${zoneNote}`
+    : `${d} · ${s}${zoneNote}`
 }
 
 // Lightweight detail popover anchored at the click point. Edit opens the

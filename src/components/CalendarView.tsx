@@ -77,6 +77,13 @@ import {
   viewDayRange,
 } from '../services/caldate'
 import {
+  DISPLAY_TZ_CHANGED_EVENT,
+  displayTz,
+  instantOfRender,
+  renderOf,
+  systemTz,
+} from '../services/times'
+import {
   loadCalSnapshot,
   loadCalendarsList,
   saveCalSnapshot,
@@ -1825,7 +1832,38 @@ export function CalendarView({
     [colorByItem],
   )
 
-  const today = startOfDay(new Date())
+  // Display timezone: the zone the calendar grid and labels render in
+  // (Settings › Timezone; defaults to the system's). Events are stored
+  // and synced as absolute data — this only re-projects the view, so
+  // switching it is instant and lossless.
+  const [dispTz, setDispTz] = useState<string>(() => displayTz())
+  useEffect(() => {
+    const onChange = () => setDispTz(displayTz())
+    window.addEventListener(DISPLAY_TZ_CHANGED_EVENT, onChange)
+    return () => window.removeEventListener(DISPLAY_TZ_CHANGED_EVENT, onChange)
+  }, [])
+  // With the system zone every render conversion below is an identity.
+  const tzIsSystem = dispTz === systemTz()
+
+  const today = useMemo(
+    () => startOfDay(renderOf(new Date(), dispTz)),
+    [dispTz],
+  )
+  // "Now" in render space (display-tz wall time as a pseudo-local Date).
+  const renderNow = useCallback(
+    () => renderOf(new Date(), dispTz),
+    [dispTz],
+  )
+  // The true instant behind a render time. Timed tz-aware events store
+  // absolute instants; their grid position is the display-zone wall,
+  // so a drag/resize result converts back through the display zone.
+  // Floating events keep their wall time verbatim in every zone, so
+  // their render time already is the stored wall time.
+  const trueTime = useCallback(
+    (tzid: string | undefined, d: Date): Date =>
+      tzid ? instantOfRender(d, dispTz) : d,
+    [dispTz],
+  )
 
   const { rangeStart, rangeEnd, dayRange, monthDays } = useMemo(() => {
     if (view === 'year') {
@@ -1902,9 +1940,30 @@ export function CalendarView({
     () => expandEvents(visibleEvents, rangeStart, rangeEnd),
     [visibleEvents, rangeStart, rangeEnd],
   )
+  // Re-project tz-aware events into the display timezone. The grid does
+  // wall-clock math on system-local Dates, so the "render" item carries
+  // the display-zone wall time written into a system-local Date.
+  // Floating events pass through unchanged — their wall time is what
+  // renders, in every zone. With the system zone this is an identity,
+  // so the default path is untouched.
+  const rendered = useMemo(() => {
+    if (tzIsSystem) return expanded
+    return expanded.map((it) => {
+      const { tzid, start, end } = it.event
+      if (!tzid || !start) return it
+      return {
+        ...it,
+        event: {
+          ...it.event,
+          start: renderOf(start, dispTz),
+          end: end ? renderOf(end, dispTz) : end,
+        },
+      }
+    })
+  }, [expanded, tzIsSystem, dispTz])
   const byDay = useMemo(
-    () => bucketByDay(expanded, rangeStart, rangeEnd),
-    [expanded, rangeStart, rangeEnd],
+    () => bucketByDay(rendered, rangeStart, rangeEnd),
+    [rendered, rangeStart, rangeEnd],
   )
 
   // Tasks-with-due bucketed by their due day (when the overlay is on).
@@ -1983,10 +2042,10 @@ export function CalendarView({
   }, [])
 
   const goToday = useCallback(() => {
-    const td = startOfDay(new Date())
+    const td = startOfDay(renderNow())
     setAnchor(td)
     setSelected(td)
-  }, [])
+  }, [renderNow])
   // Toolbar ‹/›: page the view by its natural unit, carrying the
   // keyboard cursor (selected) along — same rule as Shift+arrows, so
   // the highlight never desyncs from the visible page.
@@ -2194,7 +2253,7 @@ export function CalendarView({
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
         if (e.key === 't' || e.key === 'T') {
           e.preventDefault()
-          const td = startOfDay(new Date())
+          const td = startOfDay(renderNow())
           setSelected(td)
           setAnchor(td)
           return
@@ -2287,6 +2346,7 @@ export function CalendarView({
     anchor,
     selected,
     composer,
+    renderNow,
     conflict,
     defaultCalUid,
     writableCalendars,
@@ -2512,6 +2572,11 @@ export function CalendarView({
         setNotice('This calendar is locked — event not moved.')
         return
       }
+      // Grid positions are display-zone wall time; patches carry true
+      // data. Floating events keep their wall time in every zone, so
+      // only tz-aware events convert.
+      const trueStart = trueTime(item.event.tzid, start)
+      const trueEnd = trueTime(item.event.tzid, end)
       if (item.event.recurring && item.event.start) {
         setRecurOp({
           action: 'edit',
@@ -2520,13 +2585,13 @@ export function CalendarView({
           baseRaw: item.event.raw,
           occStart: item.event.start,
           allDay: item.event.allDay,
-          patch: { start, end, allDay: item.event.allDay },
+          patch: { start: trueStart, end: trueEnd, allDay: item.event.allDay },
         })
         return
       }
-      await handleUpdate(calUid, item.itemUid, { start, end })
+      await handleUpdate(calUid, item.itemUid, { start: trueStart, end: trueEnd })
     },
-    [calByItem, handleUpdate, isCalLocked],
+    [calByItem, handleUpdate, isCalLocked, trueTime],
   )
 
   const addToCal = useCallback((calUid: string, item: EventItem) => {
@@ -2626,6 +2691,14 @@ export function CalendarView({
     async (scope: RecurScope) => {
       const op = recurOp
       if (!op) return
+      // The grabbed occurrence's start comes from a render item
+      // (display-zone wall); the surgery below works on true data.
+      // Floating events keep their wall time in every zone, so only
+      // tz-aware series convert.
+      const occTzid = parseVEvent(op.baseRaw)?.tzid
+      const occStart = occTzid
+        ? instantOfRender(op.occStart, dispTz)
+        : op.occStart
       if (isCalLocked(op.calUid)) {
         setRecurOp(null)
         setNotice('This calendar is locked.')
@@ -2641,8 +2714,8 @@ export function CalendarView({
           } else {
             const raw =
               scope === 'this'
-                ? addExdate(op.baseRaw, op.occStart, op.allDay)
-                : truncateUntil(op.baseRaw, op.occStart, op.allDay)
+                ? addExdate(op.baseRaw, occStart, op.allDay)
+                : truncateUntil(op.baseRaw, occStart, op.allDay)
             const updated = await replaceEventRaw(
               op.calUid,
               op.itemUid,
@@ -2660,12 +2733,11 @@ export function CalendarView({
             // occurrence, the end is moved by the same delta as the
             // start plus the duration delta.
             const base = parseVEvent(op.baseRaw)
-            const bStart = base?.start ?? patch.start ?? op.occStart
-            const bEnd =
-              base?.end ?? patch.end ?? new Date(op.occStart.getTime())
+            const bStart = base?.start ?? patch.start ?? occStart
+            const bEnd = base?.end ?? patch.end ?? new Date(occStart.getTime())
             const startDelta =
-              (patch.start?.getTime() ?? op.occStart.getTime()) -
-              op.occStart.getTime()
+              (patch.start?.getTime() ?? occStart.getTime()) -
+              occStart.getTime()
             const durDelta =
               patch.end && patch.start
                 ? patch.end.getTime() -
@@ -2686,7 +2758,7 @@ export function CalendarView({
             const updatedBase = await replaceEventRaw(
               op.calUid,
               op.itemUid,
-              addExdate(op.baseRaw, op.occStart, op.allDay),
+              addExdate(op.baseRaw, occStart, op.allDay),
             )
             spliceEvent(op.calUid, op.itemUid, updatedBase)
             addToCal(
@@ -2700,7 +2772,7 @@ export function CalendarView({
             const updatedBase = await replaceEventRaw(
               op.calUid,
               op.itemUid,
-              truncateUntil(op.baseRaw, op.occStart, op.allDay),
+              truncateUntil(op.baseRaw, occStart, op.allDay),
             )
             spliceEvent(op.calUid, op.itemUid, updatedBase)
             addToCal(
@@ -2729,7 +2801,7 @@ export function CalendarView({
         setCreateErr(e instanceof Error ? e.message : String(e))
       }
     },
-    [recurOp, spliceEvent, addToCal, isCalLocked],
+    [recurOp, spliceEvent, addToCal, isCalLocked, dispTz],
   )
 
   const resolveConflict = useCallback(
@@ -3117,6 +3189,7 @@ export function CalendarView({
           />
         ) : (
           <TimeGrid
+            tz={dispTz}
             days={dayRange}
             byDay={byDay}
             colorFor={colorFor}
@@ -3192,6 +3265,7 @@ export function CalendarView({
           defaultCalUid={
             composer.mode === 'edit' ? composer.calUid : defaultCalUid
           }
+          displayTz={dispTz}
           saving={creating}
           error={createErr}
           onCreate={handleCreate}

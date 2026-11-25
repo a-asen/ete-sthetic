@@ -13,6 +13,13 @@ import {
   type WeatherLocation,
   type WeatherUnits,
 } from '../../services/weather'
+import {
+  knownZone,
+  readDisplayTzPref,
+  systemTz,
+  writeDisplayTzPref,
+  zoneList,
+} from '../../services/times'
 
 type CalSort = 'original' | 'name'
 
@@ -20,6 +27,7 @@ type CalSort = 'original' | 'name'
 type Pane =
   | 'root'
   | 'display'
+  | 'timezone'
   | 'weather'
   | 'zoom'
   | 'sort'
@@ -139,6 +147,57 @@ export function CalendarSettingsPopover({
   const ref = useRef<HTMLDivElement>(null)
   const [windowOpen, setWindowOpen] = useState(false)
   const [pane, setPane] = useState<Pane>('root')
+  // Draft for the display-timezone field. Empty string = follow the
+  // system zone. Committing dispatches DISPLAY_TZ_CHANGED_EVENT, so
+  // CalendarView re-projects its grid immediately.
+  const [tzDraft, setTzDraft] = useState<string>(() => readDisplayTzPref() ?? '')
+  const tzOverride = readDisplayTzPref()
+  const tzSystem = systemTz()
+  const commitTz = (v: string) => {
+    const t = v.trim()
+    setTzDraft(v)
+    if (!t) writeDisplayTzPref(null)
+    else if (knownZone(t)) writeDisplayTzPref(t)
+  }
+  const timezoneRows = (
+    <>
+      <p className="px-3 pb-1 pt-0.5 text-[11px] text-text-faint">
+        The calendar grid, day buckets and labels render in this zone.
+        Useful while travelling: leave it on the home zone to keep the
+        calendar on home time. Events keep their own zones — a flight
+        set in Tokyo time stays in Tokyo time regardless.
+      </p>
+      <Row label="Display zone">
+        <input
+          list="cal-settings-tz-zones"
+          value={tzDraft}
+          onChange={(e) => commitTz(e.target.value)}
+          placeholder={`${tzSystem} (system)`}
+          aria-label="Display timezone"
+          className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
+        />
+        <datalist id="cal-settings-tz-zones">
+          {zoneList().map((z) => (
+            <option key={z} value={z} />
+          ))}
+        </datalist>
+      </Row>
+      <Row label="Follow system zone">
+        <Toggle
+          on={tzOverride === null}
+          onClick={() => commitTz('')}
+          label="Follow system zone"
+        />
+      </Row>
+      <p className="px-3 pb-2 pt-0.5 text-[11px] text-text-faint">
+        {tzOverride
+          ? knownZone(tzOverride)
+            ? `Rendering in ${tzOverride}.`
+            : 'Stored zone is unknown to this system — following it instead.'
+          : `Following the system zone (${tzSystem}).`}
+      </p>
+    </>
+  )
 
   useEffect(() => {
     if (windowOpen) return
@@ -164,6 +223,7 @@ export function CalendarSettingsPopover({
 
   const SECTIONS = [
     { id: 'calendar.display', label: 'Display' },
+    { id: 'calendar.timezone', label: 'Timezone' },
     { id: 'calendar.weather', label: 'Weather' },
     ...(showBirthdays && bdayCategories.length > 0
       ? [{ id: 'calendar.bdayCategories', label: 'Birthday categories' }]
@@ -367,6 +427,13 @@ export function CalendarSettingsPopover({
         {displayRows}
       </SettingsSection>
       <SettingsSection
+        id="calendar.timezone"
+        label="Timezone"
+        forceOpen={windowOpen}
+      >
+        {timezoneRows}
+      </SettingsSection>
+      <SettingsSection
         id="calendar.weather"
         label="Weather"
         forceOpen={windowOpen}
@@ -449,6 +516,7 @@ export function CalendarSettingsPopover({
             </button>
           </div>
           <NavRow label="Display" onClick={() => setPane('display')} />
+          <NavRow label="Timezone" onClick={() => setPane('timezone')} />
           <NavRow label="Weather" onClick={() => setPane('weather')} />
           <NavRow label="Zoom" onClick={() => setPane('zoom')} />
           <NavRow label="Sort calendars" onClick={() => setPane('sort')} />
@@ -470,6 +538,11 @@ export function CalendarSettingsPopover({
               {bdayCategoriesRows}
             </SettingsSection>
           )}
+        </div>
+      ) : pane === 'timezone' ? (
+        <div className="max-h-[70vh] overflow-y-auto">
+          <PaneHeader title="Timezone" onBack={() => setPane('root')} />
+          {timezoneRows}
         </div>
       ) : pane === 'weather' ? (
         <div className="max-h-[70vh] overflow-y-auto">

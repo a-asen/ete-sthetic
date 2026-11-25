@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EventItem } from '../../types'
 import type { CalBirthday } from '../../services/birthdays'
 import type { CalTask } from '../../services/caltasks'
+import { renderOf } from '../../services/times'
 import type {
   HourlyForecast,
   WeatherUnits,
@@ -153,6 +154,7 @@ export function TimeGrid({
   days,
   byDay,
   colorFor,
+  tz,
   today,
   selected,
   onPickDay,
@@ -180,6 +182,9 @@ export function TimeGrid({
   days: Date[]
   byDay: Map<string, EventItem[]>
   colorFor: (item: EventItem) => string
+  // Display timezone the grid renders in (render space; see
+  // services/times.ts).
+  tz: string
   today: Date
   selected: Date
   onPickDay: (d: Date) => void
@@ -245,12 +250,15 @@ export function TimeGrid({
   )
   const single = days.length === 1
 
-  // Live "now" for the current-time indicator; ticks each minute.
-  const [now, setNow] = useState(() => new Date())
+  // Live "now" for the current-time indicator; ticks each minute. It
+  // lives in the display timezone (render space), like everything else
+  // on the grid — derived during render so a tz switch re-projects it.
+  const [nowTick, setNowTick] = useState(() => new Date())
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60_000)
+    const id = setInterval(() => setNowTick(new Date()), 60_000)
     return () => clearInterval(id)
   }, [])
+  const now = renderOf(nowTick, tz)
   const nowTopPx =
     ((now.getHours() * 60 + now.getMinutes()) / 60) * hourPx
 

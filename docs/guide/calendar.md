@@ -27,6 +27,30 @@ toggle visibility per calendar.
 
 Arrow-key modifiers in the composer let you nudge times from the keyboard.
 
+## Timezones
+
+Timed events carry a **Timezone** field in the composer (type-ahead IANA
+names like `Asia/Tokyo`; empty = floating local time, stored without a
+zone). This is how you set travel times correctly: a flight leaving
+Tokyo at 14:30 keeps `DTSTART;TZID=Asia/Tokyo` — the grid shows it
+converted to your display zone, and the event popover appends the origin
+zone in parentheses.
+
+- **Per-event zones** are stored as proper iCalendar `TZID` +
+  `VTIMEZONE` pairs, so other clients (and other devices) see the same
+  absolute instants. Events you edit in place keep their zone; dragging
+  moves the absolute instant.
+- **Display timezone** (Settings › Timezone) re-projects the whole grid
+  — day buckets, labels, the now-line — into any zone, e.g. keep the
+  calendar on home time while travelling. It's a local view setting and
+  never touches stored data. Leave it empty to follow the system zone.
+- Floating events (no zone) keep their wall time in every display zone —
+  a 09:00 home event reads 09:00 wherever you view it from.
+- Foreign events that reference an IANA zone without an embedded
+  `VTIMEZONE` are resolved via a synthesized zone definition
+  ([`services/vtimezone.ts`](/architecture/services)), so imports place
+  correctly too.
+
 ## Recurrence
 
 Recurring events use standard `RRULE` expansion — occurrences are computed
