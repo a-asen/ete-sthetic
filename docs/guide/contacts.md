@@ -6,6 +6,11 @@ lossless, hand-rolled parser and a full editor.
 ## Layout
 
 - **Address books** — your vCard collections, in the sidebar.
+- **All contacts** — the first sidebar row combines every live book into one
+  sortable/searchable list, irrespective of the contact's origin. Each row is
+  labelled with its source book, and editing/deleting/moving still targets
+  that real book. Creating a contact from this view is disabled until you
+  pick an actual address book.
 - **Contact list** — a searchable list of contacts in the active book.
 - **Contact card** (`ContactCard`) — the read view for a selected contact.
 - **Contact editor** (`ContactEditor`) — the edit view.

@@ -40,6 +40,11 @@ import { Hint } from './Hint'
 type Mode = 'view' | 'edit' | 'create'
 type ContactsFocusZone = 'books' | 'list' | 'detail'
 
+// Synthetic pseudo-book for the sidebar's "All contacts" row. It is not a
+// real Etebase collection, so the sync / create / move paths special-case it.
+const ALL_BOOKS = '__all__'
+const ALL_BOOKS_LABEL = 'All contacts'
+
 const FOCUS_ZONE_KEY = 'ete-sthetic.contacts.focusZone'
 
 function readFocusZone(): ContactsFocusZone {
@@ -748,12 +753,17 @@ export function ContactsView({
           const liveCached = liveBooks(cachedBooks)
           const prevCached = getContactMemory().activeBook
           const activeCached =
-            prevCached && liveCached.some((b) => b.uid === prevCached)
+            prevCached === ALL_BOOKS ||
+            (prevCached && liveCached.some((b) => b.uid === prevCached))
               ? prevCached
               : (liveCached[0]?.uid ?? null)
           if (activeCached) {
             setActiveBook(activeCached)
-            if (!getContactMemory().contactsByBook.has(activeCached)) {
+            // The network pass below hydrates every book for "All".
+            if (
+              activeCached !== ALL_BOOKS &&
+              !getContactMemory().contactsByBook.has(activeCached)
+            ) {
               const snap = await loadContactSnapshot(activeCached)
               if (!cancelled && snap) {
                 setContactsByBook((p) =>
@@ -790,11 +800,33 @@ export function ContactsView({
       const live = liveBooks(books)
       const prev = getContactMemory().activeBook
       const active =
-        prev && live.some((b) => b.uid === prev)
+        prev === ALL_BOOKS ||
+        (prev && live.some((b) => b.uid === prev))
           ? prev
           : (live[0]?.uid ?? null)
       if (!active) return
       setActiveBook(active)
+      if (active === ALL_BOOKS) {
+        // Hydrate every book's snapshot, then delta-sync each so the
+        // combined list is complete and fresh.
+        for (const b of live) {
+          if (!getContactMemory().contactsByBook.has(b.uid)) {
+            const snap = await loadContactSnapshot(b.uid)
+            if (cancelled) return
+            if (snap) {
+              setContactsByBook((p) => new Map(p).set(b.uid, snap.contacts))
+              if (snap.stoken) {
+                setStokenByBook((p) => new Map(p).set(b.uid, snap.stoken!))
+              }
+              setLastSyncedAt((p) =>
+                new Map(p).set(b.uid, snap.lastSyncedAt),
+              )
+            }
+          }
+        }
+        await Promise.all(live.map((b) => syncBook(b.uid)))
+        return
+      }
       if (!getContactMemory().contactsByBook.has(active)) {
         const snap = await loadContactSnapshot(active)
         if (cancelled) return
@@ -823,19 +855,30 @@ export function ContactsView({
     const ms = activeSyncMin * 60_000
     const id = setInterval(() => {
       if (cancelledRef.current) return
+      if (activeBook === ALL_BOOKS) {
+        for (const b of liveBooks(addressBooks ?? [])) {
+          const last = getContactMemory().lastSyncedAt.get(b.uid)
+          if (last === undefined || Date.now() - last >= ms) {
+            void syncBook(b.uid)
+          }
+        }
+        return
+      }
       const last = getContactMemory().lastSyncedAt.get(activeBook)
       if (last === undefined || Date.now() - last >= ms) {
         void syncBook(activeBook)
       }
     }, ms)
     return () => clearInterval(id)
-  }, [activeBook, activeSyncMin, syncBook])
+  }, [activeBook, activeSyncMin, addressBooks, syncBook])
 
   // Adaptive cadence: every `bgSyncMin` minutes, refresh OTHER books
   // (everything except the active one) that haven't synced inside the
   // window. Disabled when 0.
   useEffect(() => {
-    if (bgSyncMin <= 0 || !addressBooks) return
+    // "All contacts" already refreshes every book on the active cadence
+    // above, so the slow "other books" pass would just duplicate it.
+    if (bgSyncMin <= 0 || !addressBooks || activeBook === ALL_BOOKS) return
     const ms = bgSyncMin * 60_000
     const tick = () => {
       if (cancelledRef.current) return
@@ -879,8 +922,6 @@ export function ContactsView({
     return () => window.clearInterval(id)
   }, [])
 
-  const activeContacts = activeBook ? contactsByBook.get(activeBook) : undefined
-
   const books = useMemo(
     () =>
       addressBooks
@@ -897,6 +938,47 @@ export function ContactsView({
     () => books.filter((b) => hiddenBooks.has(b.uid)),
     [books, hiddenBooks],
   )
+  const bookNameByUid = useMemo(
+    () => new Map((addressBooks ?? []).map((b) => [b.uid, b.name])),
+    [addressBooks],
+  )
+
+  const isAllBooks = activeBook === ALL_BOOKS
+
+  // The "All contacts" pseudo-book concatenates every live book's cached
+  // contacts, including archived ("hidden") books — the point is a single
+  // scrollable list regardless of origin. Ownership is tracked per item so
+  // edits / deletes / moves from this view still target the real book.
+  const allContacts = useMemo(() => {
+    const out: ContactItem[] = []
+    for (const b of books) out.push(...(contactsByBook.get(b.uid) ?? []))
+    return out
+  }, [books, contactsByBook])
+
+  const bookUidByContact = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const b of books) {
+      for (const c of contactsByBook.get(b.uid) ?? []) m.set(c.itemUid, b.uid)
+    }
+    return m
+  }, [books, contactsByBook])
+
+  const activeContacts = activeBook
+    ? isAllBooks
+      ? allContacts
+      : contactsByBook.get(activeBook)
+    : undefined
+
+  // Oldest per-book sync time across the address books — shown as the
+  // aggregate freshness stamp when "All contacts" is active.
+  const oldestBookSync = useMemo(() => {
+    let oldest: number | null = null
+    for (const b of books) {
+      const ts = lastSyncedAt.get(b.uid)
+      if (ts !== undefined && (oldest === null || ts < oldest)) oldest = ts
+    }
+    return oldest
+  }, [books, lastSyncedAt])
 
   const filtered = useMemo(() => {
     let all = sortContacts(
@@ -925,6 +1007,17 @@ export function ContactsView({
       activeContacts?.find((c) => c.itemUid === selectedUid) ?? null,
     [activeContacts, selectedUid],
   )
+
+  // In "All contacts", mutations must target the contact's real address
+  // book rather than the synthetic active id.
+  const selectedBookUid = isAllBooks
+    ? selectedUid
+      ? (bookUidByContact.get(selectedUid) ?? null)
+      : null
+    : activeBook
+  const selectedBookName = selectedBookUid
+    ? (bookNameByUid.get(selectedBookUid) ?? null)
+    : null
 
   // Shift-click / Shift-arrow: select everything between the anchor and
   // the clicked row (inclusive). Keeps the anchor put so further shifts
@@ -1005,6 +1098,14 @@ export function ContactsView({
         switchFreshMin === 0 ||
         last === undefined ||
         Date.now() - last >= freshMs
+      if (uid === ALL_BOOKS) {
+        // No snapshot of its own; refresh each real book that is stale so
+        // the combined list is complete.
+        for (const b of liveBooks(addressBooks ?? [])) {
+          if (isStale(lastSyncedAt.get(b.uid))) void syncBook(b.uid)
+        }
+        return
+      }
       if (!contactsByBook.has(uid)) {
         void (async () => {
           const snap = await loadContactSnapshot(uid)
@@ -1029,6 +1130,7 @@ export function ContactsView({
     },
     [
       activeBook,
+      addressBooks,
       contactsByBook,
       syncBook,
       switchFreshMin,
@@ -1090,7 +1192,9 @@ export function ContactsView({
   // ---- contact mutations ----
 
   const startCreate = useCallback(() => {
-    if (!activeBook) return
+    // "All contacts" has no real destination book; the user picks one
+    // first (the + button is disabled in that view).
+    if (!activeBook || activeBook === ALL_BOOKS) return
     setEditorSeed(emptyVCard())
     setEditorKey((k) => k + 1)
     setMode('create')
@@ -1136,17 +1240,25 @@ export function ContactsView({
 
   const handleSaveContact = useCallback(
     async (card: VCard) => {
-      if (!activeBook) return
+      // In "All contacts" an edit goes back to the contact's real book;
+      // creates are blocked there (no unambiguous destination).
+      const targetBook =
+        mode === 'create'
+          ? isAllBooks
+            ? null
+            : activeBook
+          : (selectedBookUid ?? (isAllBooks ? null : activeBook))
+      if (!targetBook) return
       setSavingContact(true)
       setError(null)
       try {
         if (mode === 'create') {
-          const created = await createContact(activeBook, card)
+          const created = await createContact(targetBook, card)
           if (cancelledRef.current) return
           setContactsByBook((prev) => {
             const next = new Map(prev)
-            next.set(activeBook, [
-              ...(next.get(activeBook) ?? []),
+            next.set(targetBook, [
+              ...(next.get(targetBook) ?? []),
               created,
             ])
             return next
@@ -1154,7 +1266,7 @@ export function ContactsView({
           selectOnly(created.itemUid)
         } else if (selectedItem) {
           const updated = await updateContact(
-            activeBook,
+            targetBook,
             selectedItem.itemUid,
             card,
           )
@@ -1162,8 +1274,8 @@ export function ContactsView({
           setContactsByBook((prev) => {
             const next = new Map(prev)
             next.set(
-              activeBook,
-              (next.get(activeBook) ?? []).map((c) =>
+              targetBook,
+              (next.get(targetBook) ?? []).map((c) =>
                 c.itemUid === updated.itemUid ? updated : c,
               ),
             )
@@ -1181,7 +1293,14 @@ export function ContactsView({
         if (!cancelledRef.current) setSavingContact(false)
       }
     },
-    [activeBook, mode, selectedItem, selectOnly],
+    [
+      activeBook,
+      isAllBooks,
+      mode,
+      selectedBookUid,
+      selectedItem,
+      selectOnly,
+    ],
   )
 
   // Move DOM focus to the detail pane once the card has re-rendered after a
@@ -1199,15 +1318,32 @@ export function ContactsView({
     setDeletingUids(null)
     setError(null)
     const doomed = new Set(uids)
+    // Group by owning book so a selection that spans books (possible only
+    // in "All contacts") deletes each item from the right collection.
+    const byBook = new Map<string, string[]>()
+    if (isAllBooks) {
+      for (const uid of uids) {
+        const book = bookUidByContact.get(uid)
+        if (!book) continue
+        byBook.set(book, [...(byBook.get(book) ?? []), uid])
+      }
+    } else {
+      byBook.set(activeBook, [...uids])
+    }
+    if (byBook.size === 0) return
     try {
-      for (const uid of uids) await deleteContact(activeBook, uid)
+      for (const [book, list] of byBook) {
+        for (const uid of list) await deleteContact(book, uid)
+      }
       if (cancelledRef.current) return
       setContactsByBook((prev) => {
         const next = new Map(prev)
-        next.set(
-          activeBook,
-          (next.get(activeBook) ?? []).filter((c) => !doomed.has(c.itemUid)),
-        )
+        for (const book of byBook.keys()) {
+          next.set(
+            book,
+            (next.get(book) ?? []).filter((c) => !doomed.has(c.itemUid)),
+          )
+        }
         return next
       })
       const remaining = [...selectedUids].filter((u) => !doomed.has(u))
@@ -1220,12 +1356,20 @@ export function ContactsView({
     } catch (e) {
       if (!cancelledRef.current) {
         setError(message(e))
-        // A batch delete can partially succeed server-side; resync so the
-        // list reflects what actually remains.
-        void syncBook(activeBook)
+        // A batch delete can partially succeed server-side; resync the
+        // affected books so the list reflects what actually remains.
+        for (const book of byBook.keys()) void syncBook(book)
       }
     }
-  }, [deletingUids, activeBook, selectedUids, selectedUid, syncBook])
+  }, [
+    deletingUids,
+    activeBook,
+    isAllBooks,
+    bookUidByContact,
+    selectedUids,
+    selectedUid,
+    syncBook,
+  ])
 
   // Move one or more contacts to another address book (the archive
   // workflow). Copy-then-delete on the server; optimistically drop them
@@ -1235,27 +1379,44 @@ export function ContactsView({
   // already hydrated, so we never show a half-populated book.
   const handleMoveContacts = useCallback(
     async (uids: string[], destBookUid: string) => {
-      if (!activeBook || destBookUid === activeBook || uids.length === 0) {
+      if (!activeBook || destBookUid === ALL_BOOKS || uids.length === 0) {
         return
       }
-      const sourceBook = activeBook
+      // In "All contacts" a selection can span address books, so group the
+      // items by their owning collection first; elsewhere there is exactly
+      // one source. Items already in the destination are skipped.
+      const bySource = new Map<string, string[]>()
+      if (isAllBooks) {
+        for (const uid of uids) {
+          const source = bookUidByContact.get(uid)
+          if (!source || source === destBookUid) continue
+          bySource.set(source, [...(bySource.get(source) ?? []), uid])
+        }
+      } else {
+        if (destBookUid === activeBook) return
+        bySource.set(activeBook, [...uids])
+      }
+      if (bySource.size === 0) return
       const moving = new Set(uids)
       setError(null)
       try {
-        const moved = await moveContactsToCollection(
-          sourceBook,
-          destBookUid,
-          uids,
-        )
+        const moved: ContactItem[] = []
+        for (const [source, list] of bySource) {
+          moved.push(
+            ...(await moveContactsToCollection(source, destBookUid, list)),
+          )
+        }
         if (cancelledRef.current) return
         setContactsByBook((prev) => {
           const next = new Map(prev)
-          next.set(
-            sourceBook,
-            (next.get(sourceBook) ?? []).filter(
-              (c) => !moving.has(c.itemUid),
-            ),
-          )
+          for (const source of bySource.keys()) {
+            next.set(
+              source,
+              (next.get(source) ?? []).filter(
+                (c) => !moving.has(c.itemUid),
+              ),
+            )
+          }
           // Splice into the destination only if it's already loaded.
           if (next.has(destBookUid) && moved.length > 0) {
             next.set(destBookUid, [...(next.get(destBookUid) ?? []), ...moved])
@@ -1273,12 +1434,19 @@ export function ContactsView({
         if (!cancelledRef.current) {
           setError(message(e))
           // A batch move can partially succeed server-side; resync the
-          // source so the list reflects what actually remains.
-          void syncBook(activeBook)
+          // sources so the list reflects what actually remains.
+          for (const source of bySource.keys()) void syncBook(source)
         }
       }
     },
-    [activeBook, selectedUids, selectedUid, syncBook],
+    [
+      activeBook,
+      isAllBooks,
+      bookUidByContact,
+      selectedUids,
+      selectedUid,
+      syncBook,
+    ],
   )
 
   // Drop-target props for an address-book row, shared by the visible and
@@ -1554,16 +1722,16 @@ export function ContactsView({
         // (mirrors the tasks sidebar). From the list zone (or anywhere
         // else by default), they walk the contact list.
         if (focusZone === 'books') {
-          const list = books
-          if (list.length === 0) return
+          // "All contacts" is the first row, then the real books.
+          const list = [ALL_BOOKS, ...books.map((b) => b.uid)]
           e.preventDefault()
-          const idx = list.findIndex((c) => c.uid === activeBook)
+          const idx = list.indexOf(activeBook ?? '')
           const delta = e.key === 'ArrowDown' ? 1 : -1
           const next = Math.min(
             list.length - 1,
             Math.max(0, (idx < 0 ? 0 : idx) + delta),
           )
-          selectBook(list[next].uid)
+          selectBook(list[next])
           return
         }
         if (filtered.length === 0) return
@@ -1639,6 +1807,35 @@ export function ContactsView({
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {booksLoading && books.length === 0 && (
             <p className="px-2 py-1 text-xs text-text-faint">Loading…</p>
+          )}
+          {/* Synthetic "All contacts" row: one scrollable list across
+              every address book, with each row labelled by its book. */}
+          {books.length > 0 && (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => selectBook(ALL_BOOKS)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  selectBook(ALL_BOOKS)
+                }
+              }}
+              className={`mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                activeBook === ALL_BOOKS
+                  ? 'bg-accent-soft text-text'
+                  : 'text-text-muted hover:bg-surface-2 hover:text-text'
+              }`}
+            >
+              <span className="min-w-0 flex-1 truncate">{ALL_BOOKS_LABEL}</span>
+              {syncing.size > 0 ? (
+                <span className="shrink-0 text-[10px] text-text-faint">↻</span>
+              ) : (
+                <span className="shrink-0 text-[10px] tabular-nums text-text-faint">
+                  {allContacts.length}
+                </span>
+              )}
+            </div>
           )}
           {visibleBooks.map((b) =>
             bookDraft?.mode === 'rename' && bookDraft.uid === b.uid ? (
@@ -1922,7 +2119,7 @@ export function ContactsView({
             items: [
               {
                 label: 'New contact',
-                disabled: !activeBook,
+                disabled: !activeBook || isAllBooks,
                 onSelect: startCreate,
               },
               {
@@ -1981,9 +2178,18 @@ export function ContactsView({
           />
           <button
             type="button"
-            onClick={() => activeBook && void syncBook(activeBook)}
-            disabled={!activeBook || (!!activeBook && syncing.has(activeBook))}
-            title="Sync this address book"
+            onClick={() => {
+              if (!activeBook) return
+              if (isAllBooks) void syncAllBooks()
+              else void syncBook(activeBook)
+            }}
+            disabled={
+              !activeBook ||
+              (isAllBooks ? syncing.size > 0 : syncing.has(activeBook))
+            }
+            title={
+              isAllBooks ? 'Sync all address books' : 'Sync this address book'
+            }
             aria-label="Sync"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-text-faint transition-colors hover:border-border-strong hover:text-text disabled:opacity-40"
           >
@@ -2021,8 +2227,12 @@ export function ContactsView({
           <button
             type="button"
             onClick={startCreate}
-            disabled={!activeBook}
-            title="New contact (Ctrl+N)"
+            disabled={!activeBook || isAllBooks}
+            title={
+              isAllBooks
+                ? 'Pick an address book to add a contact'
+                : 'New contact (Ctrl+N)'
+            }
             aria-label="New contact"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent text-bg transition-opacity hover:opacity-90 disabled:opacity-40"
           >
@@ -2095,7 +2305,21 @@ export function ContactsView({
           {activeBook && (
             <>
               {' · '}
-              {syncing.has(activeBook) ? (
+              {isAllBooks ? (
+                syncing.size > 0 ? (
+                  <span className="text-text-muted">Syncing…</span>
+                ) : oldestBookSync !== null ? (
+                  <span title="Oldest successful sync across address books">
+                    Synced{' '}
+                    {new Date(oldestBookSync).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                ) : (
+                  <span>Never synced</span>
+                )
+              ) : syncing.has(activeBook) ? (
                 <span className="text-text-muted">Syncing…</span>
               ) : lastSyncedAt.has(activeBook) ? (
                 <span title="Last successful sync">
@@ -2117,8 +2341,9 @@ export function ContactsView({
             // it. Each chip uses a colour that matches its severity.
             const syncingCount = syncing.size
             const failedCount = errorByBook.size
-            const otherSyncing =
-              activeBook && syncing.has(activeBook)
+            const otherSyncing = isAllBooks
+              ? 0
+              : activeBook && syncing.has(activeBook)
                 ? syncingCount - 1
                 : syncingCount
             return (
@@ -2183,7 +2408,14 @@ export function ContactsView({
                     ? [...selectedUids]
                     : [it.itemUid]
                   if (!selectedUids.has(it.itemUid)) selectOnly(it.itemUid)
-                  const targets = books.filter((b) => b.uid !== activeBook)
+                  const ownBook = bookUidByContact.get(it.itemUid)
+                  const targets = books.filter(
+                    (b) =>
+                      b.uid !== activeBook &&
+                      // In "All contacts" a single row can't be moved to its
+                      // own book; multi-book selections still see every book.
+                      (!isAllBooks || group.length > 1 || b.uid !== ownBook),
+                  )
                   const moveItems =
                     targets.length > 0
                       ? targets.map((b) => ({
@@ -2252,24 +2484,36 @@ export function ContactsView({
                         .join(' · ')}
                     </span>
                   )}
+                  {isAllBooks && (
+                    <span className="block truncate text-[10px] text-text-faint/80">
+                      {bookNameByUid.get(
+                        bookUidByContact.get(it.itemUid) ?? '',
+                      ) ?? 'Unknown list'}
+                    </span>
+                  )}
                 </span>
               </button>
             </li>
           ))}
-          {activeContacts && filtered.length === 0 && (
-            <li className="px-3 py-6 text-center text-xs text-text-faint">
-              {search
-                ? 'No contacts match your search.'
-                : activeBook
-                  ? 'No contacts yet — press + to add one.'
-                  : 'Select an address book.'}
-            </li>
-          )}
-          {!activeContacts && activeBook && (
+          {isAllBooks && booksLoading && books.length === 0 ? (
             <li className="px-3 py-6 text-center text-xs text-text-faint">
               Loading contacts…
             </li>
-          )}
+          ) : activeContacts && filtered.length === 0 ? (
+            <li className="px-3 py-6 text-center text-xs text-text-faint">
+              {search
+                ? 'No contacts match your search.'
+                : isAllBooks
+                  ? 'No contacts in any address book.'
+                  : activeBook
+                    ? 'No contacts yet — press + to add one.'
+                    : 'Select an address book.'}
+            </li>
+          ) : !activeContacts && activeBook ? (
+            <li className="px-3 py-6 text-center text-xs text-text-faint">
+              Loading contacts…
+            </li>
+          ) : null}
         </ul>
         <div
           role="separator"
@@ -2326,19 +2570,35 @@ export function ContactsView({
               knownCategories={knownCategories}
             />
           ) : selectedItem ? (
-            <ContactCard
-              card={selectedItem.card}
-              pending={false}
-              onEdit={startEdit}
-              onDelete={() => setDeletingUids([selectedItem.itemUid])}
-              resolveRelated={resolveRelated}
-              onOpenContact={openContact}
-            />
+            <div className="flex h-full flex-col">
+              {isAllBooks && selectedBookName && (
+                <div className="shrink-0 border-b border-border px-4 py-1.5 text-[11px] text-text-faint">
+                  In{' '}
+                  <span className="text-text-muted">{selectedBookName}</span>
+                </div>
+              )}
+              <div className="min-h-0 flex-1">
+                <ContactCard
+                  card={selectedItem.card}
+                  pending={false}
+                  onEdit={startEdit}
+                  onDelete={() => setDeletingUids([selectedItem.itemUid])}
+                  resolveRelated={resolveRelated}
+                  onOpenContact={openContact}
+                />
+              </div>
+            </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center text-sm text-text-faint">
               <p>
-                Select a contact to view it, or press{' '}
-                <kbd>Ctrl</kbd>+<kbd>N</kbd> for a new one.
+                {isAllBooks ? (
+                  'Select a contact to view it, or pick an address book in the sidebar to add one.'
+                ) : (
+                  <>
+                    Select a contact to view it, or press{' '}
+                    <kbd>Ctrl</kbd>+<kbd>N</kbd> for a new one.
+                  </>
+                )}
               </p>
               <Hint id="contacts.empty-detail-keyboard" variant="card">
                 <kbd className="font-mono">/</kbd> to search ·{' '}
@@ -2362,8 +2622,14 @@ export function ContactsView({
           }
           body={
             deletingUids.length > 1
-              ? `${deletingUids.length} contacts will be permanently removed from this address book.`
-              : `"${deletingContacts[0]?.card.fn ?? 'This contact'}" will be permanently removed from this address book.`
+              ? `${deletingUids.length} contacts will be permanently removed from ${
+                  isAllBooks ? 'their address books' : 'this address book'
+                }.`
+              : `"${deletingContacts[0]?.card.fn ?? 'This contact'}" will be permanently removed from ${
+                  isAllBooks && selectedBookName
+                    ? `“${selectedBookName}”`
+                    : 'this address book'
+                }.`
           }
           confirmLabel="Delete"
           destructive
