@@ -158,6 +158,9 @@ export interface VEvent {
   dtEnd?: string
   // True when DTSTART is a VALUE=DATE (no time-of-day).
   allDay: boolean
+  // IANA zone named by DTSTART's TZID parameter ('UTC' when the value
+  // is Z-qualified). Undefined = floating (local wall time, no zone).
+  tzid?: string
   // Resolved to JS Date for grid placement. `end` is exclusive per
   // RFC 5545 (DTEND is non-inclusive).
   start?: Date

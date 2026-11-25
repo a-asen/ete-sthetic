@@ -2,15 +2,17 @@ import ICAL from 'ical.js'
 import {
   buildVEvent,
   parseVEvent,
+  registerTimezones,
   type VAlarmInput,
   type VEventPatch,
 } from './vevent'
+import { wallOf } from './times'
 
 // iCalendar surgery for "edit/delete this / this-and-following / all" on a
 // recurring series. Deliberately pragmatic for v1 (documented in
 // docs/calendar-roadmap.md E3):
-//  - times are treated as floating local / UTC; TZID-preserving rewrites
-//    are out of scope,
+//  - times are absolute instants for tz-aware events and serialized in
+//    the base DTSTART's own TZID; floating events keep local wall time,
 //  - splitting a COUNT-based rule drops COUNT in favour of an UNTIL date.
 
 function veventOf(raw: string): { cal: ICAL.Component; ve: ICAL.Component } {
@@ -18,6 +20,14 @@ function veventOf(raw: string): { cal: ICAL.Component; ve: ICAL.Component } {
   const ve = cal.name === 'vevent' ? cal : cal.getFirstSubcomponent('vevent')
   if (!ve) throw new Error('VEVENT component missing')
   return { cal, ve }
+}
+
+// The base DTSTART's TZID, when the series is tz-aware.
+function baseTzid(ve: ICAL.Component): string | undefined {
+  const prop = ve.getFirstProperty('dtstart')
+  const tzid = prop?.getParameter('tzid')
+  if (typeof tzid === 'string' && tzid) return tzid
+  return undefined
 }
 
 function icalNowUtc(): ICAL.Time {
@@ -29,7 +39,25 @@ function bumpStamps(ve: ICAL.Component): void {
   ve.updatePropertyWithValue('dtstamp', icalNowUtc())
 }
 
-function occurrenceTime(occStart: Date, allDay: boolean): ICAL.Time {
+// Serialize an occurrence instant the way the base RRULE computes
+// occurrences: wall time in the base TZID for tz-aware series, local
+// fields (floating) otherwise.
+function occurrenceTime(
+  occStart: Date,
+  allDay: boolean,
+  tzid?: string,
+): ICAL.Time {
+  if (!allDay && tzid) {
+    const w = wallOf(occStart, tzid)
+    return ICAL.Time.fromData({
+      year: w.y,
+      month: w.m,
+      day: w.d,
+      hour: w.h,
+      minute: w.min,
+      second: 0,
+    })
+  }
   return ICAL.Time.fromData({
     year: occStart.getFullYear(),
     month: occStart.getMonth() + 1,
@@ -48,7 +76,13 @@ export function addExdate(
   allDay: boolean,
 ): string {
   const { cal, ve } = veventOf(baseRaw)
-  ve.addPropertyWithValue('exdate', occurrenceTime(occStart, allDay))
+  registerTimezones(cal)
+  const tzid = baseTzid(ve)
+  const prop = ve.addPropertyWithValue(
+    'exdate',
+    occurrenceTime(occStart, allDay, tzid),
+  )
+  if (tzid) prop.setParameter('tzid', tzid)
   bumpStamps(ve)
   return cal.toString()
 }
@@ -113,11 +147,15 @@ function patchToArgs(
   const summary = str(ve.getFirstPropertyValue('summary')) ?? ''
   const location = str(ve.getFirstPropertyValue('location')) ?? undefined
   const description = str(ve.getFirstPropertyValue('description')) ?? undefined
+  // A detached occurrence / new split series keeps the base's zone
+  // unless the patch sets its own (composer edit).
+  const tzid = patch.tzid !== undefined ? patch.tzid ?? undefined : baseTzid(ve)
   return {
     summary: patch.summary ?? summary,
     start: patch.start as Date,
     end: patch.end as Date,
     allDay: patch.allDay ?? false,
+    tzid: tzid && !patch.allDay ? tzid : undefined,
     location:
       patch.location === undefined ? location : patch.location || undefined,
     description:

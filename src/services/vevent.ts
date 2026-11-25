@@ -1,5 +1,7 @@
 import ICAL from 'ical.js'
 import type { VAlarm, VEvent } from '../types'
+import { buildVTimezone, hasVTimezone } from './vtimezone'
+import { knownZone, wallOf } from './times'
 
 // Mirror of services/vtodo.ts:parseVTodo, for VEVENT. ical.js is already a
 // dependency and parses VEVENT with the same ICAL.Component shape, so this
@@ -29,9 +31,7 @@ function timeToDate(t: unknown): Date | undefined {
 
 // Register any VTIMEZONE definitions carried in the VCALENDAR so that
 // ICAL.Time values with a TZID resolve to correct absolute instants.
-// Idempotent; safe to call per item. Named IANA zones without an inline
-// VTIMEZONE can't be resolved (we fall back to floating/local) — that's
-// the documented v1 limit.
+// Idempotent; safe to call per item.
 export function registerTimezones(comp: ICAL.Component): void {
   for (const vtz of comp.getAllSubcomponents('vtimezone')) {
     const tzid = asString(vtz.getFirstPropertyValue('tzid'))
@@ -44,6 +44,63 @@ export function registerTimezones(comp: ICAL.Component): void {
       // Malformed VTIMEZONE — skip; the time falls back to floating.
     }
   }
+}
+
+// Some producers reference an IANA TZID without embedding a VTIMEZONE
+// (technically invalid, common in the wild). ical.js parses such values
+// as floating, which would silently misplace the event. Register a
+// synthesized VTIMEZONE for each such zone and rehydrate the affected
+// properties so both the instant resolution and the recurrence
+// expansion below see the real zone.
+function ensureZones(vevent: ICAL.Component): void {
+  for (const name of ['dtstart', 'dtend', 'recurrence-id'] as const) {
+    const prop = vevent.getFirstProperty(name)
+    if (!prop) continue
+    const tzid = asString(prop.getParameter('tzid'))
+    if (!tzid || !knownZone(tzid) || ICAL.TimezoneService.has(tzid)) {
+      continue
+    }
+    const v = prop.getFirstValue() as ICAL.Time | null
+    if (!v || v.isDate) continue
+    // Center the sampled window on the event's own date so its
+    // occurrences resolve in the right observances.
+    const around = new Date(v.year, v.month - 1, v.day)
+    try {
+      ICAL.TimezoneService.register(
+        new ICAL.Timezone({
+          component: buildVTimezone(tzid, around),
+          tzid,
+        }),
+      )
+    } catch {
+      continue
+    }
+    prop.setValue(
+      ICAL.Time.fromData(
+        {
+          year: v.year,
+          month: v.month,
+          day: v.day,
+          hour: v.hour,
+          minute: v.minute,
+          second: v.second,
+          isDate: false,
+        },
+        ICAL.TimezoneService.get(tzid),
+      ),
+    )
+  }
+}
+
+// Read a DTSTART/DTEND/RECURRENCE-ID property's TZID parameter, with
+// 'UTC' reported for Z-qualified values.
+function propTzid(prop: ICAL.Property | null): string | undefined {
+  if (!prop) return undefined
+  const tzid = asString(prop.getParameter('tzid'))
+  if (tzid) return tzid
+  const zone = (prop.getFirstValue() as { zone?: { tzid?: string } } | null)
+    ?.zone
+  return zone?.tzid === 'UTC' ? 'UTC' : undefined
 }
 
 // Extract VALARM subcomponents into the scheduler-friendly VAlarm shape.
@@ -139,6 +196,8 @@ export function parseVEvent(raw: string): VEvent | null {
     comp.name === 'vevent' ? comp : comp.getFirstSubcomponent('vevent')
   if (!vevent) return null
 
+  ensureZones(vevent)
+
   const uid = vevent.getFirstPropertyValue('uid')
   if (!uid) return null
 
@@ -152,9 +211,11 @@ export function parseVEvent(raw: string): VEvent | null {
     | { isDate?: boolean; toJSDate?: () => Date }
     | undefined
   const allDay = dtStartVal?.isDate === true
+  const tzid = propTzid(dtStartProp)
   const start = timeToDate(dtStartVal)
 
-  const dtEndVal = vevent.getFirstProperty('dtend')?.getFirstValue()
+  const dtEndProp = vevent.getFirstProperty('dtend')
+  const dtEndVal = dtEndProp?.getFirstValue()
   let end = timeToDate(dtEndVal)
   // No DTEND: fall back to DTSTART + DURATION, else a zero-length event.
   if (!end && start) {
@@ -189,6 +250,7 @@ export function parseVEvent(raw: string): VEvent | null {
     dtStart: asString(vevent.getFirstPropertyValue('dtstart')),
     dtEnd: asString(vevent.getFirstPropertyValue('dtend')),
     allDay,
+    tzid,
     start,
     end,
     status,
@@ -208,9 +270,8 @@ function icalUtcNow(): ICAL.Time {
   return ICAL.Time.fromJSDate(new Date(), true)
 }
 
-// Local wall-clock time (floating, no TZID). v1 keeps timezone handling
-// out of scope (calendar-contacts-plan.md); a personal single-tz client
-// is fine with floating times. allDay → VALUE=DATE.
+// Local wall-clock time (floating, no TZID). The Date's local fields are
+// taken verbatim as the wall time to store; allDay → VALUE=DATE.
 function localTime(d: Date, allDay: boolean): ICAL.Time {
   return ICAL.Time.fromData({
     year: d.getFullYear(),
@@ -223,11 +284,65 @@ function localTime(d: Date, allDay: boolean): ICAL.Time {
   })
 }
 
+// Write DTSTART/DTEND from a wall-clock Date, attaching the event's
+// TZID for timed, tz-aware events ("DTSTART;TZID=Europe/Oslo:…").
+// Convention: for tz-aware events the Date is an ABSOLUTE instant and
+// is converted to wall time in `tzid` here; floating events take the
+// Date's local fields verbatim as the wall time to store.
+function setTimeProp(
+  vevent: ICAL.Component,
+  name: 'dtstart' | 'dtend',
+  d: Date,
+  allDay: boolean,
+  tzid?: string | null,
+): void {
+  let value: ICAL.Time
+  if (!allDay && tzid === 'UTC') {
+    value = ICAL.Time.fromJSDate(d, true)
+  } else if (!allDay && tzid) {
+    const w = wallOf(d, tzid)
+    value = ICAL.Time.fromData({
+      year: w.y,
+      month: w.m,
+      day: w.d,
+      hour: w.h,
+      minute: w.min,
+      second: 0,
+    })
+  } else {
+    value = localTime(d, allDay)
+  }
+  const prop = vevent.updatePropertyWithValue(name, value)
+  // updatePropertyWithValue keeps existing parameters on rewrite, so
+  // the TZID must be set (overwritten) or explicitly removed per write.
+  // ical.js parameter keys are case-sensitive and lowercase from the
+  // parser (it uppercases on serialization), so use 'tzid' here.
+  if (!allDay && tzid && tzid !== 'UTC') prop.setParameter('tzid', tzid)
+  else prop.removeParameter('tzid')
+}
+
+// (Re)attach a generated VTIMEZONE for `tzid` centred on the event
+// start, dropping a stale one first. Keeps the sample window bracketed
+// around the event as it moves through the years.
+function syncVTimezone(cal: ICAL.Component, tzid: string, around: Date): void {
+  for (const vtz of [...cal.getAllSubcomponents('vtimezone')]) {
+    if (String(vtz.getFirstPropertyValue('tzid')) === tzid) {
+      cal.removeSubcomponent(vtz)
+    }
+  }
+  cal.addSubcomponent(buildVTimezone(tzid, around))
+}
+
 export interface NewVEventArgs {
   summary: string
   start: Date
   end: Date
   allDay: boolean
+  // Wall-clock zone for timed events. Undefined = floating local time.
+  // When set, `start`/`end` are ABSOLUTE instants (the wall time in
+  // this zone is derived on serialize); when unset they are the local
+  // wall time to store verbatim.
+  tzid?: string
   description?: string
   location?: string
   // RRULE body (without the "RRULE:" prefix), e.g. "FREQ=WEEKLY".
@@ -254,8 +369,8 @@ export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
   vevent.updatePropertyWithValue('created', stamp)
   vevent.updatePropertyWithValue('last-modified', stamp)
   vevent.updatePropertyWithValue('summary', args.summary)
-  vevent.updatePropertyWithValue('dtstart', localTime(args.start, args.allDay))
-  vevent.updatePropertyWithValue('dtend', localTime(args.end, args.allDay))
+  setTimeProp(vevent, 'dtstart', args.start, args.allDay, args.tzid)
+  setTimeProp(vevent, 'dtend', args.end, args.allDay, args.tzid)
   if (args.description) {
     vevent.updatePropertyWithValue('description', args.description)
   }
@@ -268,6 +383,9 @@ export function buildVEvent(args: NewVEventArgs): { uid: string; raw: string } {
   }
   applyAlarms(vevent, args.alarms ?? [])
 
+  if (args.tzid && !args.allDay && args.tzid !== 'UTC') {
+    syncVTimezone(cal, args.tzid, args.start)
+  }
   cal.addSubcomponent(vevent)
   return { uid, raw: cal.toString() }
 }
@@ -277,6 +395,9 @@ export interface VEventPatch {
   start?: Date
   end?: Date
   allDay?: boolean
+  // Wall-clock zone for timed events. Undefined leaves the source's
+  // zone untouched; null reverts to floating local time.
+  tzid?: string | null
   // '' or null clears; undefined leaves untouched.
   description?: string | null
   location?: string | null
@@ -293,13 +414,16 @@ export interface VEventPatch {
 // Update an existing raw VEVENT. Preserves unknown properties (RRULE,
 // ATTENDEE, X-*, …) and bumps LAST-MODIFIED/DTSTAMP. allDay must be passed
 // alongside start/end so DTSTART/DTEND are re-serialized with the right
-// VALUE type.
+// VALUE type. Timed start/end rewrites keep the event's existing TZID
+// unless patch.tzid overrides or clears it.
 export function updateVEvent(raw: string, patch: VEventPatch): string {
   const jcal = ICAL.parse(raw)
   const cal = new ICAL.Component(jcal)
   const vevent =
     cal.name === 'vevent' ? cal : cal.getFirstSubcomponent('vevent')
   if (!vevent) throw new Error('VEVENT component missing')
+
+  registerTimezones(cal)
 
   if (patch.summary !== undefined) {
     vevent.updatePropertyWithValue('summary', patch.summary)
@@ -309,11 +433,19 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
     (vevent.getFirstProperty('dtstart')?.getFirstValue() as
       | { isDate?: boolean }
       | undefined)?.isDate === true
+  const prevTzid = allDay ? undefined : propTzid(vevent.getFirstProperty('dtstart'))
+  // Effective zone for this rewrite: an explicit patch (string = set,
+  // null = clear) wins; otherwise keep the event's own zone.
+  const tzid = !allDay
+    ? patch.tzid !== undefined
+      ? patch.tzid || null
+      : prevTzid || null
+    : null
   if (patch.start !== undefined) {
-    vevent.updatePropertyWithValue('dtstart', localTime(patch.start, allDay))
+    setTimeProp(vevent, 'dtstart', patch.start, allDay, tzid)
   }
   if (patch.end !== undefined) {
-    vevent.updatePropertyWithValue('dtend', localTime(patch.end, allDay))
+    setTimeProp(vevent, 'dtend', patch.end, allDay, tzid)
   }
   // We standardise on DTEND for the end. If the source carried a DURATION
   // (mutually exclusive with DTEND per RFC 5545), drop it whenever we
@@ -337,6 +469,29 @@ export function updateVEvent(raw: string, patch: VEventPatch): string {
       vevent.updatePropertyWithValue('rrule', ICAL.Recur.fromString(patch.rrule))
   }
   if (patch.alarms !== undefined) applyAlarms(vevent, patch.alarms)
+
+  // VTIMEZONE upkeep: attach one when the zone is (newly) tz-aware and
+  // the calendar has room for it; drop it when the zone was cleared.
+  // Plain time-moves inside the already-sampled window don't
+  // regenerate — the existing observances stay valid.
+  if (cal.name !== 'vevent') {
+    if (tzid && tzid !== 'UTC') {
+      if (patch.tzid !== undefined || !hasVTimezone(cal, tzid)) {
+        const dt = asString(vevent.getFirstPropertyValue('dtstart'))
+        const around =
+          patch.start ?? (dt ? new Date(dt) : new Date())
+        if (!Number.isNaN(around.getTime())) {
+          syncVTimezone(cal, tzid, around)
+        }
+      }
+    } else if (prevTzid && patch.tzid === null) {
+      for (const vtz of [...cal.getAllSubcomponents('vtimezone')]) {
+        if (String(vtz.getFirstPropertyValue('tzid')) === prevTzid) {
+          cal.removeSubcomponent(vtz)
+        }
+      }
+    }
+  }
 
   vevent.updatePropertyWithValue('last-modified', icalUtcNow())
   vevent.updatePropertyWithValue('dtstamp', icalUtcNow())
