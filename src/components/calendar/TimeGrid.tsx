@@ -58,6 +58,11 @@ interface Placed {
   heightPx: number
   col: number
   cols: number
+  // How many columns this event may occupy. Events grow to the right,
+  // into columns that have no event overlapping their time window, so a
+  // lone short event can span the full width of the day instead of
+  // inheriting the width of the whole overlap cluster.
+  span: number
 }
 
 function layoutDay(
@@ -90,6 +95,18 @@ function layoutDay(
   const flush = () => {
     const cols = Math.max(1, ...cluster.map((c) => c.col + 1))
     for (const c of cluster) {
+      // Grow rightwards while the next column is free for this event's
+      // whole time window. This keeps short events from being squeezed
+      // into one narrow column just because some other event elsewhere
+      // in the same overlap cluster needs many columns.
+      let span = 1
+      for (let k = c.col + 1; k < cols; k++) {
+        const blocked = cluster.some(
+          (o) => o.col === k && o.start < c.end && c.start < o.end,
+        )
+        if (blocked) break
+        span++
+      }
       const startMs = Math.max(c.start, dayStart)
       const endMs = Math.min(
         Math.max(c.end, startMs + 15 * 60 * 1000),
@@ -100,7 +117,14 @@ function layoutDay(
         16,
         ((endMs - startMs) / 3_600_000) * hourPx,
       )
-      placed.push({ item: c.item, topPx, heightPx, col: c.col, cols })
+      placed.push({
+        item: c.item,
+        topPx,
+        heightPx,
+        col: c.col,
+        cols,
+        span,
+      })
     }
     cluster = []
   }
@@ -1162,7 +1186,7 @@ export function TimeGrid({
                     <span className="h-px flex-1 bg-danger" />
                   </div>
                 )}
-                {placed.map(({ item, topPx, heightPx, col, cols }) => {
+                {placed.map(({ item, topPx, heightPx, col, cols, span }) => {
                   const ev = item.event
                   // An event "borrowed" from the next day into this column's
                   // extension band. It's now fully editable here (drags/edits
@@ -1256,8 +1280,8 @@ export function TimeGrid({
                         top: `${topPx}px`,
                         height: `${heightPx}px`,
                         left: `calc(${(col / cols) * 100}% + 2px)`,
-                        width: `calc(${100 / cols}% - ${
-                          col === cols - 1 ? 4 + EVENT_RIGHT_GUTTER_PX : 4
+                        width: `calc(${(span / cols) * 100}% - ${
+                          col + span === cols ? 4 + EVENT_RIGHT_GUTTER_PX : 4
                         }px)`,
                         // Calendar colour carried by the whole block: a
                         // tinted fill + left/bottom edges. Calendars
