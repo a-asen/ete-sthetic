@@ -12,6 +12,19 @@ coverage worksheet) and [`docs/calendar-contacts-plan.md`](docs/calendar-contact
 
 ## Backlog (queued 2026-07-06)
 
+### Undo/redo for items themselves (evaluate `Ctrl+Alt+Z` / `Ctrl+Alt+Y`)
+**Ask.** Field-level undo/redo (`Ctrl+Z` / `Ctrl+Y`, plus `Ctrl+Shift+Z`) now
+covers typing in task titles/notes, event titles/locations/descriptions, and
+contact name/detail fields. The next step to evaluate is whole-item undo:
+undoing a delete (or a move) of a task, event, or contact, possibly bound to
+`Ctrl+Alt+Z` / `Ctrl+Alt+Y` so it doesn't collide with text editing.
+**Notes.** Deletes are server-side (Etebase item tombstones), so undo must
+re-create from a captured snapshot rather than un-delete in place; decide
+whether restored items keep their original UID (conflict risk) or get a new
+one. Needs a bounded per-module undo stack, a visible toast ("Deleted N
+contacts — Undo"), and careful interaction with multi-select batch deletes
+and the existing unsaved-changes guard.
+
 ### Task Blueprints — sync across devices (storage model "A")
 **Task.** Blueprints currently live in `localStorage` (per-device, storage
 model "B"): the config and the `lastSpawnedKey` idempotency marker are local,

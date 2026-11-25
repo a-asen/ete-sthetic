@@ -564,10 +564,14 @@ export function DetailPanel({
     update(key, [...list, v])
   }
 
-  // Undo/redo for the Title field — controlled inputs lose the browser's
-  // native Ctrl+Z, so clearing a title and undoing wouldn't bring it back.
+  // Undo/redo for the title and notes fields — controlled inputs lose the
+  // browser's native Ctrl+Z, so clearing them and undoing wouldn't bring
+  // the text back.
   const summaryUndo = useUndoableValue(draft?.summary ?? '', (v) =>
     update('summary', v),
+  )
+  const descriptionUndo = useUndoableValue(draft?.description ?? '', (v) =>
+    update('description', v),
   )
 
   const depCandidates = useMemo(() => {
@@ -828,7 +832,8 @@ export function DetailPanel({
                   ref={descriptionRef}
                   spellCheck
                   value={draft.description}
-                  onChange={(e) => update('description', e.target.value)}
+                  onChange={(e) => descriptionUndo.onChange(e.target.value)}
+                  onKeyDown={descriptionUndo.onKeyDown}
                   onFocus={() => {
                     lastFocusedRef.current = 'description'
                   }}

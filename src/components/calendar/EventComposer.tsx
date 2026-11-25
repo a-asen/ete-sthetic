@@ -301,9 +301,12 @@ export function EventComposer({
       .filter((s): s is number => s != null)
       .join(','),
   }))
-  // Undo/redo for the Title — controlled inputs lose the browser's native
-  // Ctrl+Z, so clearing the title and undoing wouldn't bring it back.
+  // Undo/redo for the free-text fields — controlled inputs lose the
+  // browser's native Ctrl+Z, so clearing a title (or a whole description)
+  // and undoing wouldn't bring it back.
   const summaryUndo = useUndoableValue(summary, setSummary)
+  const locationUndo = useUndoableValue(location, setLocation)
+  const descriptionUndo = useUndoableValue(description, setDescription)
   const titleRef = useRef<HTMLInputElement>(null)
   // Latest submit() / requestClose(), so the window keydown effect can fire
   // Ctrl/Cmd+Enter and Escape without re-subscribing on every render.
@@ -693,17 +696,19 @@ export function EventComposer({
 
           <input
             value={location}
-            onChange={(e) => setLocation(e.target.value)}
+            onChange={(e) => locationUndo.onChange(e.target.value)}
+            onKeyDown={locationUndo.onKeyDown}
             placeholder="Location (optional)"
             className={field}
           />
           <textarea
             spellCheck
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => descriptionUndo.onChange(e.target.value)}
+            onKeyDown={descriptionUndo.onKeyDown}
             placeholder="Description (optional)"
-            rows={2}
-            className={`${field} resize-none`}
+            rows={4}
+            className={`${field} min-h-[6rem] resize-y`}
           />
         </div>
 

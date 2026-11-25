@@ -4,6 +4,7 @@ import { ConfirmModal } from '../ConfirmModal'
 import { PhotoCropModal } from './PhotoCropModal'
 import { addCustomService, allServices } from '../../services/social'
 import { registerUnsavedGuard } from '../../services/unsavedGuard'
+import { useUndoableValue } from '../../hooks/useUndoableValue'
 
 const fieldClass =
   'w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-text outline-none focus:border-border-strong'
@@ -347,6 +348,37 @@ export function ContactEditor({
   const setName = (patch: Partial<VCard['name']>) => {
     setDraft((d) => ({ ...d, name: { ...d.name, ...patch } }))
   }
+  // Undo/redo for the plain-text fields. React controlled inputs reset their
+  // value on every render, which wipes the browser's native undo buffer, so
+  // Ctrl/Cmd+Z inside a field is served from this per-field history instead.
+  const fnUndo = useUndoableValue(draft.fn, (v) => set('fn', v))
+  const givenUndo = useUndoableValue(draft.name.given, (v) =>
+    setName({ given: v }),
+  )
+  const familyUndo = useUndoableValue(draft.name.family, (v) =>
+    setName({ family: v }),
+  )
+  const prefixesUndo = useUndoableValue(draft.name.prefixes, (v) =>
+    setName({ prefixes: v }),
+  )
+  const additionalUndo = useUndoableValue(draft.name.additional, (v) =>
+    setName({ additional: v }),
+  )
+  const suffixesUndo = useUndoableValue(draft.name.suffixes, (v) =>
+    setName({ suffixes: v }),
+  )
+  const nicknameUndo = useUndoableValue(draft.nickname, (v) =>
+    set('nickname', v),
+  )
+  const orgUndo = useUndoableValue(draft.org, (v) => set('org', v))
+  const jobTitleUndo = useUndoableValue(draft.title, (v) => set('title', v))
+  const birthdayUndo = useUndoableValue(draft.birthday, (v) =>
+    set('birthday', v),
+  )
+  const anniversaryUndo = useUndoableValue(draft.anniversary, (v) =>
+    set('anniversary', v),
+  )
+  const noteUndo = useUndoableValue(draft.note, (v) => set('note', v))
   // Photo list edits (functional updates so quick successive clicks don't
   // race on a stale draft). First entry = the primary/avatar.
   const addPhoto = (dataUrl: string) =>
@@ -507,7 +539,8 @@ export function ContactEditor({
             value={draft.fn}
             autoFocus
             placeholder="Shown in the list; left blank, derived from the name"
-            onChange={(e) => set('fn', e.target.value)}
+            onChange={(e) => fnUndo.onChange(e.target.value)}
+            onKeyDown={fnUndo.onKeyDown}
             className={`${fieldClass} mt-1`}
           />
         </div>
@@ -517,7 +550,8 @@ export function ContactEditor({
             <label className={labelClass}>Given name</label>
             <input
               value={draft.name.given}
-              onChange={(e) => setName({ given: e.target.value })}
+              onChange={(e) => givenUndo.onChange(e.target.value)}
+              onKeyDown={givenUndo.onKeyDown}
               className={`${fieldClass} mt-1`}
             />
           </div>
@@ -525,7 +559,8 @@ export function ContactEditor({
             <label className={labelClass}>Family name</label>
             <input
               value={draft.name.family}
-              onChange={(e) => setName({ family: e.target.value })}
+              onChange={(e) => familyUndo.onChange(e.target.value)}
+              onKeyDown={familyUndo.onKeyDown}
               className={`${fieldClass} mt-1`}
             />
           </div>
@@ -538,7 +573,8 @@ export function ContactEditor({
               <input
                 value={draft.name.prefixes}
                 placeholder="Dr., Ms.…"
-                onChange={(e) => setName({ prefixes: e.target.value })}
+                onChange={(e) => prefixesUndo.onChange(e.target.value)}
+                onKeyDown={prefixesUndo.onKeyDown}
                 className={`${fieldClass} mt-1`}
               />
             </div>
@@ -546,7 +582,8 @@ export function ContactEditor({
               <label className={labelClass}>Middle name</label>
               <input
                 value={draft.name.additional}
-                onChange={(e) => setName({ additional: e.target.value })}
+                onChange={(e) => additionalUndo.onChange(e.target.value)}
+                onKeyDown={additionalUndo.onKeyDown}
                 className={`${fieldClass} mt-1`}
               />
             </div>
@@ -555,7 +592,8 @@ export function ContactEditor({
               <input
                 value={draft.name.suffixes}
                 placeholder="Jr., PhD…"
-                onChange={(e) => setName({ suffixes: e.target.value })}
+                onChange={(e) => suffixesUndo.onChange(e.target.value)}
+                onKeyDown={suffixesUndo.onKeyDown}
                 className={`${fieldClass} mt-1`}
               />
             </div>
@@ -575,7 +613,8 @@ export function ContactEditor({
           <input
             value={draft.nickname}
             placeholder="Optional"
-            onChange={(e) => set('nickname', e.target.value)}
+            onChange={(e) => nicknameUndo.onChange(e.target.value)}
+            onKeyDown={nicknameUndo.onKeyDown}
             className={`${fieldClass} mt-1`}
           />
         </div>
@@ -585,7 +624,8 @@ export function ContactEditor({
             <label className={labelClass}>Organization</label>
             <input
               value={draft.org}
-              onChange={(e) => set('org', e.target.value)}
+              onChange={(e) => orgUndo.onChange(e.target.value)}
+              onKeyDown={orgUndo.onKeyDown}
               className={`${fieldClass} mt-1`}
             />
           </div>
@@ -593,7 +633,8 @@ export function ContactEditor({
             <label className={labelClass}>Title</label>
             <input
               value={draft.title}
-              onChange={(e) => set('title', e.target.value)}
+              onChange={(e) => jobTitleUndo.onChange(e.target.value)}
+              onKeyDown={jobTitleUndo.onKeyDown}
               className={`${fieldClass} mt-1`}
             />
           </div>
@@ -667,7 +708,8 @@ export function ContactEditor({
             <input
               value={draft.birthday}
               placeholder="YYYY-MM-DD"
-              onChange={(e) => set('birthday', e.target.value)}
+              onChange={(e) => birthdayUndo.onChange(e.target.value)}
+              onKeyDown={birthdayUndo.onKeyDown}
               className={`${fieldClass} mt-1`}
             />
           </div>
@@ -676,7 +718,8 @@ export function ContactEditor({
             <input
               value={draft.anniversary}
               placeholder="YYYY-MM-DD"
-              onChange={(e) => set('anniversary', e.target.value)}
+              onChange={(e) => anniversaryUndo.onChange(e.target.value)}
+              onKeyDown={anniversaryUndo.onKeyDown}
               className={`${fieldClass} mt-1`}
             />
           </div>
@@ -697,7 +740,8 @@ export function ContactEditor({
             spellCheck
             value={draft.note}
             rows={3}
-            onChange={(e) => set('note', e.target.value)}
+            onChange={(e) => noteUndo.onChange(e.target.value)}
+            onKeyDown={noteUndo.onKeyDown}
             className={`${fieldClass} mt-1 resize-y`}
           />
         </div>
