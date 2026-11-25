@@ -133,7 +133,12 @@ function readIntPref(
   fallback: number,
 ): number {
   try {
-    const v = Number(localStorage.getItem(key))
+    const raw = localStorage.getItem(key)
+    // Missing key => fallback. `Number(null)` is 0, which is itself a
+    // valid "manual only" option, so an unset pref would otherwise read
+    // as off instead of the intended default cadence.
+    if (raw === null) return fallback
+    const v = Number(raw)
     return options.includes(v) ? v : fallback
   } catch {
     return fallback

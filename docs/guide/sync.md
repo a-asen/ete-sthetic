@@ -37,7 +37,20 @@ The background scheduler lives in
 is surfaced through [`services/syncStatus.ts`](/architecture/services) in the
 **sync status pill** (`SyncStatusPill`) at the top-center of the window.
 
-You can always force a sync of the active list with `Ctrl+Shift+S`.
+### Global auto-sync cadence
+
+A single **Settings › Sync › Auto-sync every** interval (5 minutes to 24 hours,
+or *Off (manual only)*) drives every enabled module. It defaults to **1 hour**,
+and the same window doubles as the staleness threshold used when you switch
+modules or refocus the app. The per-module cadences above still apply on top.
+Each module's own settings popover also exposes its fast/slow intervals, which
+default to 15/240 minutes for tasks and 5/240 minutes for contacts.
+
+The cadence is stored locally (`ete-sthetic.autoSyncMin`) and is **not** synced
+to the server, so each device keeps its own schedule.
+
+You can always force a sync of the active list with `Ctrl+Shift+S`, or of every
+module with `Ctrl+Alt+S` / the sync status pill.
 
 ## Optimistic writes
 

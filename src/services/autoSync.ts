@@ -12,12 +12,20 @@ export const AUTO_SYNC_CHANGED_EVENT = 'ete-sthetic:auto-sync-changed'
 
 // 0 = off; the rest mirror the option grids the per-module sync
 // settings use so the choices feel consistent across the app.
-export const AUTO_SYNC_OPTIONS = [0, 15, 30, 60, 120, 240, 720, 1440] as const
+export const AUTO_SYNC_OPTIONS = [
+  0, 5, 10, 15, 30, 60, 120, 240, 720, 1440,
+] as const
 export const DEFAULT_AUTO_SYNC_MIN = 60
 
 export function readAutoSyncMin(): number {
   try {
-    const v = Number(localStorage.getItem(KEY))
+    const raw = localStorage.getItem(KEY)
+    // A missing key must mean "use the default", not off: `Number(null)`
+    // is 0, and 0 is itself a valid option ("manual only"). Without the
+    // explicit null check, every profile that never touched the setting
+    // silently ran with auto-sync disabled.
+    if (raw === null) return DEFAULT_AUTO_SYNC_MIN
+    const v = Number(raw)
     return (AUTO_SYNC_OPTIONS as readonly number[]).includes(v)
       ? v
       : DEFAULT_AUTO_SYNC_MIN
