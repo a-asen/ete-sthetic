@@ -30,6 +30,56 @@ function togglePill(on: boolean): string {
   }`
 }
 
+// Persisted composer size. The event editor is an in-app overlay, not a
+// real OS window, so "resize" means dragging its corner. Remembering the
+// size locally makes every future new/edit dialog open at the user's
+// preferred dimensions.
+const COMPOSER_SIZE_KEY = 'ete-sthetic.eventComposer.size'
+const COMPOSER_MIN_W = 340
+const COMPOSER_MIN_H = 360
+const COMPOSER_PAD = 16
+
+interface ComposerSize {
+  w: number
+  h: number
+}
+
+function clampComposerSize(w: number, h: number): ComposerSize {
+  const maxW = Math.max(COMPOSER_MIN_W, window.innerWidth - COMPOSER_PAD * 2)
+  const maxH = Math.max(COMPOSER_MIN_H, window.innerHeight - COMPOSER_PAD * 2)
+  return {
+    w: Math.round(Math.min(maxW, Math.max(COMPOSER_MIN_W, w))),
+    h: Math.round(Math.min(maxH, Math.max(COMPOSER_MIN_H, h))),
+  }
+}
+
+function readComposerSize(): ComposerSize | null {
+  try {
+    const raw = localStorage.getItem(COMPOSER_SIZE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<ComposerSize>
+    if (
+      typeof parsed.w !== 'number' ||
+      typeof parsed.h !== 'number' ||
+      !Number.isFinite(parsed.w) ||
+      !Number.isFinite(parsed.h)
+    ) {
+      return null
+    }
+    return clampComposerSize(parsed.w, parsed.h)
+  } catch {
+    return null
+  }
+}
+
+function writeComposerSize(size: ComposerSize): void {
+  try {
+    localStorage.setItem(COMPOSER_SIZE_KEY, JSON.stringify(size))
+  } catch {
+    // Non-fatal — the size just won't persist across launches.
+  }
+}
+
 function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
@@ -485,6 +535,72 @@ export function EventComposer({
 
   const field = 'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text outline-none focus:border-accent'
 
+  // Resizable event dialog. The size is persisted on pointer-up and reused
+  // for every subsequent composer (new or edit).
+  const [composerSize, setComposerSize] = useState<ComposerSize | null>(
+    readComposerSize,
+  )
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const resizeDrag = useRef<{
+    startX: number
+    startY: number
+    startW: number
+    startH: number
+  } | null>(null)
+
+  function beginResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    const el = dialogRef.current
+    if (!el) return
+    e.preventDefault()
+    const rect = el.getBoundingClientRect()
+    resizeDrag.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: rect.width,
+      startH: rect.height,
+    }
+    // Pin the currently rendered size so the first pixel of drag doesn't
+    // jump to the unclamped stored value.
+    setComposerSize(clampComposerSize(rect.width, rect.height))
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  function moveResize(e: React.PointerEvent<HTMLDivElement>) {
+    const d = resizeDrag.current
+    if (!d) return
+    setComposerSize(
+      clampComposerSize(
+        d.startW + (e.clientX - d.startX),
+        d.startH + (e.clientY - d.startY),
+      ),
+    )
+  }
+
+  function endResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (!resizeDrag.current) return
+    resizeDrag.current = null
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    const el = dialogRef.current
+    if (el) {
+      const rect = el.getBoundingClientRect()
+      writeComposerSize(clampComposerSize(rect.width, rect.height))
+    }
+  }
+
+  // Keep a remembered size inside the viewport when the window shrinks.
+  const hasComposerSize = composerSize !== null
+  useEffect(() => {
+    if (!hasComposerSize) return
+    const onResize = () => {
+      setComposerSize((s) => (s ? clampComposerSize(s.w, s.h) : s))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [hasComposerSize])
+
   return (
     <>
     <div
@@ -503,9 +619,20 @@ export function EventComposer({
       }}
     >
       <div
-        className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl"
+        ref={dialogRef}
+        className="relative flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col rounded-lg border border-border bg-surface p-5 shadow-xl"
+        style={
+          composerSize
+            ? {
+                width: composerSize.w,
+                height: composerSize.h,
+                maxWidth: 'calc(100vw - 2rem)',
+              }
+            : undefined
+        }
         onClick={(e) => e.stopPropagation()}
       >
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <h3 className="mb-4 text-sm font-medium text-text">
           {editing ? 'Edit event' : 'New event'}
         </h3>
@@ -715,6 +842,7 @@ export function EventComposer({
         {(localErr || error) && (
           <p className="mt-3 text-xs text-danger">{localErr || error}</p>
         )}
+        </div>
 
         <div className="mt-5 flex items-center gap-2">
           {editing && onDelete && (
@@ -744,6 +872,21 @@ export function EventComposer({
             {saving ? 'Saving…' : editing ? 'Save' : 'Create'}
           </button>
         </div>
+
+        <div
+          role="separator"
+          aria-label="Resize event window"
+          title="Drag to resize"
+          onPointerDown={beginResize}
+          onPointerMove={moveResize}
+          onPointerUp={endResize}
+          onPointerCancel={endResize}
+          className="absolute bottom-1 right-1 h-3.5 w-3.5 cursor-nwse-resize touch-none rounded-sm text-text-faint hover:text-text"
+          style={{
+            backgroundImage:
+              'linear-gradient(135deg, transparent 0 45%, currentColor 45% 55%, transparent 55% 70%, currentColor 70% 80%, transparent 80%)',
+          }}
+        />
       </div>
     </div>
     {confirmClose && (
