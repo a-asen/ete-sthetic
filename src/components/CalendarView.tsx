@@ -1120,6 +1120,85 @@ export function CalendarView({
     | null
   >(null)
   const [creating, setCreating] = useState(false)
+  // Background save queue. Creating / editing / deleting an event no
+  // longer pins the modal open until the network round-trip finishes: the
+  // composer closes at once, the save runs here, and each job surfaces as
+  // a floating chip at the bottom ("Saving …") that disappears on success
+  // or turns red with Retry / Dismiss on failure. The composer's unsaved-
+  // changes guard still calls submit() synchronously, so a module switch
+  // during an in-flight save is safe.
+  type SaveJob = {
+    id: number
+    label: string
+    status: 'saving' | 'error'
+    error?: string
+  }
+  const [saveJobs, setSaveJobs] = useState<SaveJob[]>([])
+  const saveJobSeq = useRef(0)
+  const saveJobRuns = useRef(new Map<number, () => Promise<void>>())
+
+  const dismissSaveJob = useCallback((id: number) => {
+    saveJobRuns.current.delete(id)
+    setSaveJobs((prev) => prev.filter((job) => job.id !== id))
+  }, [])
+
+  const failSaveJob = useCallback((id: number, e: unknown) => {
+    setSaveJobs((prev) =>
+      prev.map((job) =>
+        job.id === id
+          ? {
+              ...job,
+              status: 'error',
+              error: e instanceof Error ? e.message : String(e),
+            }
+          : job,
+      ),
+    )
+  }, [])
+
+  const enqueueSave = useCallback(
+    (label: string, run: () => Promise<void>) => {
+      const id = ++saveJobSeq.current
+      saveJobRuns.current.set(id, run)
+      setSaveJobs((prev) => [...prev, { id, label, status: 'saving' }])
+      run().then(() => dismissSaveJob(id), (e) => failSaveJob(id, e))
+    },
+    [dismissSaveJob, failSaveJob],
+  )
+
+  const retrySaveJob = useCallback(
+    (id: number) => {
+      const run = saveJobRuns.current.get(id)
+      if (!run) return
+      setSaveJobs((prev) =>
+        prev.map((job) =>
+          job.id === id ? { ...job, status: 'saving', error: undefined } : job,
+        ),
+      )
+      run().then(() => dismissSaveJob(id), (e) => failSaveJob(id, e))
+    },
+    [dismissSaveJob, failSaveJob],
+  )
+
+  // Keep the process-lifetime calendar cache in step even when the module
+  // was switched away before the save finished — the render-state mirror
+  // effect can't run after unmount. `next === null` removes the item.
+  const mirrorSavedEvent = useCallback(
+    (calUid: string, itemUid: string, next: EventItem | null) => {
+      const mem = getCalMemory()
+      const list = mem.eventsByCal.get(calUid) ?? []
+      const updated = next
+        ? list.some((e) => e.itemUid === itemUid)
+          ? list.map((e) => (e.itemUid === itemUid ? next : e))
+          : [...list, next]
+        : list.filter((e) => e.itemUid !== itemUid)
+      patchCalMemory({
+        eventsByCal: new Map(mem.eventsByCal).set(calUid, updated),
+      })
+    },
+    [],
+  )
+
   // Quick-add VEVENT flows: drag-drop / paste / (future) OS open-with.
   // `importing` holds the parsed candidates while the picker is open;
   // `pastingIcs` toggles the paste textarea modal. Drag-drop fills
@@ -2355,31 +2434,28 @@ export function CalendarView({
   ])
 
   const handleCreate = useCallback(
-    async (calUid: string, args: NewVEventArgs) => {
+    (calUid: string, args: NewVEventArgs) => {
       if (isCalLocked(calUid)) {
         setCreateErr('This calendar is locked. Unlock it to add events.')
         return
       }
-      setCreating(true)
       setCreateErr(null)
-      try {
+      setComposer(null)
+      enqueueSave(`Saving “${args.summary || 'event'}”`, async () => {
         const created = await createEvent(calUid, args)
         // Optimistic insert. The disk snapshot picks this up on the next
         // background delta sync (the item comes back under its stoken);
-        // the in-memory cache retains it immediately via the mirror effect.
+        // the in-memory cache retains it immediately via the mirror effect
+        // (and mirrorSavedEvent covers a module switch mid-save).
         setEventsByCal((prev) => {
           const next = new Map(prev)
           next.set(calUid, [...(next.get(calUid) ?? []), created])
           return next
         })
-        setCreating(false)
-        setComposer(null)
-      } catch (e) {
-        setCreating(false)
-        setCreateErr(e instanceof Error ? e.message : String(e))
-      }
+        mirrorSavedEvent(calUid, created.itemUid, created)
+      })
     },
-    [isCalLocked],
+    [isCalLocked, enqueueSave, mirrorSavedEvent],
   )
 
   // Replace (or, with null, remove) an event in a calendar's list.
@@ -2461,47 +2537,54 @@ export function CalendarView({
   }, [])
 
   const handleUpdate = useCallback(
-    async (calUid: string, itemUid: string, patch: VEventPatch) => {
+    (calUid: string, itemUid: string, patch: VEventPatch) => {
       if (isCalLocked(calUid)) {
         setCreateErr('This calendar is locked. Unlock it to edit events.')
         return
       }
-      setCreating(true)
       setCreateErr(null)
-      try {
-        const updated = await updateEvent(calUid, itemUid, patch)
-        spliceEvent(calUid, itemUid, updated)
-        setCreating(false)
-        setComposer(null)
-      } catch (e) {
-        setCreating(false)
-        if (e instanceof EventConflictError) {
-          setComposer(null)
-          setConflict({
-            calUid,
-            itemUid,
-            localRaw: e.localRaw,
-            serverRaw: e.serverRaw,
-          })
-          return
-        }
-        setCreateErr(e instanceof Error ? e.message : String(e))
-      }
+      setComposer(null)
+      const ev = (getCalMemory().eventsByCal.get(calUid) ?? []).find(
+        (e) => e.itemUid === itemUid,
+      )
+      enqueueSave(
+        `Saving “${patch.summary ?? ev?.event.summary ?? 'event'}”`,
+        async () => {
+          try {
+            const updated = await updateEvent(calUid, itemUid, patch)
+            spliceEvent(calUid, itemUid, updated)
+            mirrorSavedEvent(calUid, itemUid, updated)
+          } catch (e) {
+            if (e instanceof EventConflictError) {
+              // Resolve the job (no chip error) — the conflict modal takes
+              // over from here.
+              setConflict({
+                calUid,
+                itemUid,
+                localRaw: e.localRaw,
+                serverRaw: e.serverRaw,
+              })
+              return
+            }
+            throw e
+          }
+        },
+      )
     },
-    [spliceEvent, isCalLocked],
+    [spliceEvent, isCalLocked, enqueueSave, mirrorSavedEvent],
   )
 
   // Edit-save: if the calendar changed, move the event first, then apply
   // field edits to the moved copy.
   const handleEditSave = useCallback(
-    async (
+    (
       origCalUid: string,
       itemUid: string,
       patch: VEventPatch,
       newCalUid: string,
     ) => {
       if (!newCalUid || newCalUid === origCalUid) {
-        await handleUpdate(origCalUid, itemUid, patch)
+        handleUpdate(origCalUid, itemUid, patch)
         return
       }
       if (isCalLocked(origCalUid) || isCalLocked(newCalUid)) {
@@ -2510,52 +2593,55 @@ export function CalendarView({
         )
         return
       }
-      setCreating(true)
       setCreateErr(null)
-      try {
-        const moved = await moveEventToCollection(
-          origCalUid,
-          newCalUid,
-          itemUid,
-        )
-        spliceEvent(origCalUid, itemUid, null)
-        setEventsByCal((prev) =>
-          new Map(prev).set(newCalUid, [
-            ...(prev.get(newCalUid) ?? []),
-            moved,
-          ]),
-        )
-        const updated = await updateEvent(newCalUid, moved.itemUid, patch)
-        spliceEvent(newCalUid, moved.itemUid, updated)
-        setCreating(false)
-        setComposer(null)
-      } catch (e) {
-        setCreating(false)
-        setCreateErr(e instanceof Error ? e.message : String(e))
-      }
+      setComposer(null)
+      const ev = (getCalMemory().eventsByCal.get(origCalUid) ?? []).find(
+        (e) => e.itemUid === itemUid,
+      )
+      enqueueSave(
+        `Moving “${patch.summary ?? ev?.event.summary ?? 'event'}”`,
+        async () => {
+          const moved = await moveEventToCollection(
+            origCalUid,
+            newCalUid,
+            itemUid,
+          )
+          spliceEvent(origCalUid, itemUid, null)
+          mirrorSavedEvent(origCalUid, itemUid, null)
+          setEventsByCal((prev) =>
+            new Map(prev).set(newCalUid, [
+              ...(prev.get(newCalUid) ?? []),
+              moved,
+            ]),
+          )
+          mirrorSavedEvent(newCalUid, moved.itemUid, moved)
+          const updated = await updateEvent(newCalUid, moved.itemUid, patch)
+          spliceEvent(newCalUid, moved.itemUid, updated)
+          mirrorSavedEvent(newCalUid, moved.itemUid, updated)
+        },
+      )
     },
-    [handleUpdate, spliceEvent, isCalLocked],
+    [handleUpdate, spliceEvent, isCalLocked, enqueueSave, mirrorSavedEvent],
   )
 
   const handleDelete = useCallback(
-    async (calUid: string, itemUid: string) => {
+    (calUid: string, itemUid: string) => {
       if (isCalLocked(calUid)) {
         setCreateErr('This calendar is locked. Unlock it to delete events.')
         return
       }
-      setCreating(true)
       setCreateErr(null)
-      try {
+      setComposer(null)
+      const ev = (getCalMemory().eventsByCal.get(calUid) ?? []).find(
+        (e) => e.itemUid === itemUid,
+      )
+      enqueueSave(`Deleting “${ev?.event.summary || 'event'}”`, async () => {
         await deleteEvent(calUid, itemUid)
         spliceEvent(calUid, itemUid, null)
-        setCreating(false)
-        setComposer(null)
-      } catch (e) {
-        setCreating(false)
-        setCreateErr(e instanceof Error ? e.message : String(e))
-      }
+        mirrorSavedEvent(calUid, itemUid, null)
+      })
     },
-    [spliceEvent, isCalLocked],
+    [spliceEvent, isCalLocked, enqueueSave, mirrorSavedEvent],
   )
 
   // Drag move/resize → patch start+end on the series base.
@@ -2565,7 +2651,7 @@ export function CalendarView({
   // occurrence (expansion overwrites start/end), so occStart is the
   // occurrence the user actually grabbed.
   const handleMoveResize = useCallback(
-    async (item: EventItem, start: Date, end: Date) => {
+    (item: EventItem, start: Date, end: Date) => {
       const calUid = calByItem.get(item.itemUid)
       if (!calUid) return
       if (isCalLocked(calUid)) {
@@ -2589,7 +2675,7 @@ export function CalendarView({
         })
         return
       }
-      await handleUpdate(calUid, item.itemUid, { start: trueStart, end: trueEnd })
+      handleUpdate(calUid, item.itemUid, { start: trueStart, end: trueEnd })
     },
     [calByItem, handleUpdate, isCalLocked, trueTime],
   )
@@ -3559,9 +3645,54 @@ export function CalendarView({
       {notice && !importState && (
         <div
           role="status"
-          className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text shadow-lg"
+          className={`fixed left-1/2 z-50 -translate-x-1/2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text shadow-lg ${saveJobs.length > 0 ? 'bottom-14' : 'bottom-3'}`}
         >
           {notice}
+        </div>
+      )}
+
+      {/* Background save queue chips. The event modal closes immediately,
+          so this is the only in-flight feedback: one chip per save, gone
+          on success, red with Retry / Dismiss on failure. */}
+      {saveJobs.length > 0 && (
+        <div className="fixed bottom-3 left-1/2 z-50 flex w-max max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-col items-stretch gap-1">
+          {saveJobs.map((job) => (
+            <div
+              key={job.id}
+              role={job.status === 'error' ? 'alert' : 'status'}
+              className={
+                job.status === 'error'
+                  ? 'flex items-center gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs text-danger shadow-lg'
+                  : 'flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text shadow-lg'
+              }
+            >
+              <span aria-hidden className="shrink-0">
+                {job.status === 'error' ? '⚠' : '⏳'}
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                {job.status === 'error' ? `${job.label} — ${job.error}` : job.label}
+              </span>
+              {job.status === 'error' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => retrySaveJob(job.id)}
+                    className="shrink-0 rounded border border-danger/50 px-1.5 py-0.5 text-[11px] hover:bg-danger/10"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dismissSaveJob(job.id)}
+                    aria-label="Dismiss"
+                    className="shrink-0 rounded px-1 text-danger/70 hover:text-danger"
+                  >
+                    ✕
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
